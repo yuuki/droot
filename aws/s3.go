@@ -16,6 +16,7 @@ import (
 )
 
 const uploadPartSize = 64 * 1024 * 1024  // 64MB part size
+const downloadPartSize = uploadPartSize
 
 type S3Client struct {
 	svc s3iface.S3API
@@ -65,4 +66,29 @@ func (clt *S3Client) Upload(s3Url *url.URL, file io.Reader) (string, error) {
 	}
 
 	return upOutput.Location, nil
+}
+
+func (clt *S3Client) Download(s3Url *url.URL, file io.WriterAt) (int64, error) {
+	bucket, object := s3Url.Host, s3Url.Path
+
+	ok, err := clt.ExistsBucket(bucket)
+	if err != nil {
+		return -1, err
+	}
+	if ! ok {
+		return -1, errors.New(fmt.Sprintf("No such bucket: %s", bucket))
+	}
+
+	downloader := s3manager.NewDownloaderWithClient(clt.svc)
+	nBytes, err := downloader.Download(file, &s3.GetObjectInput{
+		Bucket: &bucket,
+		Key:    &object,
+	}, func(d *s3manager.Downloader) {
+		d.PartSize = downloadPartSize
+	})
+	if err != nil {
+		return -1, err
+	}
+
+	return nBytes, nil
 }

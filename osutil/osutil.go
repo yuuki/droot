@@ -73,7 +73,7 @@ func Rsync(from, to string, arg ...string) error {
 	// TODO --exclude, --excluded-from
 	rsyncArgs := []string{}
 	rsyncArgs = append(rsyncArgs, RsyncDefaultOpts...)
-	rsyncArgs = append(arg, from, to)
+	rsyncArgs = append(rsyncArgs, from, to)
 	if err := RunCmd("rsync", rsyncArgs...); err != nil {
 		return err
 	}
