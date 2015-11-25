@@ -6,7 +6,7 @@ test: testdeps
 	go test -v ./...
 
 build: deps
-	go build -o $(BIN) .
+	go build -o $(BIN) ./cmd
 
 LINT_RET = .golint.txt
 lint: testdeps
@@ -16,7 +16,7 @@ lint: testdeps
 	test ! -s $(LINT_RET)
 
 deps:
-	go get -d -v .
+	go get -d -v ./...
 
 testdeps:
 	go get -d -v -t .
