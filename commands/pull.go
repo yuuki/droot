@@ -15,5 +15,5 @@ var CommandPull = cli.Command{
 	},
 }
 
-func doPush(c *cli.Context) {
+func doPull(c *cli.Context) {
 }

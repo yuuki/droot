@@ -22,11 +22,19 @@ func Debugf(format string, v ...interface{}) {
 	}
 }
 
+func Info(v ...interface{}) {
+	log.Println(v...)
+}
+
+func Infof(format string, v ...interface{}) {
+	log.Printf(format, v...)
+}
+
 func Error(v ...interface{}) {
-	log.Fatal(v...)
+	log.Print(v...)
 }
 
 func Errorf(format string, v ...interface{}) {
-	log.Fatalf(format, v...)
+	log.Printf(format, v...)
 }
 
