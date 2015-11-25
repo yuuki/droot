@@ -10,6 +10,7 @@ import (
 	"github.com/yuuki1/dochroot/aws"
 	"github.com/yuuki1/dochroot/docker"
 	"github.com/yuuki1/dochroot/log"
+	"github.com/yuuki1/dochroot/osutil"
 )
 
 var CommandArgPush = "--to S3_ENDPOINT DOCKER_REPOSITORY[:TAG]"
@@ -44,27 +45,42 @@ func doPush(c *cli.Context) {
 		return
 	}
 
-	imageWriter, err := ioutil.TempFile(os.TempDir(), "dochroot")
+	tmp, err := ioutil.TempFile(os.TempDir(), "dochroot")
 	if err != nil {
 		log.Error(err)
 		return
 	}
-	defer os.Remove(imageWriter.Name())
+	defer tmp.Close()
+	defer os.Remove(tmp.Name())
 
-	log.Info("Export docker image:", "to", imageWriter.Name())
-	if err := docker.ExportImage(repository, imageWriter); err != nil {
+	log.Info("Export docker image", "to", tmp.Name())
+	if err := docker.ExportImage(repository, tmp); err != nil {
 		log.Error(err)
 		return
 	}
 
-	imageReader, err := os.Open(imageWriter.Name())
+	// reopen for reading
+	tmp, err = os.Open(tmp.Name())
 	if err != nil {
 		log.Error(err)
 		return
 	}
-	defer imageReader.Close()
 
-	location, err := aws.NewS3Client().Upload(s3Url, imageReader)
+	tmpGzip, err := ioutil.TempFile(os.TempDir(), "dochroot_gzip")
+	if err != nil {
+		log.Error(err)
+		return
+	}
+	defer tmpGzip.Close()
+	defer os.Remove(tmpGzip.Name())
+
+	log.Info("gzip", "from", tmp.Name(), "to", tmpGzip.Name())
+	if err := osutil.Gzip(tmpGzip, tmp); err != nil {
+		log.Error(err)
+		return
+	}
+
+	location, err := aws.NewS3Client().Upload(s3Url, tmpGzip)
 	if err != nil {
 		log.Error(err)
 		return
