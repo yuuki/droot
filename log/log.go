@@ -31,10 +31,10 @@ func Infof(format string, v ...interface{}) {
 }
 
 func Error(v ...interface{}) {
-	log.Print(v...)
+	log.Fatal(v...)
 }
 
 func Errorf(format string, v ...interface{}) {
-	log.Printf(format, v...)
+	log.Fatalf(format, v...)
 }
 
