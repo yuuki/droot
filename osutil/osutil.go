@@ -140,7 +140,6 @@ func DropCapabilities(keepCaps map[uint]bool) error {
 				return err
 			}
 		}
-		log.Debug("drop:", i)
 	}
 
 	if i == 0 {
