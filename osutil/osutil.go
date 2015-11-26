@@ -2,8 +2,6 @@ package osutil
 
 import (
 	"compress/gzip"
-	"errors"
-	"golang.org/x/sys/unix"
 	"io"
 	"io/ioutil"
 	"os"
@@ -117,38 +115,6 @@ func BindMount(src, dest string) error {
 	return nil
 }
 
-func DropCapabilities(keepCaps map[uint]bool) error {
-	var i uint
-	for i = 0; ; i++ {
-		if keepCaps[i] {
-			continue
-		}
-		if err := unix.Prctl(syscall.PR_CAPBSET_READ, uintptr(i), 0, 0, 0); err != nil {
-			// Regard EINVAL as the condition of loop finish.
-			if errno, ok := err.(syscall.Errno); ok && errno == syscall.EINVAL {
-				break
-			}
-			return err
-		}
-		if err := unix.Prctl(syscall.PR_CAPBSET_DROP, uintptr(i), 0, 0, 0); err != nil {
-			// Ignore EINVAL since the capability may not be supported in this system.
-			if errno, ok := err.(syscall.Errno); ok && errno == syscall.EINVAL {
-				continue
-			} else if errno, ok := err.(syscall.Errno); ok && errno == syscall.EPERM {
-				return errors.New("required CAP_SETPCAP capabilities")
-			} else {
-				return err
-			}
-		}
-	}
-
-	if i == 0 {
-		return errors.New("Failed to drop capabilities")
-	}
-
-	return nil
-}
-
 // Mknod unless path does not exists.
 func Mknod(path string, mode uint32, dev int) error {
 	if ExistsFile(path) {
@@ -182,15 +148,3 @@ func Execv(cmd string, args []string, env []string) error {
 	return syscall.Exec(name, args, env)
 }
 
-func ChrootAndExec(keepCaps map[uint]bool, rootDir string, command ...string) error {
-	if err := syscall.Chroot(rootDir); err != nil {
-		return err
-	}
-	if err := syscall.Chdir("/"); err != nil {
-		return err
-	}
-	if err := DropCapabilities(keepCaps); err != nil {
-		return err
-	}
-	return Execv(command[0], command[0:], os.Environ())
-}
