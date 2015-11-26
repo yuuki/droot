@@ -2,22 +2,44 @@ package osutil
 
 import (
 	"compress/gzip"
+	"errors"
+	"golang.org/x/sys/unix"
 	"io"
 	"io/ioutil"
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 
 	"github.com/yuuki1/dochroot/log"
 )
 
 var RsyncDefaultOpts = []string{"-av", "--delete"}
 
+func ExistsFile(file string) bool {
+	f, err := os.Stat(file)
+	return err == nil && !f.IsDir()
+}
+
 func ExistsDir(dir string) bool {
-	if f, err := os.Stat(dir); os.IsNotExist(err) || ! f.IsDir() {
+	if f, err := os.Stat(dir); os.IsNotExist(err) || !f.IsDir() {
 		return false
 	}
 	return true
+}
+
+func IsDirEmpty(dir string) (bool, error) {
+	f, err := os.Open(dir)
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+
+	_, err = f.Readdir(1)
+	if err == io.EOF {
+		return true, nil
+	}
+	return false, err // Either not empty or error, suits both cases
 }
 
 func RunCmd(name string, arg ...string) error {
@@ -33,7 +55,7 @@ func RunCmd(name string, arg ...string) error {
 	return nil
 }
 
-func Gzip(destWriter io.Writer, srcReader io.Reader) (error) {
+func Gzip(destWriter io.Writer, srcReader io.Reader) error {
 	w := gzip.NewWriter(destWriter)
 	defer w.Close()
 
@@ -81,3 +103,83 @@ func Rsync(from, to string, arg ...string) error {
 	return nil
 }
 
+func Cp(from, to string) error {
+	if err := RunCmd("cp", "-p", from, to); err != nil {
+		return err
+	}
+	return nil
+}
+
+func BindMount(src, dest string) error {
+	if err := RunCmd("mount", "--bind", src, dest); err != nil {
+		return err
+	}
+	return nil
+}
+
+func DropCapabilities(keepCaps map[uint]bool) error {
+	var i uint
+	for i = 0; ; i++ {
+		if keepCaps[i] {
+			continue
+		}
+		if err := unix.Prctl(syscall.PR_CAPBSET_READ, uintptr(i), 0, 0, 0); err != nil {
+			// Regard EINVAL as the condition of loop finish.
+			if errno, ok := err.(syscall.Errno); ok && errno == syscall.EINVAL {
+				break
+			}
+			return err
+		}
+		if err := unix.Prctl(syscall.PR_CAPBSET_DROP, uintptr(i), 0, 0, 0); err != nil {
+			// Ignore EINVAL since the capability may not be supported in this system.
+			if errno, ok := err.(syscall.Errno); ok && errno == syscall.EINVAL {
+				continue
+			} else if errno, ok := err.(syscall.Errno); ok && errno == syscall.EPERM {
+				return errors.New("required CAP_SETPCAP capabilities")
+			} else {
+				return err
+			}
+		}
+		log.Debug("drop:", i)
+	}
+
+	if i == 0 {
+		return errors.New("Failed to drop capabilities")
+	}
+
+	return nil
+}
+
+func Mknod(path string, mode uint32, dev int) error {
+	if ExistsFile(path) {
+		return nil
+	}
+	if err := syscall.Mknod(path, mode, dev); err != nil {
+		return err
+	}
+	return nil
+}
+
+func Execv(cmd string, args []string, env []string) error {
+	name, err := exec.LookPath(cmd)
+	if err != nil {
+		return err
+	}
+
+	log.Debug("exec: ", name, args)
+
+	return syscall.Exec(name, args, env)
+}
+
+func ChrootAndExec(keepCaps map[uint]bool, rootDir string, command ...string) error {
+	if err := syscall.Chroot(rootDir); err != nil {
+		return err
+	}
+	if err := syscall.Chdir("/"); err != nil {
+		return err
+	}
+	if err := DropCapabilities(keepCaps); err != nil {
+		return err
+	}
+	return Execv(command[0], command[0:], os.Environ())
+}
