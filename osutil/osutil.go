@@ -160,6 +160,17 @@ func Mknod(path string, mode uint32, dev int) error {
 	return nil
 }
 
+// Symlink, but ignore already exists file.
+func Symlink(oldname, newname string) error {
+	if err := os.Symlink(oldname, newname); err != nil {
+		// Ignore already created symlink
+		if _, ok := err.(*os.LinkError); !ok {
+			return err
+		}
+	}
+	return nil
+}
+
 func Execv(cmd string, args []string, env []string) error {
 	name, err := exec.LookPath(cmd)
 	if err != nil {

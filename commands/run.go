@@ -100,12 +100,9 @@ func doRun(c *cli.Context) {
 	}
 
 	// create symlinks
-	if err := os.Symlink("../run/lock", fp.Join(rootDir, "/var/lock")); err != nil {
-		// Ignore already created symlink
-		if _, ok := err.(*os.LinkError); !ok {
-			log.Error(err)
-			return
-		}
+	if err := osutil.Symlink("../run/lock", fp.Join(rootDir, "/var/lock")); err != nil {
+		log.Error(err)
+		return
 	}
 
 	// create devices
