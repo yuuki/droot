@@ -149,6 +149,7 @@ func DropCapabilities(keepCaps map[uint]bool) error {
 	return nil
 }
 
+// Mknod unless path does not exists.
 func Mknod(path string, mode uint32, dev int) error {
 	if ExistsFile(path) {
 		return nil
