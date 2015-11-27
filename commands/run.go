@@ -70,7 +70,9 @@ func doRun(c *cli.Context) error {
 	// copy files
 	if c.Bool("copy-files") {
 		for _, f := range copyFiles {
-			osutil.Cp(fp.Join("/", f), fp.Join(rootDir, f))
+			if err := osutil.Cp(fp.Join("/", f), fp.Join(rootDir, f)); err != nil {
+				return err
+			}
 		}
 	}
 
