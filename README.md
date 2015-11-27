@@ -30,3 +30,12 @@ $ dochroot pull --dest /var/containers/app --src s3://example.com/dockerfiles/ap
 ```bash
 # dochroot rmi --root /var/containers/app
 ```
+
+## Roodmap
+
+- `pull` command with the rsync option
+- `push/pull` other compression algorithms
+- image versioning
+- `pull` from docker registry
+- drivers except Amazon S3
+
