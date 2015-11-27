@@ -81,7 +81,9 @@ func doRun(c *cli.Context) error {
 			return err
 		}
 		if ok {
-			os.Create(fp.Join(dir, ".dochroot.keep"))
+			if _, err := os.Create(fp.Join(dir, ".dochroot.keep")); err != nil {
+				return err
+			}
 		}
 		containerDir := fp.Join(rootDir, dir)
 		if err := os.MkdirAll(containerDir, os.FileMode(0755)); err != nil {
