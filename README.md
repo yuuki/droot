@@ -33,6 +33,12 @@ $ dochroot pull --dest /var/containers/app --src s3://example.com/dockerfiles/ap
 
 ## Roodmap
 
+- `run` command with uid/gid option
+- `run` command with `--bind src-path:dest-path` option
+- `run` command with `--robind` option
+- `umount` command
+- `rm` command for cleaning container environment
+- `rmi` command for cleaning image on S3
 - `pull` command with the rsync option
 - `push/pull` other compression algorithms
 - image versioning
