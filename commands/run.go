@@ -96,7 +96,9 @@ func doRun(c *cli.Context) error {
 			return err
 		}
 		if ok {
-			osutil.BindMount(dir, containerDir)
+			if err := osutil.BindMount(dir, containerDir); err != nil {
+				return err
+			}
 			log.Debug("bind mount", dir, "to", containerDir)
 		}
 	}
