@@ -6,8 +6,12 @@ import (
 	"io/ioutil"
 	"os"
 	"os/exec"
+	"os/user"
+	"strconv"
 	"strings"
 	"syscall"
+
+	"github.com/yuuki1/go-group"
 
 	"github.com/yuuki1/dochroot/log"
 )
@@ -146,5 +150,57 @@ func Execv(cmd string, args []string, env []string) error {
 	log.Debug("exec: ", name, args)
 
 	return syscall.Exec(name, args, env)
+}
+
+func LookupGroup(id string) (int, error) {
+	var g *group.Group
+
+	if _, err := strconv.Atoi(id); err == nil {
+		g, err = group.Lookup(id)
+		if err != nil {
+			return -1, err
+		}
+	} else {
+		g, err = group.LookupId(id)
+		if err != nil {
+			return -1, err
+		}
+	}
+
+	return strconv.Atoi(g.Gid)
+}
+
+func SetGroup(id string) error {
+	gid, err := LookupGroup(id)
+	if err != nil {
+		return err
+	}
+	return syscall.Setgid(gid)
+}
+
+func LookupUser(id string) (int, error) {
+	var u *user.User
+
+	if _, err := strconv.Atoi(id); err == nil {
+		u, err = user.Lookup(id)
+		if err != nil {
+			return -1, err
+		}
+	} else {
+		u, err = user.LookupId(id)
+		if err != nil {
+			return -1, err
+		}
+	}
+
+	return strconv.Atoi(u.Uid)
+}
+
+func SetUser(id string) error {
+	uid, err := LookupUser(id)
+	if err != nil {
+		return err
+	}
+	return syscall.Setuid(uid)
 }
 
