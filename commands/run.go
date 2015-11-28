@@ -76,6 +76,10 @@ func doRun(c *cli.Context) error {
 	}
 
 	// bind the directories
+	if err := bindSystemMount(rootDir); err != nil {
+		return err
+	}
+
 	for _, dir := range c.StringSlice("bind") {
 		if err := bindMount(dir, rootDir); err != nil {
 			return err
@@ -159,6 +163,31 @@ func bindMount(bindDir string, rootDir string) error {
 			return err
 		}
 		log.Debug("bind mount", bindDir, "to", containerDir)
+	}
+
+	return nil
+}
+
+func bindSystemMount(rootDir string) error {
+	devDir := fp.Join(rootDir, "/dev")
+	if ok, err := osutil.Mounted(devDir); !ok && err == nil {
+		if err := osutil.RunCmd("mount", "--rbind", "/dev", fp.Join(rootDir, "/dev")); err != nil {
+			return err
+		}
+	}
+
+	procDir := fp.Join(rootDir, "/proc")
+	if ok, err := osutil.Mounted(procDir); !ok && err == nil {
+		if err := osutil.RunCmd("mount", "-t", "proc", "none", procDir); err != nil {
+			return err
+		}
+	}
+
+	sysDir := fp.Join(rootDir, "/sys")
+	if ok, err := osutil.Mounted(sysDir); !ok && err == nil {
+		if err := osutil.RunCmd("mount", "--rbind", "/sys", fp.Join(rootDir, "/sys")); err != nil {
+			return err
+		}
 	}
 
 	return nil
