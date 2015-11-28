@@ -42,7 +42,7 @@ func doPull(c *cli.Context) error {
 	}
 
 	if ! osutil.ExistsDir(destDir) {
-		return fmt.Errorf("No such directory", destDir)
+		return fmt.Errorf("No such directory %s", destDir)
 	}
 
 	tmp, err := ioutil.TempFile(os.TempDir(), "dochroot_gzip")
