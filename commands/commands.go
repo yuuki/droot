@@ -10,6 +10,7 @@ var Commands = []cli.Command{
 	CommandPush,
 	CommandPull,
 	CommandRun,
+	CommandUmount,
 }
 
 func fatalOnError(command func(context *cli.Context) error) func(context *cli.Context) {

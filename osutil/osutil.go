@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/docker/libcontainer/system"
 	"github.com/yuuki1/go-group"
@@ -144,6 +145,28 @@ func Mounted(mountpoint string) (bool, error) {
 	parentSt := parent.Sys().(*syscall.Stat_t)
 	return mntpointSt.Dev != parentSt.Dev, nil
 }
+
+// Unmount will unmount the target filesystem, so long as it is mounted.
+func Unmount(target string, flag int) error {
+	if mounted, err := Mounted(target); err != nil || !mounted {
+		return err
+	}
+	return ForceUnmount(target, flag)
+}
+
+// ForceUnmount will force an unmount of the target filesystem, regardless if
+// it is mounted or not.
+func ForceUnmount(target string, flag int) (err error) {
+	// Simple retry logic for unmount
+	for i := 0; i < 10; i++ {
+		if err = syscall.Unmount(target, flag); err == nil {
+			return err
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return
+}
+
 
 // Mknod unless path does not exists.
 func Mknod(path string, mode uint32, dev int) error {
