@@ -16,7 +16,7 @@ import (
 	"github.com/docker/libcontainer/system"
 	"github.com/yuuki1/go-group"
 
-	"github.com/yuuki1/dochroot/log"
+	"github.com/yuuki1/droot/log"
 )
 
 var RsyncDefaultOpts = []string{"-av", "--delete"}

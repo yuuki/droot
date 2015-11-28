@@ -3,7 +3,7 @@ package commands
 import (
 	"github.com/codegangsta/cli"
 
-	"github.com/yuuki1/dochroot/log"
+	"github.com/yuuki1/droot/log"
 )
 
 var Commands = []cli.Command{

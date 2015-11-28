@@ -1,4 +1,4 @@
-BIN = dochroot
+BIN = droot
 
 all: clean lint test build
 

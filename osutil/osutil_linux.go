@@ -9,7 +9,7 @@ import (
 	"regexp"
 	"syscall"
 
-	"github.com/yuuki1/dochroot/log"
+	"github.com/yuuki1/droot/log"
 )
 
 const (

@@ -10,8 +10,8 @@ import(
 
 	"github.com/codegangsta/cli"
 
-	"github.com/yuuki1/dochroot/log"
-	"github.com/yuuki1/dochroot/osutil"
+	"github.com/yuuki1/droot/log"
+	"github.com/yuuki1/droot/osutil"
 )
 
 var CommandArgRun = "--root ROOT_DIR [--user USER] [--group GROUP] [--bind SRC-PATH[:DEST-PATH]] [--robind SRC-PATH[:DEST-PATH]] COMMAND"
@@ -154,7 +154,7 @@ func bindMount(bindDir string, rootDir string, readonly bool) error {
 		return err
 	}
 	if ok {
-		if _, err := os.Create(fp.Join(srcDir, ".dochroot.keep")); err != nil {
+		if _, err := os.Create(fp.Join(srcDir, ".droot.keep")); err != nil {
 			return err
 		}
 	}

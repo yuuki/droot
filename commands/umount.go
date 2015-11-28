@@ -6,7 +6,7 @@ import (
 
 	"github.com/codegangsta/cli"
 
-	"github.com/yuuki1/dochroot/osutil"
+	"github.com/yuuki1/droot/osutil"
 )
 
 var CommandArgUmount = "--root ROOT_DIR"

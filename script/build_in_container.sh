@@ -2,8 +2,8 @@
 
 set -e
 
-DOCKER_IMAGE_NAME="dochroot-build"
-DOCKER_CONTAINER_NAME="dochroot-build-container"
+DOCKER_IMAGE_NAME="droot-build"
+DOCKER_CONTAINER_NAME="droot-build-container"
 
 if [[ $(docker ps -a | grep $DOCKER_CONTAINER_NAME) != "" ]]; then
   docker rm -f $DOCKER_CONTAINER_NAME 2>/dev/null
@@ -17,4 +17,4 @@ if [[ "$@" == *"clean"* ]] && [[ -d bin ]]; then
   rm -Rf bin
 fi
 
-docker cp $DOCKER_CONTAINER_NAME:/go/src/github.com/yuuki1/dochroot/dochroot .
+docker cp $DOCKER_CONTAINER_NAME:/go/src/github.com/yuuki1/droot/droot .

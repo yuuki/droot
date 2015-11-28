@@ -8,6 +8,6 @@ RUN go get  github.com/golang/lint/golint \
 	          github.com/axw/gocov/gocov
 
 ENV USER root
-WORKDIR /go/src/github.com/yuuki1/dochroot
+WORKDIR /go/src/github.com/yuuki1/droot
 
-ADD . /go/src/github.com/yuuki1/dochroot
+ADD . /go/src/github.com/yuuki1/droot

@@ -9,9 +9,9 @@ import (
 
 	"github.com/codegangsta/cli"
 
-	"github.com/yuuki1/dochroot/aws"
-	"github.com/yuuki1/dochroot/log"
-	"github.com/yuuki1/dochroot/osutil"
+	"github.com/yuuki1/droot/aws"
+	"github.com/yuuki1/droot/log"
+	"github.com/yuuki1/droot/osutil"
 )
 
 var CommandArgPull = "--dest DESTINATION_DIRECTORY --src S3_ENDPOINT"
@@ -45,7 +45,7 @@ func doPull(c *cli.Context) error {
 		return fmt.Errorf("No such directory %s", destDir)
 	}
 
-	tmp, err := ioutil.TempFile(os.TempDir(), "dochroot_gzip")
+	tmp, err := ioutil.TempFile(os.TempDir(), "droot_gzip")
 	if err != nil {
 		return err
 	}
@@ -58,7 +58,7 @@ func doPull(c *cli.Context) error {
 	}
 	log.Info("downloaded", "from", s3URL, "to", tmp.Name(), nBytes, "bytes")
 
-	rawDir, err := ioutil.TempDir(os.TempDir(), "dochroot_raw")
+	rawDir, err := ioutil.TempDir(os.TempDir(), "droot_raw")
 	if err != nil {
 		return err
 	}

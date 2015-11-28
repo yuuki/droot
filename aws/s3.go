@@ -12,7 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 
-	"github.com/yuuki1/dochroot/log"
+	"github.com/yuuki1/droot/log"
 )
 
 const uploadPartSize = 64 * 1024 * 1024  // 64MB part size

@@ -9,10 +9,10 @@ import (
 
 	"github.com/codegangsta/cli"
 
-	"github.com/yuuki1/dochroot/aws"
-	"github.com/yuuki1/dochroot/docker"
-	"github.com/yuuki1/dochroot/log"
-	"github.com/yuuki1/dochroot/osutil"
+	"github.com/yuuki1/droot/aws"
+	"github.com/yuuki1/droot/docker"
+	"github.com/yuuki1/droot/log"
+	"github.com/yuuki1/droot/osutil"
 )
 
 var CommandArgPush = "--to S3_ENDPOINT DOCKER_REPOSITORY[:TAG]"
@@ -45,7 +45,7 @@ func doPush(c *cli.Context) error {
 		return fmt.Errorf("Not s3 scheme %s", to)
 	}
 
-	tmp, err := ioutil.TempFile(os.TempDir(), "dochroot")
+	tmp, err := ioutil.TempFile(os.TempDir(), "droot")
 	if err != nil {
 		return err
 	}
@@ -63,7 +63,7 @@ func doPush(c *cli.Context) error {
 		return err
 	}
 
-	tmpGzip, err := ioutil.TempFile(os.TempDir(), "dochroot_gzip")
+	tmpGzip, err := ioutil.TempFile(os.TempDir(), "droot_gzip")
 	if err != nil {
 		return err
 	}

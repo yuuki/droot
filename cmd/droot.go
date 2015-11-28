@@ -8,8 +8,8 @@ import (
 
 	"github.com/codegangsta/cli"
 
-	"github.com/yuuki1/dochroot/commands"
-	"github.com/yuuki1/dochroot/log"
+	"github.com/yuuki1/droot/commands"
+	"github.com/yuuki1/droot/log"
 )
 
 var AppHelpTemplate = `Usage: {{.Name}} {{if .Flags}}[OPTIONS] {{end}}COMMAND [arg...]
@@ -64,7 +64,7 @@ func init() {
 	}
 	argsTemplate = argsTemplate + "{{end}}"
 
-	cli.CommandHelpTemplate = `Usage: dochroot ` + argsTemplate + `
+	cli.CommandHelpTemplate = `Usage: droot ` + argsTemplate + `
 
 {{.Usage}}{{if .Description}}
 
@@ -83,7 +83,7 @@ func main() {
 	app := cli.NewApp()
 	app.Name = path.Base(os.Args[0])
 	app.Author = "y_uuki"
-	app.Email = "https://github.com/yuuki1/dochroot"
+	app.Email = "https://github.com/yuuki1/droot"
 	app.Commands = commands.Commands
 	app.CommandNotFound = cmdNotFound
 	app.Usage = "Dochroot is a CLI tool for chrooting a docker image."
