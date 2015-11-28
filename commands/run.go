@@ -80,28 +80,8 @@ func doRun(c *cli.Context) error {
 
 	// bind the directories
 	for _, dir := range bindDirs {
-		ok, err := osutil.IsDirEmpty(dir)
-		if err != nil {
+		if err := bindMount(dir, rootDir); err != nil {
 			return err
-		}
-		if ok {
-			if _, err := os.Create(fp.Join(dir, ".dochroot.keep")); err != nil {
-				return err
-			}
-		}
-		containerDir := fp.Join(rootDir, dir)
-		if err := os.MkdirAll(containerDir, os.FileMode(0755)); err != nil {
-			return err
-		}
-		ok, err = osutil.IsDirEmpty(containerDir)
-		if err != nil {
-			return err
-		}
-		if ok {
-			if err := osutil.BindMount(dir, containerDir); err != nil {
-				return err
-			}
-			log.Debug("bind mount", dir, "to", containerDir)
 		}
 	}
 
@@ -110,17 +90,8 @@ func doRun(c *cli.Context) error {
 		return err
 	}
 
-	// create devices
-	if err := osutil.Mknod(fp.Join(rootDir, os.DevNull), syscall.S_IFCHR | uint32(os.FileMode(0666)), 1*256+3); err != nil {
+	if err := createDevices(rootDir); err != nil {
 		return err
-	}
-	if err := osutil.Mknod(fp.Join(rootDir, "/dev/zero"), syscall.S_IFCHR | uint32(os.FileMode(0666)), 1*256+3); err != nil {
-		return err
-	}
-	for _, f := range []string{"/dev/random", "/dev/urandom"} {
-		if err := osutil.Mknod(fp.Join(rootDir, f), syscall.S_IFCHR | uint32(os.FileMode(0666)), 1*256+9); err != nil {
-			return err
-		}
 	}
 
 	log.Debug("chroot", rootDir, command)
@@ -151,4 +122,53 @@ func doRun(c *cli.Context) error {
 	}
 
 	return osutil.Execv(command[0], command[0:], os.Environ())
+}
+
+func bindMount(bindDir string, rootDir string) error {
+	ok, err := osutil.IsDirEmpty(bindDir)
+	if err != nil {
+		return err
+	}
+	if ok {
+		if _, err := os.Create(fp.Join(dir, ".dochroot.keep")); err != nil {
+			return err
+		}
+	}
+
+	containerDir := fp.Join(rootDir, bindDir)
+
+	if err := os.MkdirAll(containerDir, os.FileMode(0755)); err != nil {
+		return err
+	}
+
+	ok, err = osutil.IsDirEmpty(containerDir)
+	if err != nil {
+		return err
+	}
+	if ok {
+		if err := osutil.BindMount(bindDir, containerDir); err != nil {
+			return err
+		}
+		log.Debug("bind mount", bindDir, "to", containerDir)
+	}
+
+	return nil
+}
+
+func createDevices(rootDir string) error {
+	if err := osutil.Mknod(fp.Join(rootDir, os.DevNull), syscall.S_IFCHR | uint32(os.FileMode(0666)), 1*256+3); err != nil {
+		return err
+	}
+
+	if err := osutil.Mknod(fp.Join(rootDir, "/dev/zero"), syscall.S_IFCHR | uint32(os.FileMode(0666)), 1*256+3); err != nil {
+		return err
+	}
+
+	for _, f := range []string{"/dev/random", "/dev/urandom"} {
+		if err := osutil.Mknod(fp.Join(rootDir, f), syscall.S_IFCHR | uint32(os.FileMode(0666)), 1*256+9); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
