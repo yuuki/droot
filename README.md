@@ -28,7 +28,7 @@ $ dochroot pull --dest /var/containers/app --src s3://example.com/dockerfiles/ap
 ```
 
 ```bash
-# dochroot rmi --root /var/containers/app
+# dochroot umount --root /var/containers/app
 ```
 
 ## Roodmap
