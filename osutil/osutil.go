@@ -11,6 +11,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/docker/libcontainer/system"
 	"github.com/yuuki1/go-group"
 
 	"github.com/yuuki1/dochroot/log"
@@ -175,7 +176,7 @@ func SetGroup(id string) error {
 	if err != nil {
 		return err
 	}
-	return syscall.Setgid(gid)
+	return system.Setgid(gid)
 }
 
 func LookupUser(id string) (int, error) {
@@ -201,6 +202,6 @@ func SetUser(id string) error {
 	if err != nil {
 		return err
 	}
-	return syscall.Setuid(uid)
+	return system.Setuid(uid)
 }
 
