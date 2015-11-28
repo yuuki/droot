@@ -5,6 +5,7 @@ import(
 	"fmt"
 	"os"
 	fp "path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/codegangsta/cli"
@@ -56,8 +57,6 @@ func doRun(c *cli.Context) error {
 	}
 
 	rootDir := c.String("root")
-	bindDirs := c.StringSlice("bind")
-
 	if rootDir == "" {
 		cli.ShowCommandHelp(c, "run")
 		return errors.New("--root option required")
@@ -77,7 +76,7 @@ func doRun(c *cli.Context) error {
 	}
 
 	// bind the directories
-	for _, dir := range bindDirs {
+	for _, dir := range c.StringSlice("bind") {
 		if err := bindMount(dir, rootDir); err != nil {
 			return err
 		}
@@ -123,17 +122,29 @@ func doRun(c *cli.Context) error {
 }
 
 func bindMount(bindDir string, rootDir string) error {
-	ok, err := osutil.IsDirEmpty(bindDir)
+	var srcDir, destDir string
+
+	d := strings.SplitN(bindDir, ":", 2)
+	if len(d) < 2 {
+		srcDir = d[0]
+	} else {
+		srcDir, destDir = d[0], d[1]
+	}
+	if destDir == "" {
+		destDir = srcDir
+	}
+
+	ok, err := osutil.IsDirEmpty(srcDir)
 	if err != nil {
 		return err
 	}
 	if ok {
-		if _, err := os.Create(fp.Join(dir, ".dochroot.keep")); err != nil {
+		if _, err := os.Create(fp.Join(srcDir, ".dochroot.keep")); err != nil {
 			return err
 		}
 	}
 
-	containerDir := fp.Join(rootDir, bindDir)
+	containerDir := fp.Join(rootDir, destDir)
 
 	if err := os.MkdirAll(containerDir, os.FileMode(0755)); err != nil {
 		return err
@@ -144,7 +155,7 @@ func bindMount(bindDir string, rootDir string) error {
 		return err
 	}
 	if ok {
-		if err := osutil.BindMount(bindDir, containerDir); err != nil {
+		if err := osutil.BindMount(srcDir, containerDir); err != nil {
 			return err
 		}
 		log.Debug("bind mount", bindDir, "to", containerDir)
