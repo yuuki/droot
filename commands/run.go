@@ -13,7 +13,7 @@ import(
 	"github.com/yuuki1/dochroot/osutil"
 )
 
-var CommandArgRun = "--root ROOT_DIR --user USER --group GROUP [--bind BIND_MOUNT_DIR] COMMAND"
+var CommandArgRun = "--root ROOT_DIR [--user USER] [--group GROUP] [--bind SRC-PATH[:DEST-PATH]] COMMAND"
 var CommandRun = cli.Command{
 	Name:  "run",
 	Usage: "Run an extracted docker image from s3",
