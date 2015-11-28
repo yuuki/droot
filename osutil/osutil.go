@@ -121,6 +121,13 @@ func BindMount(src, dest string) error {
 	return nil
 }
 
+func RObindMount(src, dest string) error {
+	if err := RunCmd("mount", "-o", "remount,ro,bind", src, dest); err != nil {
+		return err
+	}
+	return nil
+}
+
 func Mounted(mountpoint string) (bool, error) {
 	mntpoint, err := os.Stat(mountpoint)
 	if err != nil {

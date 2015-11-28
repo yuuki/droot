@@ -14,7 +14,7 @@ import(
 	"github.com/yuuki1/dochroot/osutil"
 )
 
-var CommandArgRun = "--root ROOT_DIR [--user USER] [--group GROUP] [--bind SRC-PATH[:DEST-PATH]] COMMAND"
+var CommandArgRun = "--root ROOT_DIR [--user USER] [--group GROUP] [--bind SRC-PATH[:DEST-PATH]] [--robind SRC-PATH[:DEST-PATH]] COMMAND"
 var CommandRun = cli.Command{
 	Name:  "run",
 	Usage: "Run an extracted docker image from s3",
@@ -27,6 +27,11 @@ var CommandRun = cli.Command{
 			Name: "bind, b",
 			Value: &cli.StringSlice{},
 			Usage: "Bind mount directory (can be specifies multiple times)",
+		},
+		cli.StringSliceFlag{
+			Name: "robind",
+			Value: &cli.StringSlice{},
+			Usage: "Readonly bind mount directory (can be specifies multiple times)",
 		},
 		cli.BoolFlag{
 			Name: "copy-files, cp",
@@ -81,7 +86,12 @@ func doRun(c *cli.Context) error {
 	}
 
 	for _, dir := range c.StringSlice("bind") {
-		if err := bindMount(dir, rootDir); err != nil {
+		if err := bindMount(dir, rootDir, false); err != nil {
+			return err
+		}
+	}
+	for _, dir := range c.StringSlice("robind") {
+		if err := bindMount(dir, rootDir, true); err != nil {
 			return err
 		}
 	}
@@ -125,7 +135,8 @@ func doRun(c *cli.Context) error {
 	return osutil.Execv(command[0], command[0:], os.Environ())
 }
 
-func bindMount(bindDir string, rootDir string) error {
+
+func bindMount(bindDir string, rootDir string, readonly bool) error {
 	var srcDir, destDir string
 
 	d := strings.SplitN(bindDir, ":", 2)
@@ -163,6 +174,13 @@ func bindMount(bindDir string, rootDir string) error {
 			return err
 		}
 		log.Debug("bind mount", bindDir, "to", containerDir)
+
+		if readonly {
+			if err := osutil.RObindMount(srcDir, containerDir); err != nil {
+				return err
+			}
+			log.Debug("robind mount", bindDir, "to", containerDir)
+		}
 	}
 
 	return nil
