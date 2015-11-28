@@ -1,15 +1,18 @@
 droot
-========
+=====
 
-Dochroot is a CLI tool for chrooting a docker image.
+Droot is a super-easy container chrooting a docker image without docker.
 
 ## Overview
 
-[Docker](https://www.docker.com) has a powerfull concept about application deployment process, that is Build, Ship, Run. But there are many cases that docker runtime is beyond our current capabilities. I supporse simpler container runtime by chrooting into docker image. `droot` helps you chrooting an image built by `docker build` command and managing exported images on Amazon S3 or a local filesystem.
+[Docker](https://www.docker.com) has a powerful concept about an application deployment process, that is Build, Ship, Run. But there are many cases that docker runtime is beyond our current capabilities.
+
+`droot` provides a simpler container runtime without annoying Linux Namespace by chroot(2), Linux capabilities(7) and bind mount. `droot` helps you to chroot a container image built by `docker` and to import/export container images on Amazon S3.
 
 ## Requirements
 
 - Docker (`droot push` only depends on it)
+- Linux (`droot run` and `droot umount` only supports it)
 
 ## Installation
 
@@ -24,11 +27,11 @@ $ droot pull --dest /var/containers/app --src s3://example.com/dockerfiles/app.t
 ```
 
 ```bash
-# droot run --bind /var/log/ --root /var/containers/app -- command
+$ sudo droot run --bind /var/log/ --root /var/containers/app command
 ```
 
 ```bash
-# droot umount --root /var/containers/app
+$ sudo droot umount --root /var/containers/app
 ```
 
 ## Roodmap
@@ -41,3 +44,15 @@ $ droot pull --dest /var/containers/app --src s3://example.com/dockerfiles/app.t
 - `pull` from docker registry
 - drivers except Amazon S3
 
+## Contribution
+
+1. Fork ([https://github.com/yuuki1/droot/fork](https://github.com/yuuki1/droot/fork))
+1. Create a feature branch
+1. Commit your changes
+1. Rebase your local changes against the master branch
+1. Run test suite with the `make test` command and confirm that it passes
+1. Create a new Pull Request
+
+## Author
+
+[y_uuki](https://github.com/yuuki1)
