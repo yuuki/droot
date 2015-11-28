@@ -131,18 +131,24 @@ func doRun(c *cli.Context) error {
 	if err := syscall.Chdir("/"); err != nil {
 		return err
 	}
+
+	log.Debug("drop capabilities")
 	if err := osutil.DropCapabilities(keepCaps); err != nil {
 		return err
 	}
+
 	if group := c.String("group"); group != "" {
+		log.Debug("setgid", group)
 		if err := osutil.SetGroup(group); err != nil {
 			return err
 		}
 	}
 	if user := c.String("user"); user != "" {
+		log.Debug("setuid", user)
 		if err := osutil.SetUser(user); err != nil {
 			return err
 		}
 	}
+
 	return osutil.Execv(command[0], command[0:], os.Environ())
 }
