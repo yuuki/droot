@@ -33,7 +33,6 @@ $ dochroot pull --dest /var/containers/app --src s3://example.com/dockerfiles/ap
 
 ## Roodmap
 
-- `umount` command
 - `rm` command for cleaning container environment
 - `rmi` command for cleaning image on S3
 - `pull` command with the rsync option
