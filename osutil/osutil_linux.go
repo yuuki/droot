@@ -3,7 +3,6 @@ package osutil
 import (
 	"errors"
 	"golang.org/x/sys/unix"
-	"os"
 	"syscall"
 )
 
@@ -39,15 +38,3 @@ func DropCapabilities(keepCaps map[uint]bool) error {
 	return nil
 }
 
-func ChrootAndExec(keepCaps map[uint]bool, rootDir string, command ...string) error {
-	if err := syscall.Chroot(rootDir); err != nil {
-		return err
-	}
-	if err := syscall.Chdir("/"); err != nil {
-		return err
-	}
-	if err := DropCapabilities(keepCaps); err != nil {
-		return err
-	}
-	return Execv(command[0], command[0:], os.Environ())
-}

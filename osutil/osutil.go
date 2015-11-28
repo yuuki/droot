@@ -156,12 +156,12 @@ func LookupGroup(id string) (int, error) {
 	var g *group.Group
 
 	if _, err := strconv.Atoi(id); err == nil {
-		g, err = group.Lookup(id)
+		g, err = group.LookupId(id)
 		if err != nil {
 			return -1, err
 		}
 	} else {
-		g, err = group.LookupId(id)
+		g, err = group.Lookup(id)
 		if err != nil {
 			return -1, err
 		}
@@ -182,12 +182,12 @@ func LookupUser(id string) (int, error) {
 	var u *user.User
 
 	if _, err := strconv.Atoi(id); err == nil {
-		u, err = user.Lookup(id)
+		u, err = user.LookupId(id)
 		if err != nil {
 			return -1, err
 		}
 	} else {
-		u, err = user.LookupId(id)
+		u, err = user.Lookup(id)
 		if err != nil {
 			return -1, err
 		}

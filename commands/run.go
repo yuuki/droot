@@ -20,6 +20,8 @@ var CommandRun = cli.Command{
 	Action: fatalOnError(doRun),
 	Flags: []cli.Flag{
 		cli.StringFlag{Name: "root, r", Usage: "Root directory path for chrooting"},
+		cli.StringFlag{Name: "user, u", Usage: "User (ID or name) to switch before running the program"},
+		cli.StringFlag{Name: "group, g", Usage: "Group (ID or name) to switch to"},
 		cli.StringSliceFlag{
 			Name: "bind, b",
 			Value: &cli.StringSlice{},
@@ -27,7 +29,7 @@ var CommandRun = cli.Command{
 		},
 		cli.BoolFlag{
 			Name: "copy-files, cp",
-			Usage: "copy host from containersuch as /etc/hosts, /etc/group, /etc/passwd, /etc/hosts",
+			Usage: "Copy host from containersuch as /etc/hosts, /etc/group, /etc/passwd, /etc/hosts",
 		},
 	},
 }
@@ -122,9 +124,25 @@ func doRun(c *cli.Context) error {
 	}
 
 	log.Debug("chroot", rootDir, command)
-	if err := osutil.ChrootAndExec(keepCaps, rootDir, command...); err != nil {
+
+	if err := syscall.Chroot(rootDir); err != nil {
 		return err
 	}
-
-	return nil
+	if err := syscall.Chdir("/"); err != nil {
+		return err
+	}
+	if err := osutil.DropCapabilities(keepCaps); err != nil {
+		return err
+	}
+	if group := c.String("group"); group != "" {
+		if err := osutil.SetGroup(group); err != nil {
+			return err
+		}
+	}
+	if user := c.String("user"); user != "" {
+		if err := osutil.SetUser(user); err != nil {
+			return err
+		}
+	}
+	return osutil.Execv(command[0], command[0:], os.Environ())
 }
