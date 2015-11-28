@@ -63,10 +63,8 @@ func doRun(c *cli.Context) error {
 		return errors.New("--root option required")
 	}
 
-	for _, dir := range append(bindDirs, rootDir) {
-		if !osutil.ExistsDir(dir) {
-			return fmt.Errorf("No such directory %s", dir)
-		}
+	if !osutil.ExistsDir(rootDir) {
+		return fmt.Errorf("No such directory %s", rootDir)
 	}
 
 	// copy files
