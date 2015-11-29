@@ -75,6 +75,7 @@ func doPush(c *cli.Context) error {
 		return err
 	}
 
+	log.Info("s3 uploading to", to)
 	location, err := aws.NewS3Client().Upload(s3Url, tmpGzip)
 	if err != nil {
 		return err
