@@ -48,8 +48,10 @@ func doPush(c *cli.Context) error {
 	if err != nil {
 		return err
 	}
+	defer imageReader.Close()
 
 	gzipReader := osutil.Compress(imageReader)
+	defer gzipReader.Close()
 
 	log.Info("s3 uploading to", to)
 	location, err := aws.NewS3Client().Upload(s3Url, gzipReader)
