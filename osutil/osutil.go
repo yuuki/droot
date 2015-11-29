@@ -1,9 +1,9 @@
 package osutil
 
 import (
+	"bufio"
 	"compress/gzip"
 	"io"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"os/user"
@@ -60,22 +60,29 @@ func RunCmd(name string, arg ...string) error {
 	return nil
 }
 
-func Gzip(destWriter io.Writer, srcReader io.Reader) error {
-	w := gzip.NewWriter(destWriter)
-	defer w.Close()
+const compressionBufSize = 32768
 
-	bytes, err := ioutil.ReadAll(srcReader)
-	if err != nil {
-		return err
-	}
+func Compress(in io.Reader) io.ReadCloser {
+	pReader, pWriter := io.Pipe()
+	bufWriter := bufio.NewWriterSize(pWriter, compressionBufSize)
+	compressor := gzip.NewWriter(bufWriter)
 
-	nBytes, err := w.Write(bytes)
-	if err != nil {
-		return err
-	}
-	log.Debug("gzip bytes", nBytes)
+	go func() {
+		_, err := io.Copy(compressor, in)
+		if err == nil {
+			err = compressor.Close()
+		}
+		if err == nil {
+			err = bufWriter.Flush()
+		}
+		if err != nil {
+			pWriter.CloseWithError(err)
+		} else {
+			pWriter.Close()
+		}
+	}()
 
-	return nil
+	return pReader
 }
 
 func ExtractTarGz(filePath string) error {

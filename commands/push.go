@@ -63,20 +63,11 @@ func doPush(c *cli.Context) error {
 		return err
 	}
 
-	tmpGzip, err := ioutil.TempFile(os.TempDir(), "droot_gzip")
-	if err != nil {
-		return err
-	}
-	defer tmpGzip.Close()
-	defer os.Remove(tmpGzip.Name())
-
-	log.Info("gzip", "from", tmp.Name(), "to", tmpGzip.Name())
-	if err := osutil.Gzip(tmpGzip, tmp); err != nil {
-		return err
-	}
+	log.Info("gzip", "from", tmp.Name())
+	gzipReader := osutil.Compress(tmp)
 
 	log.Info("s3 uploading to", to)
-	location, err := aws.NewS3Client().Upload(s3Url, tmpGzip)
+	location, err := aws.NewS3Client().Upload(s3Url, gzipReader)
 	if err != nil {
 		return err
 	}

@@ -42,7 +42,7 @@ func (clt *S3Client) ExistsBucket(bucket string) (bool, error) {
 	return true, nil
 }
 
-func (clt *S3Client) Upload(s3Url *url.URL, file io.Reader) (string, error) {
+func (clt *S3Client) Upload(s3Url *url.URL, reader io.Reader) (string, error) {
 	bucket, object := s3Url.Host, s3Url.Path
 
 	ok, err := clt.ExistsBucket(bucket)
@@ -57,7 +57,7 @@ func (clt *S3Client) Upload(s3Url *url.URL, file io.Reader) (string, error) {
 	upOutput, err := uploader.Upload(&s3manager.UploadInput{
 		Bucket: &bucket,
 		Key:    &object,
-		Body:   file,
+		Body:   reader,
 	}, func(u *s3manager.Uploader) {
 		u.PartSize = uploadPartSize
 	})
