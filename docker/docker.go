@@ -27,13 +27,8 @@ func ExportImage(imageID string, outputStream io.Writer) error {
 		})
 	}(container.ID)
 
-	err = client.ExportContainer(docker.ExportContainerOptions{
+	return client.ExportContainer(docker.ExportContainerOptions{
 		ID: container.ID,
 		OutputStream: outputStream,
 	})
-	if err != nil {
-		return err
-	}
-
-	return err
 }
