@@ -6,8 +6,13 @@ import (
 	"fmt"
 	"golang.org/x/sys/unix"
 	"os"
+	"os/user"
 	"regexp"
+	"strconv"
 	"syscall"
+
+	"github.com/docker/libcontainer/system"
+	"github.com/yuuki1/go-group"
 
 	"github.com/yuuki1/droot/log"
 )
@@ -66,6 +71,59 @@ func UmountRoot(rootDir string) (err error) {
 	}
 	return
 }
+
+func LookupGroup(id string) (int, error) {
+	var g *group.Group
+
+	if _, err := strconv.Atoi(id); err == nil {
+		g, err = group.LookupId(id)
+		if err != nil {
+			return -1, err
+		}
+	} else {
+		g, err = group.Lookup(id)
+		if err != nil {
+			return -1, err
+		}
+	}
+
+	return strconv.Atoi(g.Gid)
+}
+
+func SetGroup(id string) error {
+	gid, err := LookupGroup(id)
+	if err != nil {
+		return err
+	}
+	return system.Setgid(gid)
+}
+
+func LookupUser(id string) (int, error) {
+	var u *user.User
+
+	if _, err := strconv.Atoi(id); err == nil {
+		u, err = user.LookupId(id)
+		if err != nil {
+			return -1, err
+		}
+	} else {
+		u, err = user.Lookup(id)
+		if err != nil {
+			return -1, err
+		}
+	}
+
+	return strconv.Atoi(u.Uid)
+}
+
+func SetUser(id string) error {
+	uid, err := LookupUser(id)
+	if err != nil {
+		return err
+	}
+	return system.Setuid(uid)
+}
+
 
 func DropCapabilities(keepCaps map[uint]bool) error {
 	var i uint

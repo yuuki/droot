@@ -3,18 +3,15 @@ package osutil
 import (
 	"bufio"
 	"compress/gzip"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
-	"os/user"
 	fp "path/filepath"
-	"strconv"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
-
-	"github.com/docker/libcontainer/system"
-	"github.com/yuuki1/go-group"
 
 	"github.com/yuuki1/droot/log"
 )
@@ -208,55 +205,33 @@ func Execv(cmd string, args []string, env []string) error {
 	return syscall.Exec(name, args, env)
 }
 
+// stubs
+
+func GetMountsByRoot(rootDir string) ([]string, error) {
+	return nil, fmt.Errorf("osutil: GetMountsByRoot not implemented on %s/%s", runtime.GOOS, runtime.GOARCH)
+}
+
+func UmountRoot(rootDir string) (err error) {
+	return fmt.Errorf("osutil: UmountRoot not implemented on %s/%s", runtime.GOOS, runtime.GOARCH)
+}
+
 func LookupGroup(id string) (int, error) {
-	var g *group.Group
-
-	if _, err := strconv.Atoi(id); err == nil {
-		g, err = group.LookupId(id)
-		if err != nil {
-			return -1, err
-		}
-	} else {
-		g, err = group.Lookup(id)
-		if err != nil {
-			return -1, err
-		}
-	}
-
-	return strconv.Atoi(g.Gid)
+	return -1, fmt.Errorf("osutil: LookupGroup not implemented on %s/%s", runtime.GOOS, runtime.GOARCH)
 }
 
 func SetGroup(id string) error {
-	gid, err := LookupGroup(id)
-	if err != nil {
-		return err
-	}
-	return system.Setgid(gid)
+	return fmt.Errorf("osutil: SetGroup not implemented on %s/%s", runtime.GOOS, runtime.GOARCH)
 }
 
-func LookupUser(id string) (int, error) {
-	var u *user.User
-
-	if _, err := strconv.Atoi(id); err == nil {
-		u, err = user.LookupId(id)
-		if err != nil {
-			return -1, err
-		}
-	} else {
-		u, err = user.Lookup(id)
-		if err != nil {
-			return -1, err
-		}
-	}
-
-	return strconv.Atoi(u.Uid)
+func LookupUser(id string) error {
+	return fmt.Errorf("osutil: LookupUser not implemented on %s/%s", runtime.GOOS, runtime.GOARCH)
 }
 
 func SetUser(id string) error {
-	uid, err := LookupUser(id)
-	if err != nil {
-		return err
-	}
-	return system.Setuid(uid)
+	return fmt.Errorf("osutil: SetUser not implemented on %s/%s", runtime.GOOS, runtime.GOARCH)
+}
+
+func DropCapabilities(keepCaps map[uint]bool) error {
+	return fmt.Errorf("osutil: DropCapabilities not implemented on %s/%s", runtime.GOOS, runtime.GOARCH)
 }
 
