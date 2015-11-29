@@ -24,7 +24,7 @@ func ExportImage(imageID string) (io.ReadCloser, error) {
 	}
 	defer func(containerID string) error {
 		return client.RemoveContainer(docker.RemoveContainerOptions{
-			ID: containerID,
+			ID:    containerID,
 			Force: true,
 		})
 	}(container.ID)
@@ -33,7 +33,7 @@ func ExportImage(imageID string) (io.ReadCloser, error) {
 
 	go func() {
 		err := client.ExportContainer(docker.ExportContainerOptions{
-			ID: container.ID,
+			ID:           container.ID,
 			OutputStream: pWriter,
 		})
 		if err != nil {

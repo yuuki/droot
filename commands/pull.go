@@ -3,9 +3,9 @@ package commands
 import (
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"net/url"
 	"os"
-	"io/ioutil"
 
 	"github.com/codegangsta/cli"
 
@@ -16,8 +16,8 @@ import (
 
 var CommandArgPull = "--dest DESTINATION_DIRECTORY --src S3_ENDPOINT"
 var CommandPull = cli.Command{
-	Name:  "pull",
-	Usage: "Pull an extracted docker image from s3",
+	Name:   "pull",
+	Usage:  "Pull an extracted docker image from s3",
 	Action: fatalOnError(doPull),
 	Flags: []cli.Flag{
 		cli.StringFlag{Name: "dest, d", Usage: "Local filesystem path (ex. /var/containers/app)"},
@@ -41,7 +41,7 @@ func doPull(c *cli.Context) error {
 		return fmt.Errorf("Not s3 scheme %s", srcURL)
 	}
 
-	if ! osutil.ExistsDir(destDir) {
+	if !osutil.ExistsDir(destDir) {
 		return fmt.Errorf("No such directory %s", destDir)
 	}
 

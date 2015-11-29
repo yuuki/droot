@@ -39,9 +39,9 @@ func GetMountsByRoot(rootDir string) ([]string, error) {
 
 		var (
 			text           = s.Text()
-			mountpoint string
+			mountpoint     string
 			d1, d2, d3, d4 int
-			s1, s2, s3 string
+			s1, s2, s3     string
 		)
 
 		if _, err := fmt.Sscanf(text, mountinfoFormat, &d1, &d2,
@@ -124,7 +124,6 @@ func SetUser(id string) error {
 	return system.Setuid(uid)
 }
 
-
 func DropCapabilities(keepCaps map[uint]bool) error {
 	var i uint
 	for i = 0; ; i++ {
@@ -156,4 +155,3 @@ func DropCapabilities(keepCaps map[uint]bool) error {
 
 	return nil
 }
-

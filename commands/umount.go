@@ -11,8 +11,8 @@ import (
 
 var CommandArgUmount = "--root ROOT_DIR"
 var CommandUmount = cli.Command{
-	Name:  "umount",
-	Usage: "Umount directory mounted by 'run' command",
+	Name:   "umount",
+	Usage:  "Umount directory mounted by 'run' command",
 	Action: fatalOnError(doUmount),
 	Flags: []cli.Flag{
 		cli.StringFlag{Name: "root, r", Usage: "Root directory path for chrooted"},

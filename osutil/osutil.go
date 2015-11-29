@@ -171,7 +171,6 @@ func ForceUnmount(target string, flag int) (err error) {
 	return
 }
 
-
 // Mknod unless path does not exists.
 func Mknod(path string, mode uint32, dev int) error {
 	if ExistsFile(path) {
@@ -234,4 +233,3 @@ func SetUser(id string) error {
 func DropCapabilities(keepCaps map[uint]bool) error {
 	return fmt.Errorf("osutil: DropCapabilities not implemented on %s/%s", runtime.GOOS, runtime.GOARCH)
 }
-

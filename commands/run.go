@@ -1,6 +1,6 @@
 package commands
 
-import(
+import (
 	"errors"
 	"fmt"
 	"os"
@@ -16,25 +16,25 @@ import(
 
 var CommandArgRun = "--root ROOT_DIR [--user USER] [--group GROUP] [--bind SRC-PATH[:DEST-PATH]] [--robind SRC-PATH[:DEST-PATH]] COMMAND"
 var CommandRun = cli.Command{
-	Name:  "run",
-	Usage: "Run an extracted docker image from s3",
+	Name:   "run",
+	Usage:  "Run an extracted docker image from s3",
 	Action: fatalOnError(doRun),
 	Flags: []cli.Flag{
 		cli.StringFlag{Name: "root, r", Usage: "Root directory path for chrooting"},
 		cli.StringFlag{Name: "user, u", Usage: "User (ID or name) to switch before running the program"},
 		cli.StringFlag{Name: "group, g", Usage: "Group (ID or name) to switch to"},
 		cli.StringSliceFlag{
-			Name: "bind, b",
+			Name:  "bind, b",
 			Value: &cli.StringSlice{},
 			Usage: "Bind mount directory (can be specifies multiple times)",
 		},
 		cli.StringSliceFlag{
-			Name: "robind",
+			Name:  "robind",
 			Value: &cli.StringSlice{},
 			Usage: "Readonly bind mount directory (can be specifies multiple times)",
 		},
 		cli.BoolFlag{
-			Name: "copy-files, cp",
+			Name:  "copy-files, cp",
 			Usage: "Copy host from containersuch as /etc/hosts, /etc/group, /etc/passwd, /etc/hosts",
 		},
 	},
@@ -48,10 +48,10 @@ var copyFiles = []string{
 }
 
 var keepCaps = map[uint]bool{
-	2:	true,	// CAP_DAC_READ_SEARCH
-	6:	true,	// CAP_SETGID
-	7:	true,	// CAP_SETUID
-	10:	true,	// CAP_NET_BIND_SERVICE
+	2:  true, // CAP_DAC_READ_SEARCH
+	6:  true, // CAP_SETGID
+	7:  true, // CAP_SETUID
+	10: true, // CAP_NET_BIND_SERVICE
 }
 
 func doRun(c *cli.Context) error {
@@ -135,7 +135,6 @@ func doRun(c *cli.Context) error {
 	return osutil.Execv(command[0], command[0:], os.Environ())
 }
 
-
 func bindMount(bindDir string, rootDir string, readonly bool) error {
 	var srcDir, destDir string
 
@@ -212,16 +211,16 @@ func bindSystemMount(rootDir string) error {
 }
 
 func createDevices(rootDir string) error {
-	if err := osutil.Mknod(fp.Join(rootDir, os.DevNull), syscall.S_IFCHR | uint32(os.FileMode(0666)), 1*256+3); err != nil {
+	if err := osutil.Mknod(fp.Join(rootDir, os.DevNull), syscall.S_IFCHR|uint32(os.FileMode(0666)), 1*256+3); err != nil {
 		return err
 	}
 
-	if err := osutil.Mknod(fp.Join(rootDir, "/dev/zero"), syscall.S_IFCHR | uint32(os.FileMode(0666)), 1*256+3); err != nil {
+	if err := osutil.Mknod(fp.Join(rootDir, "/dev/zero"), syscall.S_IFCHR|uint32(os.FileMode(0666)), 1*256+3); err != nil {
 		return err
 	}
 
 	for _, f := range []string{"/dev/random", "/dev/urandom"} {
-		if err := osutil.Mknod(fp.Join(rootDir, f), syscall.S_IFCHR | uint32(os.FileMode(0666)), 1*256+9); err != nil {
+		if err := osutil.Mknod(fp.Join(rootDir, f), syscall.S_IFCHR|uint32(os.FileMode(0666)), 1*256+9); err != nil {
 			return err
 		}
 	}

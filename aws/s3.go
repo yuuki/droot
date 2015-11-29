@@ -15,7 +15,7 @@ import (
 	"github.com/yuuki1/droot/log"
 )
 
-const uploadPartSize = 64 * 1024 * 1024  // 64MB part size
+const uploadPartSize = 64 * 1024 * 1024 // 64MB part size
 const downloadPartSize = uploadPartSize
 
 type S3Client struct {
@@ -36,7 +36,7 @@ func (clt *S3Client) ExistsBucket(bucket string) (bool, error) {
 	_, err := clt.svc.ListObjects(&s3.ListObjectsInput{
 		Bucket: &bucket,
 	})
-        if err != nil {
+	if err != nil {
 		return false, err
 	}
 	return true, nil
@@ -49,7 +49,7 @@ func (clt *S3Client) Upload(s3Url *url.URL, reader io.Reader) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if ! ok {
+	if !ok {
 		return "", errors.New(fmt.Sprintf("No such bucket: %s", bucket))
 	}
 
@@ -75,7 +75,7 @@ func (clt *S3Client) Download(s3Url *url.URL, file io.WriterAt) (int64, error) {
 	if err != nil {
 		return -1, err
 	}
-	if ! ok {
+	if !ok {
 		return -1, errors.New(fmt.Sprintf("No such bucket: %s", bucket))
 	}
 

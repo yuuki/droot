@@ -32,9 +32,9 @@ Run '{{.Name}} COMMAND --help' for more information on a command.
 `
 
 var commandArgs = map[string]string{
-	"push": commands.CommandArgPush,
-	"pull": commands.CommandArgPull,
-	"run": commands.CommandArgRun,
+	"push":   commands.CommandArgPush,
+	"pull":   commands.CommandArgPull,
+	"run":    commands.CommandArgRun,
 	"umount": commands.CommandArgUmount,
 }
 
