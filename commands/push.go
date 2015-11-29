@@ -43,6 +43,9 @@ func doPush(c *cli.Context) error {
 		return fmt.Errorf("Not s3 scheme %s", to)
 	}
 
+	// In the Following, pipe like  `docker export ... | gzip -c | aws s3`
+	// to avoid to use a temporary file.
+
 	log.Info("export", repository)
 	imageReader, err := docker.ExportImage(repository)
 	if err != nil {
