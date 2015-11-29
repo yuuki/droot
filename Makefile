@@ -15,6 +15,9 @@ lint: testdeps
 	golint ./... | tee .golint.txt
 	test ! -s $(LINT_RET)
 
+cross: deps
+	goxc -tasks='xc archive' -bc 'linux,!arm darwin' -d . -resources-include='README*'
+
 deps:
 	go get -d -v ./...
 

@@ -5,7 +5,8 @@ RUN go get  github.com/golang/lint/golint \
             github.com/mattn/goveralls \
             golang.org/x/tools/cover \
             github.com/tools/godep \
-	          github.com/axw/gocov/gocov
+	          github.com/axw/gocov/gocov \
+            github.com/laher/goxc
 
 ENV USER root
 WORKDIR /go/src/github.com/yuuki1/droot
