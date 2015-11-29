@@ -8,5 +8,7 @@ go:
   - tip
 
 install:
-  - make
+  - make clean
+  - make test
+  - make build
 
