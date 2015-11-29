@@ -45,6 +45,8 @@ $ sudo droot umount --root /var/containers/app
 - image versioning
 - `pull` from docker registry
 - drivers except Amazon S3
+- `run` reads `.docekrenv`, `.dockerinit`
+- reduce fork&exec
 
 ## Contribution
 
