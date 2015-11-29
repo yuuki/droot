@@ -68,7 +68,7 @@ func (clt *S3Client) Upload(s3Url *url.URL, reader io.Reader) (string, error) {
 	return upOutput.Location, nil
 }
 
-func (clt *S3Client) Download(s3Url *url.URL, file io.WriterAt) (int64, error) {
+func (clt *S3Client) Download(s3Url *url.URL, writer io.WriterAt) (int64, error) {
 	bucket, object := s3Url.Host, s3Url.Path
 
 	ok, err := clt.ExistsBucket(bucket)
@@ -80,7 +80,7 @@ func (clt *S3Client) Download(s3Url *url.URL, file io.WriterAt) (int64, error) {
 	}
 
 	downloader := s3manager.NewDownloaderWithClient(clt.svc)
-	nBytes, err := downloader.Download(file, &s3.GetObjectInput{
+	nBytes, err := downloader.Download(writer, &s3.GetObjectInput{
 		Bucket: &bucket,
 		Key:    &object,
 	}, func(d *s3manager.Downloader) {
