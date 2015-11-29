@@ -3,9 +3,7 @@ package commands
 import (
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"net/url"
-	"os"
 
 	"github.com/codegangsta/cli"
 
@@ -45,26 +43,13 @@ func doPush(c *cli.Context) error {
 		return fmt.Errorf("Not s3 scheme %s", to)
 	}
 
-	tmp, err := ioutil.TempFile(os.TempDir(), "droot")
-	if err != nil {
-		return err
-	}
-	defer tmp.Close()
-	defer os.Remove(tmp.Name())
-
-	log.Info("Export docker image", "to", tmp.Name())
-	if err := docker.ExportImage(repository, tmp); err != nil {
-		return err
-	}
-
-	// reopen for reading
-	tmp, err = os.Open(tmp.Name())
+	log.Info("export", repository)
+	imageReader, err := docker.ExportImage(repository)
 	if err != nil {
 		return err
 	}
 
-	log.Info("gzip", "from", tmp.Name())
-	gzipReader := osutil.Compress(tmp)
+	gzipReader := osutil.Compress(imageReader)
 
 	log.Info("s3 uploading to", to)
 	location, err := aws.NewS3Client().Upload(s3Url, gzipReader)

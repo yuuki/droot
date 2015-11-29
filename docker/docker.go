@@ -6,10 +6,12 @@ import (
 	"github.com/fsouza/go-dockerclient"
 )
 
-func ExportImage(imageID string, outputStream io.Writer) error {
+const exportBufSize = 32768
+
+func ExportImage(imageID string) (io.ReadCloser, error) {
 	client, err := docker.NewClientFromEnv()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	container, err := client.CreateContainer(docker.CreateContainerOptions{
@@ -18,7 +20,7 @@ func ExportImage(imageID string, outputStream io.Writer) error {
 		},
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer func(containerID string) error {
 		return client.RemoveContainer(docker.RemoveContainerOptions{
@@ -27,8 +29,19 @@ func ExportImage(imageID string, outputStream io.Writer) error {
 		})
 	}(container.ID)
 
-	return client.ExportContainer(docker.ExportContainerOptions{
-		ID: container.ID,
-		OutputStream: outputStream,
-	})
+	pReader, pWriter := io.Pipe()
+
+	go func() {
+		err := client.ExportContainer(docker.ExportContainerOptions{
+			ID: container.ID,
+			OutputStream: pWriter,
+		})
+		if err != nil {
+			pWriter.CloseWithError(err)
+		} else {
+			pWriter.Close()
+		}
+	}()
+
+	return pReader, nil
 }
