@@ -9,6 +9,8 @@ Droot is a super-easy container chrooting a docker image without docker.
 
 `droot` provides a simpler container runtime without annoying Linux Namespace by chroot(2), Linux capabilities(7) and bind mount. `droot` helps you to chroot a container image built by `docker` and to import/export container images on Amazon S3.
 
+![droot concept](http://cdn-ak.f.st-hatena.com/images/fotolife/y/y_uuki/20151129/20151129193210.png?1448793174)
+
 ## Requirements
 
 - Docker (`droot push` only depends on it)
