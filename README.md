@@ -36,6 +36,21 @@ $ sudo droot run --bind /var/log/ --root /var/containers/app command
 $ sudo droot umount --root /var/containers/app
 ```
 
+### How to set your AWS credentials
+
+droot push/pull subcommands support the following methods to set your AWS credentials.
+
+1. an IAM instance profile. http://docs.aws.amazon.com/codedeploy/latest/userguide/how-to-create-iam-instance-profile.html
+1. Environment variables.
+
+```bash
+$ export AWS_ACCESS_KEY_ID=********
+$ export AWS_SECRET_ACCESS_KEY=********
+$ export AWS_REGION=********
+```
+
+1. `~/.aws/credentials` [a standard to manage credentials in the AWS SDKs](http://blogs.aws.amazon.com/security/post/Tx3D6U6WSFGOK2H/A-New-and-Standardized-Way-to-Manage-Credentials-in-the-AWS-SDKs)
+
 ## Roodmap
 
 - `rm` command for cleaning container environment
