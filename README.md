@@ -18,6 +18,21 @@ Droot provides a simpler container runtime without annoying Linux Namespaces. Dr
 
 ## Installation
 
+### Homebrew
+```bash
+$ brew tap yuuki1/droot
+$ brew install droot
+```
+
+### Download binary from GitHub Releases
+[Releases・yuuki1/droot - GitHub](https://github.com/yuuki1/droot/releases)
+
+### Build from source
+```bash
+ $ go get github.com/yuuki1/droot
+ $ go install github.com/yuuki1/droot/cmd
+```
+
 ## Usage
 
 ```bash
