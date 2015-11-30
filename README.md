@@ -1,4 +1,4 @@
-droot
+droot  [![Travis Build Status](https://travis-ci.org/yuuki1/droot.svg?branch=master)](https://travis-ci.org/yuuki1/droot)
 =====
 
 Droot is a super-easy container tool to chroot a docker image without docker.
