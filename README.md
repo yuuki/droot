@@ -62,6 +62,7 @@ $ export AWS_REGION=********
 - drivers except Amazon S3
 - `run` reads `.docekrenv`, `.dockerinit`
 - reduce fork&exec
+- `--no-dropcaps` option
 
 ## Development
 
