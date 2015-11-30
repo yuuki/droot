@@ -1,7 +1,7 @@
 droot
 =====
 
-Droot is a super-easy container chrooting a docker image without docker.
+Droot is a super-easy container tool to chroot a docker image without docker.
 
 ## Overview
 
