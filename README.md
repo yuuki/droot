@@ -64,6 +64,16 @@ $ export AWS_REGION=********
 ```
 - `~/.aws/credentials` [a standard to manage credentials in the AWS SDKs](http://blogs.aws.amazon.com/security/post/Tx3D6U6WSFGOK2H/A-New-and-Standardized-Way-to-Manage-Credentials-in-the-AWS-SDKs)
 
+### How to set docker endpoint
+
+Droot push supports the environment variables same as docker-machine such as DOCKER_HOST, DOCKER_TLS_VERIFY, DOCKER_CERT_PATH.
+ex.
+```
+DOCKER_TLS_VERIFY=1
+DOCKER_HOST=tcp://192.168.x.x:2376
+DOCKER_CERT_PATH=/home/yuuki/.docker/machine/machines/dev
+```
+
 ## Roodmap
 
 - `rm` command to clean container environment
