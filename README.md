@@ -71,8 +71,15 @@ It is recommanded to use Docker for development if you are on OSX and other OSs.
 
 ### build in Docker container
 
-```
+```bash
 $ ./script/build_in_container.sh
+```
+
+### Release
+
+```bash
+$ ./script/build_in_container.sh cross
+$ ghr -u yuuki1 -p 2 $VERSION snapshot/
 ```
 
 ## Contribution
