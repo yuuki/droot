@@ -38,7 +38,7 @@ $ sudo droot umount --root /var/containers/app
 
 ### How to set your AWS credentials
 
-droot push/pull subcommands support the following methods to set your AWS credentials.
+Droot push/pull subcommands support the following methods to set your AWS credentials.
 
 1. an IAM instance profile. http://docs.aws.amazon.com/codedeploy/latest/userguide/how-to-create-iam-instance-profile.html
 1. Environment variables.
@@ -62,6 +62,17 @@ $ export AWS_REGION=********
 - drivers except Amazon S3
 - `run` reads `.docekrenv`, `.dockerinit`
 - reduce fork&exec
+
+## Development
+
+Droot uses a library with cgo, so it is necessary to build in Linux for a Linux binary.
+It is recommanded to use Docker for development if you are on OSX and other OSs.
+
+### build in Docker container
+
+```
+$ ./script/build_in_container.sh
+```
 
 ## Contribution
 
