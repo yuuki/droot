@@ -36,11 +36,11 @@ $ brew install droot
 ## Usage
 
 ```bash
-$ droot push --to s3://example.com/dockerfiles/app.tar.gz dockerfiles/app
+$ droot push --to s3://drootexamples/app.tar.gz dockerfiles/app
 ```
 
 ```bash
-$ droot pull --dest /var/containers/app --src s3://example.com/dockerfiles/app.tar.gz
+$ droot pull --dest /var/containers/app --src s3://drootexamples/app.tar.gz
 ```
 
 ```bash
