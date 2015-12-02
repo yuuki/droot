@@ -5,7 +5,12 @@ all: clean lint test build
 test: testdeps
 	go test -v ./...
 
-build: deps
+gen:
+	go get golang.org/x/tools/cmd/stringer
+	go get github.com/golang/mock/mockgen
+	go generate ./...
+
+build: deps gen
 	go build -o $(BIN) ./cmd
 
 LINT_RET = .golint.txt
