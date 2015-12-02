@@ -62,34 +62,25 @@ func doPull(c *cli.Context) error {
 		}
 	}
 
-	tmp, err := ioutil.TempFile(os.TempDir(), "droot_gzip")
+	downloadSize, imageReader, err := aws.NewS3Client().Download(s3URL)
 	if err != nil {
 		return err
 	}
-	defer func(f *os.File){
-		f.Close()
-		os.Remove(f.Name())
-	}(tmp)
+	defer imageReader.Close()
+	log.Info("downloaded", "from", s3URL, downloadSize, "bytes")
 
-	nBytes, err := aws.NewS3Client().Download(s3URL, tmp)
+	dir, err := ioutil.TempDir(os.TempDir(), "droot")
 	if err != nil {
 		return err
 	}
-	log.Info("downloaded", "from", s3URL, "to", tmp.Name(), nBytes, "bytes")
+	defer os.RemoveAll(dir)
 
-	rawDir, err := ioutil.TempDir(os.TempDir(), "droot_raw")
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(rawDir)
-
-	log.Info("Extract archive:", tmp.Name(), "to", rawDir)
-	if err := archive.ExtractTarGz(tmp, rawDir, uid, gid); err != nil {
+	if err := archive.ExtractTarGz(imageReader, dir, uid, gid); err != nil {
 		return err
 	}
 
-	log.Info("Sync:", "from", rawDir, "to", destDir)
-	if err := archive.Rsync(rawDir, destDir); err != nil {
+	log.Info("rsync:", "from", dir, "to", destDir)
+	if err := archive.Rsync(dir, destDir); err != nil {
 		return err
 	}
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"os"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -68,27 +69,33 @@ func (clt *S3Client) Upload(s3Url *url.URL, reader io.Reader) (string, error) {
 	return upOutput.Location, nil
 }
 
-func (clt *S3Client) Download(s3Url *url.URL, writer io.WriterAt) (int64, error) {
+func (clt *S3Client) Download(s3Url *url.URL) (int64, *os.File, error) {
 	bucket, object := s3Url.Host, s3Url.Path
 
 	ok, err := clt.ExistsBucket(bucket)
 	if err != nil {
-		return -1, err
+		return -1, nil, err
 	}
 	if !ok {
-		return -1, errors.New(fmt.Sprintf("No such bucket: %s", bucket))
+		return -1, nil, fmt.Errorf("No such bucket: %s", bucket)
 	}
 
+	pReader, pWriter, err := os.Pipe()
+	if err != nil {
+		return -1, nil, err
+	}
+	defer pWriter.Close()
+
 	downloader := s3manager.NewDownloaderWithClient(clt.svc)
-	nBytes, err := downloader.Download(writer, &s3.GetObjectInput{
+	nBytes, err := downloader.Download(pWriter, &s3.GetObjectInput{
 		Bucket: &bucket,
 		Key:    &object,
 	}, func(d *s3manager.Downloader) {
 		d.PartSize = downloadPartSize
 	})
 	if err != nil {
-		return -1, err
+		return -1, nil, err
 	}
 
-	return nBytes, nil
+	return nBytes, pReader, nil
 }
