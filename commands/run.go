@@ -14,7 +14,7 @@ import (
 	"github.com/yuuki1/droot/osutil"
 )
 
-var CommandArgRun = "--root ROOT_DIR [--user USER] [--group GROUP] [--bind SRC-PATH[:DEST-PATH]] [--robind SRC-PATH[:DEST-PATH]] COMMAND"
+var CommandArgRun = "--root ROOT_DIR [--user USER] [--group GROUP] [--bind SRC-PATH[:DEST-PATH]] [--robind SRC-PATH[:DEST-PATH]] -- COMMAND"
 var CommandRun = cli.Command{
 	Name:   "run",
 	Usage:  "Run an extracted docker image from s3",
@@ -37,6 +37,7 @@ var CommandRun = cli.Command{
 			Name:  "copy-files, cp",
 			Usage: "Copy host from containersuch as /etc/hosts, /etc/group, /etc/passwd, /etc/hosts",
 		},
+		cli.BoolFlag{Name: "no-capability", Usage: "Provide COMMAND's process in chroot with root permission (dangerous)"},
 	},
 }
 
@@ -117,9 +118,11 @@ func doRun(c *cli.Context) error {
 		return err
 	}
 
-	log.Debug("drop capabilities")
-	if err := osutil.DropCapabilities(keepCaps); err != nil {
-		return err
+	if !c.Bool("no-capability") {
+		log.Debug("drop capabilities")
+		if err := osutil.DropCapabilities(keepCaps); err != nil {
+			return err
+		}
 	}
 
 	if group := c.String("group"); group != "" {
