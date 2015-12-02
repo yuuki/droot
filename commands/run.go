@@ -48,7 +48,10 @@ var copyFiles = []string{
 }
 
 var keepCaps = map[uint]bool{
+	0:  true, // CAP_CHOWN
+	1:  true, // CAP_DAC_OVERRIDE
 	2:  true, // CAP_DAC_READ_SEARCH
+	3:  true, // CAP_FOWNER
 	6:  true, // CAP_SETGID
 	7:  true, // CAP_SETUID
 	10: true, // CAP_NET_BIND_SERVICE
