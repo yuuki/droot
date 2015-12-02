@@ -67,22 +67,13 @@ func doPull(c *cli.Context) error {
 	}
 	defer os.RemoveAll(rawDir)
 
-	cwd, _ := os.Getwd()
-	if err := os.Chdir(rawDir); err != nil {
-		return err
-	}
-
 	log.Info("Extract archive:", tmp.Name(), "to", rawDir)
-	if err := archive.ExtractTarGz(tmp.Name()); err != nil {
+	if err := archive.ExtractTarGz(tmp, rawDir); err != nil {
 		return err
 	}
 
 	log.Info("Sync:", "from", rawDir, "to", destDir)
 	if err := archive.Rsync(rawDir, destDir); err != nil {
-		return err
-	}
-
-	if err = os.Chdir(cwd); err != nil {
 		return err
 	}
 

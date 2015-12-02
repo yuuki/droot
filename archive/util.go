@@ -4,8 +4,9 @@ import (
 	"bufio"
 	"compress/gzip"
 	"io"
-	"os"
 	"strings"
+
+	"github.com/docker/docker/pkg/archive"
 
 	"github.com/yuuki1/droot/osutil"
 )
@@ -14,16 +15,15 @@ const compressionBufSize = 32768
 
 var RsyncDefaultOpts = []string{"-av", "--delete"}
 
-func ExtractTarGz(filePath string) error {
-	if err := osutil.RunCmd("tar", "xf", filePath); err != nil {
-		return err
-	}
-
-	if err := os.Chmod(filePath, os.FileMode(0755)); err != nil {
-		return err
-	}
-
-	return nil
+func ExtractTarGz(in io.Reader, dest string) error {
+	return archive.Untar(in, dest, &archive.TarOptions{
+		Compression: archive.Gzip,
+		NoLchown: true,
+		// ChownOpts: &archive.TarChownOptions{
+		// 	UID: uid,
+		// 	GID: gid,
+		// },
+	})
 }
 
 func Rsync(from, to string, arg ...string) error {
