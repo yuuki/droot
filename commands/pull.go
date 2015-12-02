@@ -23,6 +23,8 @@ var CommandPull = cli.Command{
 	Flags: []cli.Flag{
 		cli.StringFlag{Name: "dest, d", Usage: "Local filesystem path (ex. /var/containers/app)"},
 		cli.StringFlag{Name: "src, s", Usage: "Amazon S3 endpoint (ex. s3://example.com/containers/app.tar.gz)"},
+		cli.StringFlag{Name: "user, u", Usage: "User (ID or name) to set after extracting archive"},
+		cli.StringFlag{Name: "group, g", Usage: "Group (ID or name) to set after extracting archive"},
 	},
 }
 
@@ -44,6 +46,20 @@ func doPull(c *cli.Context) error {
 
 	if !osutil.ExistsDir(destDir) {
 		return fmt.Errorf("No such directory %s", destDir)
+	}
+
+	uid, gid := -1, -1
+	if user := c.String("user"); user != "" {
+		uid, err = osutil.LookupUser(user)
+		if err != nil {
+			return err
+		}
+	}
+	if group := c.String("group"); group != "" {
+		gid, err = osutil.LookupGroup(group)
+		if err != nil {
+			return err
+		}
 	}
 
 	tmp, err := ioutil.TempFile(os.TempDir(), "droot_gzip")
@@ -68,7 +84,7 @@ func doPull(c *cli.Context) error {
 	defer os.RemoveAll(rawDir)
 
 	log.Info("Extract archive:", tmp.Name(), "to", rawDir)
-	if err := archive.ExtractTarGz(tmp, rawDir); err != nil {
+	if err := archive.ExtractTarGz(tmp, rawDir, uid, gid); err != nil {
 		return err
 	}
 

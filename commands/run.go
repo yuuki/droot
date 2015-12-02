@@ -186,13 +186,6 @@ func bindMount(bindDir string, rootDir string, readonly bool) error {
 }
 
 func bindSystemMount(rootDir string) error {
-	devDir := fp.Join(rootDir, "/dev")
-	if ok, err := osutil.Mounted(devDir); !ok && err == nil {
-		if err := osutil.RunCmd("mount", "--rbind", "/dev", fp.Join(rootDir, "/dev")); err != nil {
-			return err
-		}
-	}
-
 	procDir := fp.Join(rootDir, "/proc")
 	if ok, err := osutil.Mounted(procDir); !ok && err == nil {
 		if err := osutil.RunCmd("mount", "-t", "proc", "none", procDir); err != nil {
