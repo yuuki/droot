@@ -8,13 +8,22 @@ import (
 
 const exportBufSize = 32768
 
-func ExportImage(imageID string) (io.ReadCloser, error) {
-	client, err := docker.NewClientFromEnv()
+type Client struct {
+	docker dockerclient
+}
+
+func NewClient() (*Client, error) {
+	client, err := newDockerClient()
 	if err != nil {
 		return nil, err
 	}
+	return &Client{
+		docker: client,
+	}, nil
+}
 
-	container, err := client.CreateContainer(docker.CreateContainerOptions{
+func (c *Client) ExportImage(imageID string) (io.ReadCloser, error) {
+	container, err := c.docker.CreateContainer(docker.CreateContainerOptions{
 		Config: &docker.Config{
 			Image: imageID,
 		},
@@ -23,7 +32,7 @@ func ExportImage(imageID string) (io.ReadCloser, error) {
 		return nil, err
 	}
 	defer func(containerID string) error {
-		return client.RemoveContainer(docker.RemoveContainerOptions{
+		return c.docker.RemoveContainer(docker.RemoveContainerOptions{
 			ID:    containerID,
 			Force: true,
 		})
@@ -32,7 +41,7 @@ func ExportImage(imageID string) (io.ReadCloser, error) {
 	pReader, pWriter := io.Pipe()
 
 	go func() {
-		err := client.ExportContainer(docker.ExportContainerOptions{
+		err := c.docker.ExportContainer(docker.ExportContainerOptions{
 			ID:           container.ID,
 			OutputStream: pWriter,
 		})

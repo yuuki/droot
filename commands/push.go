@@ -47,6 +47,10 @@ func doPush(c *cli.Context) error {
 	// to avoid to use a temporary file.
 
 	log.Info("export", repository)
+	docker, err := docker.NewClient()
+	if err != nil {
+		return err
+	}
 	imageReader, err := docker.ExportImage(repository)
 	if err != nil {
 		return err
