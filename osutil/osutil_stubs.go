@@ -23,8 +23,8 @@ func SetGroup(id string) error {
 	return fmt.Errorf("osutil: SetGroup not implemented on %s/%s", runtime.GOOS, runtime.GOARCH)
 }
 
-func LookupUser(id string) error {
-	return fmt.Errorf("osutil: LookupUser not implemented on %s/%s", runtime.GOOS, runtime.GOARCH)
+func LookupUser(id string) (int, error) {
+	return -1, fmt.Errorf("osutil: LookupUser not implemented on %s/%s", runtime.GOOS, runtime.GOARCH)
 }
 
 func SetUser(id string) error {
