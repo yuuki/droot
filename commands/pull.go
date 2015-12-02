@@ -49,8 +49,10 @@ func doPull(c *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	defer tmp.Close()
-	defer os.Remove(tmp.Name())
+	defer func(f *os.File){
+		f.Close()
+		os.Remove(f.Name())
+	}(tmp)
 
 	nBytes, err := aws.NewS3Client().Download(s3URL, tmp)
 	if err != nil {
