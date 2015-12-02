@@ -15,7 +15,7 @@ import (
 	"github.com/yuuki1/droot/osutil"
 )
 
-var CommandArgPull = "--dest DESTINATION_DIRECTORY --src S3_ENDPOINT"
+var CommandArgPull = "--dest DESTINATION_DIRECTORY --src S3_ENDPOINT [--user USER] [--grpup GROUP]"
 var CommandPull = cli.Command{
 	Name:   "pull",
 	Usage:  "Pull an extracted docker image from s3",
