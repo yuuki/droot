@@ -51,6 +51,10 @@ $ sudo droot run --bind /var/log/ --root /var/containers/app command
 $ sudo droot umount --root /var/containers/app
 ```
 
+```bash
+$ sudo droot rm --root /var/containers/app
+```
+
 ### How to set your AWS credentials
 
 Droot push/pull subcommands support the following methods to set your AWS credentials.
