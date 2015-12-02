@@ -1,20 +1,15 @@
 package osutil
 
 import (
-	"bufio"
-	"compress/gzip"
 	"io"
 	"os"
 	"os/exec"
 	fp "path/filepath"
-	"strings"
 	"syscall"
 	"time"
 
 	"github.com/yuuki1/droot/log"
 )
-
-var RsyncDefaultOpts = []string{"-av", "--delete"}
 
 func ExistsFile(file string) bool {
 	f, err := os.Stat(file)
@@ -52,61 +47,6 @@ func RunCmd(name string, arg ...string) error {
 		return err
 	}
 	log.Debug("runcmd: ", name, arg)
-	return nil
-}
-
-const compressionBufSize = 32768
-
-func Compress(in io.Reader) io.ReadCloser {
-	pReader, pWriter := io.Pipe()
-	bufWriter := bufio.NewWriterSize(pWriter, compressionBufSize)
-	compressor := gzip.NewWriter(bufWriter)
-
-	go func() {
-		_, err := io.Copy(compressor, in)
-		if err == nil {
-			err = compressor.Close()
-		}
-		if err == nil {
-			err = bufWriter.Flush()
-		}
-		if err != nil {
-			pWriter.CloseWithError(err)
-		} else {
-			pWriter.Close()
-		}
-	}()
-
-	return pReader
-}
-
-func ExtractTarGz(filePath string) error {
-	if err := RunCmd("tar", "xf", filePath); err != nil {
-		return err
-	}
-
-	if err := os.Chmod(filePath, os.FileMode(0755)); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func Rsync(from, to string, arg ...string) error {
-	from = from + "/"
-	// append "/" when not terminated by "/"
-	if strings.LastIndex(to, "/") != len(to)-1 {
-		to = to + "/"
-	}
-
-	// TODO --exclude, --excluded-from
-	rsyncArgs := []string{}
-	rsyncArgs = append(rsyncArgs, RsyncDefaultOpts...)
-	rsyncArgs = append(rsyncArgs, from, to)
-	if err := RunCmd("rsync", rsyncArgs...); err != nil {
-		return err
-	}
-
 	return nil
 }
 

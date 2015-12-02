@@ -9,6 +9,7 @@ import (
 
 	"github.com/codegangsta/cli"
 
+	"github.com/yuuki1/droot/archive"
 	"github.com/yuuki1/droot/aws"
 	"github.com/yuuki1/droot/log"
 	"github.com/yuuki1/droot/osutil"
@@ -72,12 +73,12 @@ func doPull(c *cli.Context) error {
 	}
 
 	log.Info("Extract archive:", tmp.Name(), "to", rawDir)
-	if err := osutil.ExtractTarGz(tmp.Name()); err != nil {
+	if err := archive.ExtractTarGz(tmp.Name()); err != nil {
 		return err
 	}
 
 	log.Info("Sync:", "from", rawDir, "to", destDir)
-	if err := osutil.Rsync(rawDir, destDir); err != nil {
+	if err := archive.Rsync(rawDir, destDir); err != nil {
 		return err
 	}
 

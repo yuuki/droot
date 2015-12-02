@@ -7,10 +7,10 @@ import (
 
 	"github.com/codegangsta/cli"
 
+	"github.com/yuuki1/droot/archive"
 	"github.com/yuuki1/droot/aws"
 	"github.com/yuuki1/droot/docker"
 	"github.com/yuuki1/droot/log"
-	"github.com/yuuki1/droot/osutil"
 )
 
 var CommandArgPush = "--to S3_ENDPOINT DOCKER_REPOSITORY[:TAG]"
@@ -57,7 +57,7 @@ func doPush(c *cli.Context) error {
 	}
 	defer imageReader.Close()
 
-	gzipReader := osutil.Compress(imageReader)
+	gzipReader := archive.Compress(imageReader)
 	defer gzipReader.Close()
 
 	log.Info("s3 uploading to", to)
