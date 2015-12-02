@@ -85,7 +85,6 @@ DOCKER_CERT_PATH=/home/yuuki/.docker/machine/machines/dev
 - drivers except Amazon S3
 - `run` reads `.docekrenv`, `.dockerinit`
 - reduce fork&exec
-- `--no-dropcaps` option
 
 ## Development
 
