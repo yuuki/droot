@@ -44,6 +44,14 @@ func doPull(c *cli.Context) error {
 		return fmt.Errorf("Not s3 scheme %s", srcURL)
 	}
 
+	// If dest dir doesn't exists, create it
+	if !osutil.ExistsDir(destDir) {
+		if err := os.Mkdir(destDir, 0755); err != nil {
+			return fmt.Errorf("Failed to mkdir %s", destDir)
+		}
+		//TODO if the process has chown capabilities, run chown
+	}
+
 	uid, gid := -1, -1
 	if user := c.String("user"); user != "" {
 		uid, err = osutil.LookupUser(user)
