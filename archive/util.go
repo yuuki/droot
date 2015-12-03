@@ -22,7 +22,6 @@ func ExtractTarGz(in io.Reader, dest string, uid int, gid int) (err error) {
 		if err := os.Mkdir(dest, 0755); err != nil {
 			return err
 		}
-		os.Chown(dest, uid, gid)
 	}
 
 	nolchown := true
