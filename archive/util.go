@@ -3,11 +3,13 @@ package archive
 import (
 	"bufio"
 	"compress/gzip"
+	"fmt"
 	"io"
 	"os"
 	"strings"
 
 	"github.com/docker/docker/pkg/archive"
+	"github.com/hashicorp/errwrap"
 
 	"github.com/yuuki1/droot/osutil"
 )
@@ -20,7 +22,7 @@ func ExtractTarGz(in io.Reader, dest string, uid int, gid int) (err error) {
 	// If dest dir doesn't exists, create it and chown uid/gid
 	if !osutil.ExistsDir(dest) {
 		if err := os.Mkdir(dest, 0755); err != nil {
-			return err
+			return errwrap.Wrapf(fmt.Sprintf("Failed to mkdir %s: {{err}}", dest), err)
 		}
 	}
 
@@ -39,6 +41,7 @@ func ExtractTarGz(in io.Reader, dest string, uid int, gid int) (err error) {
 			UID: uid,
 			GID: gid,
 		},
+		ExcludePatterns: []string{"dev/"}, // prevent operation not permitted
 	})
 }
 
@@ -74,7 +77,7 @@ func Compress(in io.Reader) io.ReadCloser {
 			err = bufWriter.Flush()
 		}
 		if err != nil {
-			pWriter.CloseWithError(err)
+			pWriter.CloseWithError(errwrap.Wrapf("Failed to compress: {{err}}", err))
 		} else {
 			pWriter.Close()
 		}

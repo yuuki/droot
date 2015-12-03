@@ -37,7 +37,7 @@ func doPush(c *cli.Context) error {
 
 	s3Url, err := url.Parse(to)
 	if err != nil {
-		return err
+		return fmt.Errorf("Failed to parse %s: %s", to, err)
 	}
 	if s3Url.Scheme != "s3" {
 		return fmt.Errorf("Not s3 scheme %s", to)
@@ -49,11 +49,11 @@ func doPush(c *cli.Context) error {
 	log.Info("export", repository)
 	docker, err := docker.NewClient()
 	if err != nil {
-		return err
+		return fmt.Errorf("Failed to create docker client: %s", err)
 	}
 	imageReader, err := docker.ExportImage(repository)
 	if err != nil {
-		return err
+		return fmt.Errorf("Failed to export image %s: %s", repository, err)
 	}
 	defer imageReader.Close()
 
@@ -63,7 +63,7 @@ func doPush(c *cli.Context) error {
 	log.Info("s3 uploading to", to)
 	location, err := aws.NewS3Client().Upload(s3Url, gzipReader)
 	if err != nil {
-		return err
+		return fmt.Errorf("Failed to upload file: %s", err)
 	}
 	log.Info("uploaded", location)
 

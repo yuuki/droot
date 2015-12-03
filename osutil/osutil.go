@@ -1,12 +1,15 @@
 package osutil
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	fp "path/filepath"
 	"syscall"
 	"time"
+
+	"github.com/hashicorp/errwrap"
 
 	"github.com/yuuki1/droot/log"
 )
@@ -26,27 +29,26 @@ func ExistsDir(dir string) bool {
 func IsDirEmpty(dir string) (bool, error) {
 	f, err := os.Open(dir)
 	if err != nil {
-		return false, err
+		return false, errwrap.Wrapf(fmt.Sprintf("Failed to open %s", dir), err)
 	}
 	defer f.Close()
 
 	_, err = f.Readdir(1)
 	if err == io.EOF {
-		return true, nil
+		return true, errwrap.Wrapf(fmt.Sprintf("Failed to readdir %s", dir), err)
 	}
 	return false, err // Either not empty or error, suits both cases
 }
 
 func RunCmd(name string, arg ...string) error {
+	log.Debug("runcmd: ", name, arg)
 	out, err := exec.Command(name, arg...).CombinedOutput()
 	if len(out) > 0 {
 		log.Debug(string(out))
 	}
 	if err != nil {
-		log.Errorf("failed: %s %s", name, arg)
-		return err
+		return errwrap.Wrapf(fmt.Sprintf("Failed to exec %s %s: {{err}}", name, arg), err)
 	}
-	log.Debug("runcmd: ", name, arg)
 	return nil
 }
 
@@ -91,7 +93,7 @@ func Mounted(mountpoint string) (bool, error) {
 // Unmount will unmount the target filesystem, so long as it is mounted.
 func Unmount(target string, flag int) error {
 	if mounted, err := Mounted(target); err != nil || !mounted {
-		return err
+		return errwrap.Wrapf(fmt.Sprintf("Failed to unmount %s: {{err}}", target), err)
 	}
 	return ForceUnmount(target, flag)
 }
@@ -102,7 +104,7 @@ func ForceUnmount(target string, flag int) (err error) {
 	// Simple retry logic for unmount
 	for i := 0; i < 10; i++ {
 		if err = syscall.Unmount(target, flag); err == nil {
-			return err
+			return errwrap.Wrapf(fmt.Sprintf("Failed to force unmount %s: {{err}}", target), err)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -115,7 +117,7 @@ func Mknod(path string, mode uint32, dev int) error {
 		return nil
 	}
 	if err := syscall.Mknod(path, mode, dev); err != nil {
-		return err
+		return errwrap.Wrapf(fmt.Sprintf("Failed to mknod %s: {{err}}", path), err)
 	}
 	return nil
 }
@@ -125,7 +127,7 @@ func Symlink(oldname, newname string) error {
 	if err := os.Symlink(oldname, newname); err != nil {
 		// Ignore already created symlink
 		if _, ok := err.(*os.LinkError); !ok {
-			return err
+			return errwrap.Wrapf(fmt.Sprintf("Failed to symlink %s %s: {{err}}", oldname, newname), err)
 		}
 	}
 	return nil
@@ -134,7 +136,7 @@ func Symlink(oldname, newname string) error {
 func Execv(cmd string, args []string, env []string) error {
 	name, err := exec.LookPath(cmd)
 	if err != nil {
-		return err
+		return errwrap.Wrapf(fmt.Sprintf("Not found %s: {{err}}", cmd), err)
 	}
 
 	log.Debug("exec: ", name, args)

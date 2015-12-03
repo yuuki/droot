@@ -1,7 +1,6 @@
 package aws
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -11,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
+	"github.com/hashicorp/errwrap"
 
 	"github.com/yuuki1/droot/log"
 )
@@ -37,7 +37,7 @@ func (clt *S3Client) ExistsBucket(bucket string) (bool, error) {
 		Bucket: &bucket,
 	})
 	if err != nil {
-		return false, err
+		return false, errwrap.Wrapf(fmt.Sprintf("Failed to list s3 objects %s: {{err}}", bucket), err)
 	}
 	return true, nil
 }
@@ -50,7 +50,7 @@ func (clt *S3Client) Upload(s3Url *url.URL, reader io.Reader) (string, error) {
 		return "", err
 	}
 	if !ok {
-		return "", errors.New(fmt.Sprintf("No such bucket: %s", bucket))
+		return "", fmt.Errorf("No such bucket: %s", bucket)
 	}
 
 	uploader := s3manager.NewUploaderWithClient(clt.svc)
@@ -62,7 +62,7 @@ func (clt *S3Client) Upload(s3Url *url.URL, reader io.Reader) (string, error) {
 		u.PartSize = uploadPartSize
 	})
 	if err != nil {
-		return "", err
+		return "", errwrap.Wrapf("Failed to upload s3: {{err}}", err)
 	}
 
 	return upOutput.Location, nil
@@ -76,7 +76,7 @@ func (clt *S3Client) Download(s3Url *url.URL, writer io.WriterAt) (int64, error)
 		return -1, err
 	}
 	if !ok {
-		return -1, errors.New(fmt.Sprintf("No such bucket: %s", bucket))
+		return -1, fmt.Errorf("No such bucket: %s", bucket)
 	}
 
 	downloader := s3manager.NewDownloaderWithClient(clt.svc)
@@ -87,7 +87,7 @@ func (clt *S3Client) Download(s3Url *url.URL, writer io.WriterAt) (int64, error)
 		d.PartSize = downloadPartSize
 	})
 	if err != nil {
-		return -1, err
+		return -1, errwrap.Wrapf("Failed to download s3: {{err}}", err)
 	}
 
 	return nBytes, nil

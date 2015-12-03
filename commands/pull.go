@@ -48,19 +48,19 @@ func doPull(c *cli.Context) error {
 	if user := c.String("user"); user != "" {
 		uid, err = osutil.LookupUser(user)
 		if err != nil {
-			return err
+			return fmt.Errorf("Failed to lookup user (%s): %s", user, err)
 		}
 	}
 	if group := c.String("group"); group != "" {
 		gid, err = osutil.LookupGroup(group)
 		if err != nil {
-			return err
+			return fmt.Errorf("Failed to lookup group (%s): %s", group, err)
 		}
 	}
 
 	tmp, err := ioutil.TempFile(os.TempDir(), "droot_gzip")
 	if err != nil {
-		return err
+		return fmt.Errorf("Failed to create temporary file: %s", err)
 	}
 	defer func(f *os.File){
 		f.Close()
@@ -69,24 +69,24 @@ func doPull(c *cli.Context) error {
 
 	nBytes, err := aws.NewS3Client().Download(s3URL, tmp)
 	if err != nil {
-		return err
+		return fmt.Errorf("Failed to download file(%s) from s3: %s", srcURL, err)
 	}
 	log.Info("downloaded", "from", s3URL, "to", tmp.Name(), nBytes, "bytes")
 
 	rawDir, err := ioutil.TempDir(os.TempDir(), "droot_raw")
 	if err != nil {
-		return err
+		return fmt.Errorf("Failed to create temporary dir: %s", err)
 	}
 	defer os.RemoveAll(rawDir)
 
 	log.Info("Extract archive:", tmp.Name(), "to", rawDir)
 	if err := archive.ExtractTarGz(tmp, rawDir, uid, gid); err != nil {
-		return err
+		return fmt.Errorf("Failed to extract archive: %s", err)
 	}
 
 	log.Info("Sync:", "from", rawDir, "to", destDir)
 	if err := archive.Rsync(rawDir, destDir); err != nil {
-		return err
+		return fmt.Errorf("Failed to rsync: %s", err)
 	}
 
 	return nil

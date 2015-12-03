@@ -1,8 +1,10 @@
 package docker
 
 import (
+	"fmt"
 	"io"
 
+	"github.com/hashicorp/errwrap"
 	"github.com/fsouza/go-dockerclient"
 )
 
@@ -29,7 +31,7 @@ func (c *Client) ExportImage(imageID string) (io.ReadCloser, error) {
 		},
 	})
 	if err != nil {
-		return nil, err
+		return nil, errwrap.Wrapf(fmt.Sprintf("Failed to create container (imageID:%s): {{err}}", imageID), err)
 	}
 	defer func(containerID string) error {
 		return c.docker.RemoveContainer(docker.RemoveContainerOptions{
@@ -46,6 +48,7 @@ func (c *Client) ExportImage(imageID string) (io.ReadCloser, error) {
 			OutputStream: pWriter,
 		})
 		if err != nil {
+			err = errwrap.Wrapf(fmt.Sprintf("Failed to export container %s: {{err}}", container.ID), err)
 			pWriter.CloseWithError(err)
 		} else {
 			pWriter.Close()
