@@ -22,7 +22,7 @@ var CommandPull = cli.Command{
 	Action: fatalOnError(doPull),
 	Flags: []cli.Flag{
 		cli.StringFlag{Name: "dest, d", Usage: "Local filesystem path (ex. /var/containers/app)"},
-		cli.StringFlag{Name: "src, s", Usage: "Amazon S3 endpoint (ex. s3://example.com/containers/app.tar.gz)"},
+		cli.StringFlag{Name: "src, s", Usage: "Amazon S3 endpoint (ex. s3://drootexample/app.tar.gz)"},
 		cli.StringFlag{Name: "user, u", Usage: "User (ID or name) to set after extracting archive"},
 		cli.StringFlag{Name: "group, g", Usage: "Group (ID or name) to set after extracting archive"},
 	},

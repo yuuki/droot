@@ -19,7 +19,7 @@ var CommandPush = cli.Command{
 	Usage:  "Push an extracted docker image into s3",
 	Action: fatalOnError(doPush),
 	Flags: []cli.Flag{
-		cli.StringFlag{Name: "to, t", Usage: "Amazon S3 endpoint (ex. s3://example.com/containers/app.tar.gz)"},
+		cli.StringFlag{Name: "to, t", Usage: "Amazon S3 endpoint (ex. s3://drootexample/app.tar.gz)"},
 	},
 }
 
