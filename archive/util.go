@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"compress/gzip"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/docker/docker/pkg/archive"
@@ -16,6 +17,14 @@ const compressionBufSize = 32768
 var RsyncDefaultOpts = []string{"-av", "--delete"}
 
 func ExtractTarGz(in io.Reader, dest string, uid int, gid int) (err error) {
+	// If dest dir doesn't exists, create it and chown uid/gid
+	if !osutil.ExistsDir(dest) {
+		if err := os.Mkdir(dest, 0755); err != nil {
+			return err
+		}
+		os.Chown(dest, uid, gid)
+	}
+
 	nolchown := true
 	if uid < 0 {
 		nolchown = false

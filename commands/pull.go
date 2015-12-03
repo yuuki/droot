@@ -44,10 +44,6 @@ func doPull(c *cli.Context) error {
 		return fmt.Errorf("Not s3 scheme %s", srcURL)
 	}
 
-	if !osutil.ExistsDir(destDir) {
-		return fmt.Errorf("No such directory %s", destDir)
-	}
-
 	uid, gid := -1, -1
 	if user := c.String("user"); user != "" {
 		uid, err = osutil.LookupUser(user)
