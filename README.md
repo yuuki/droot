@@ -104,6 +104,7 @@ $ ./script/build_in_container.sh
 ### Release
 
 ```bash
+$ vim ./cmd/version.go
 $ ./script/build_in_container.sh cross
 $ ghr -u yuuki1 -p 2 $VERSION snapshot/
 ```
