@@ -80,7 +80,6 @@ DOCKER_CERT_PATH=/home/yuuki/.docker/machine/machines/dev
 
 ## Roodmap
 
-- `rm` command to clean container environment
 - `rmi` command to clean a image on S3
 - `pull` command with the rsync option
 - `push/pull` other compression algorithms
