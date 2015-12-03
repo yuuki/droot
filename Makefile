@@ -13,6 +13,9 @@ gen:
 build: deps gen
 	go build -o $(BIN) ./cmd
 
+fmt: deps
+	gofmt -s -w .
+
 LINT_RET = .golint.txt
 lint: testdeps
 	go vet ./...
