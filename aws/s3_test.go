@@ -2,9 +2,9 @@ package aws
 
 import (
 	"bytes"
+	"io/ioutil"
 	"net/http"
 	"net/url"
-	"io/ioutil"
 	"sync"
 	"testing"
 
@@ -46,4 +46,3 @@ func TestUpload(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, "https://droot-sandbox.s3.mock-region.amazonaws.com/images/app.tar.gz", location)
 }
-

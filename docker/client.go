@@ -38,4 +38,3 @@ func (d *_dockerclient) CreateContainer(opts godocker.CreateContainerOptions) (*
 func (d *_dockerclient) ExportContainer(opts godocker.ExportContainerOptions) error {
 	return d.docker.ExportContainer(opts)
 }
-

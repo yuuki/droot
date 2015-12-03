@@ -27,7 +27,7 @@ func ExtractTarGz(in io.Reader, dest string, uid int, gid int) (err error) {
 
 	return archive.Untar(in, dest, &archive.TarOptions{
 		Compression: archive.Gzip,
-		NoLchown: nolchown,
+		NoLchown:    nolchown,
 		ChownOpts: &archive.TarChownOptions{
 			UID: uid,
 			GID: gid,
@@ -76,4 +76,3 @@ func Compress(in io.Reader) io.ReadCloser {
 
 	return pReader
 }
-

@@ -70,7 +70,7 @@ func doPull(c *cli.Context) error {
 	if err != nil {
 		return fmt.Errorf("Failed to create temporary file: %s", err)
 	}
-	defer func(f *os.File){
+	defer func(f *os.File) {
 		f.Close()
 		os.Remove(f.Name())
 	}(tmp)

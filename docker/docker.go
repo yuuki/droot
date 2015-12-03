@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/hashicorp/errwrap"
 	"github.com/fsouza/go-dockerclient"
+	"github.com/hashicorp/errwrap"
 )
 
 const exportBufSize = 32768
