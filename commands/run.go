@@ -76,6 +76,20 @@ func doRun(c *cli.Context) error {
 		return fmt.Errorf("No such directory %s:", rootDir)
 	}
 
+	var err error
+	uid, gid := -1, -1
+
+	if group := c.String("group"); group != "" {
+		if gid, err = osutil.LookupGroup(group); err != nil {
+			return fmt.Errorf("Failed to lookup group:", err)
+		}
+	}
+	if user := c.String("user"); user != "" {
+		if uid, err = osutil.LookupUser(user); err != nil {
+			return fmt.Errorf("Failed to lookup user:", err)
+		}
+	}
+
 	// copy files
 	if c.Bool("copy-files") {
 		for _, f := range copyFiles {
@@ -126,16 +140,16 @@ func doRun(c *cli.Context) error {
 		}
 	}
 
-	if group := c.String("group"); group != "" {
-		log.Debug("setgid", group)
-		if err := osutil.SetGroup(group); err != nil {
-			return fmt.Errorf("Failed to set group:", err)
+	if gid > -1 {
+		log.Debug("setgid", gid)
+		if err := osutil.SetGroup(string(gid)); err != nil {
+			return fmt.Errorf("Failed to set group %d:", gid, err)
 		}
 	}
-	if user := c.String("user"); user != "" {
-		log.Debug("setuid", user)
-		if err := osutil.SetUser(user); err != nil {
-			return fmt.Errorf("Failed to set user:", err)
+	if uid > -1 {
+		log.Debug("setuid", uid)
+		if err := osutil.SetUser(string(uid)); err != nil {
+			return fmt.Errorf("Failed to set user %d:", uid, err)
 		}
 	}
 
