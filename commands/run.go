@@ -78,7 +78,7 @@ func doRun(c *cli.Context) error {
 	}
 
 	var err error
-	uid, gid := -1, -1
+	uid, gid := os.Getuid(), os.Getgid()
 
 	if group := c.String("group"); group != "" {
 		if gid, err = osutil.LookupGroup(group); err != nil {
@@ -94,8 +94,12 @@ func doRun(c *cli.Context) error {
 	// copy files
 	if c.Bool("copy-files") {
 		for _, f := range copyFiles {
-			if err := osutil.Cp(fp.Join("/", f), fp.Join(rootDir, f)); err != nil {
+			srcFile, destFile := fp.Join("/", f), fp.Join(rootDir, f)
+			if err := osutil.Cp(srcFile, destFile); err != nil {
 				return fmt.Errorf("Failed to copy %s:", f, err)
+			}
+			if err := os.Lchown(destFile, uid, gid); err != nil {
+				return fmt.Errorf("Failed to lchown %s:", f, err)
 			}
 		}
 	}
@@ -121,7 +125,7 @@ func doRun(c *cli.Context) error {
 		return fmt.Errorf("Failed to symlink lock file:", err)
 	}
 
-	if err := createDevices(rootDir); err != nil {
+	if err := createDevices(rootDir, uid, gid); err != nil {
 		return fmt.Errorf("Failed to create devices:", err)
 	}
 
@@ -141,17 +145,13 @@ func doRun(c *cli.Context) error {
 		}
 	}
 
-	if gid > -1 {
-		log.Debug("setgid", gid)
-		if err := system.Setgid(gid); err != nil {
-			return fmt.Errorf("Failed to set group %d:", gid, err)
-		}
+	log.Debug("setgid", gid)
+	if err := system.Setgid(gid); err != nil {
+		return fmt.Errorf("Failed to set group %d:", gid, err)
 	}
-	if uid > -1 {
-		log.Debug("setuid", uid)
-		if err := system.Setuid(uid); err != nil {
-			return fmt.Errorf("Failed to set user %d:", uid, err)
-		}
+	log.Debug("setuid", uid)
+	if err := system.Setuid(uid); err != nil {
+		return fmt.Errorf("Failed to set user %d:", uid, err)
 	}
 
 	return osutil.Execv(command[0], command[0:], os.Environ())
@@ -217,7 +217,7 @@ func bindSystemMount(rootDir string) error {
 
 	sysDir := fp.Join(rootDir, "/sys")
 	if ok, err := osutil.Mounted(sysDir); !ok && err == nil {
-		if err := osutil.RunCmd("mount", "--rbind", "/sys", fp.Join(rootDir, "/sys")); err != nil {
+		if err := osutil.RunCmd("mount", "--rbind", "/sys", sysDir); err != nil {
 			return errwrap.Wrapf("Failed to mount /sys: {{err}}", err)
 		}
 	}
@@ -225,18 +225,33 @@ func bindSystemMount(rootDir string) error {
 	return nil
 }
 
-func createDevices(rootDir string) error {
-	if err := osutil.Mknod(fp.Join(rootDir, os.DevNull), syscall.S_IFCHR|uint32(os.FileMode(0666)), 1*256+3); err != nil {
+func createDevices(rootDir string, uid, gid int) error {
+	nullDir := fp.Join(rootDir, os.DevNull)
+	if err := osutil.Mknod(nullDir, syscall.S_IFCHR|uint32(os.FileMode(0666)), 1*256+3); err != nil {
 		return err
 	}
 
-	if err := osutil.Mknod(fp.Join(rootDir, "/dev/zero"), syscall.S_IFCHR|uint32(os.FileMode(0666)), 1*256+3); err != nil {
+	if err := os.Lchown(nullDir, uid, gid); err != nil {
+		return errwrap.Wrapf(fmt.Sprintf("Failed to lchown %s: {{err}}", nullDir), err)
+	}
+
+	zeroDir := fp.Join(rootDir, "/dev/zero")
+	if err := osutil.Mknod(zeroDir, syscall.S_IFCHR|uint32(os.FileMode(0666)), 1*256+3); err != nil {
 		return err
+	}
+
+	if err := os.Lchown(zeroDir, uid, gid); err != nil {
+		return errwrap.Wrapf(fmt.Sprintf("Failed to lchown %s:", zeroDir), err)
 	}
 
 	for _, f := range []string{"/dev/random", "/dev/urandom"} {
-		if err := osutil.Mknod(fp.Join(rootDir, f), syscall.S_IFCHR|uint32(os.FileMode(0666)), 1*256+9); err != nil {
+		randomDir := fp.Join(rootDir, f)
+		if err := osutil.Mknod(randomDir, syscall.S_IFCHR|uint32(os.FileMode(0666)), 1*256+9); err != nil {
 			return err
+		}
+
+		if err := os.Lchown(randomDir, uid, gid); err != nil {
+			return errwrap.Wrapf(fmt.Sprintf("Failed to lchown %s: {{err}}", randomDir), err)
 		}
 	}
 
