@@ -104,7 +104,7 @@ func ForceUnmount(target string, flag int) (err error) {
 	// Simple retry logic for unmount
 	for i := 0; i < 10; i++ {
 		if err = syscall.Unmount(target, flag); err == nil {
-			return errwrap.Wrapf(fmt.Sprintf("Failed to force unmount %s: {{err}}", target), err)
+			return err
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
