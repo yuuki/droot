@@ -52,17 +52,16 @@ func doPull(c *cli.Context) error {
 		//TODO if the process has chown capabilities, run chown
 	}
 
-	uid, gid := -1, -1
-	if user := c.String("user"); user != "" {
-		uid, err = osutil.LookupUser(user)
-		if err != nil {
-			return fmt.Errorf("Failed to lookup user (%s): %s", user, err)
+	uid, gid := os.Getuid(), os.Getgid()
+
+	if group := c.String("group"); group != "" {
+		if gid, err = osutil.LookupGroup(group); err != nil {
+			return fmt.Errorf("Failed to lookup group:", err)
 		}
 	}
-	if group := c.String("group"); group != "" {
-		gid, err = osutil.LookupGroup(group)
-		if err != nil {
-			return fmt.Errorf("Failed to lookup group (%s): %s", group, err)
+	if user := c.String("user"); user != "" {
+		if uid, err = osutil.LookupUser(user); err != nil {
+			return fmt.Errorf("Failed to lookup user:", err)
 		}
 	}
 
