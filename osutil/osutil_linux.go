@@ -90,12 +90,8 @@ func LookupGroup(id string) (int, error) {
 	return strconv.Atoi(g.Gid)
 }
 
-func SetGroup(id string) error {
-	gid, err := LookupGroup(id)
-	if err != nil {
-		return err
-	}
-	return system.Setgid(gid)
+func Setgid(id int) error {
+	return system.Setgid(id)
 }
 
 func LookupUser(id string) (int, error) {
@@ -116,12 +112,8 @@ func LookupUser(id string) (int, error) {
 	return strconv.Atoi(u.Uid)
 }
 
-func SetUser(id string) error {
-	uid, err := LookupUser(id)
-	if err != nil {
-		return err
-	}
-	return system.Setuid(uid)
+func Setuid(id int) error {
+	return system.Setuid(id)
 }
 
 func DropCapabilities(keepCaps map[uint]bool) error {

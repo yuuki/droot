@@ -9,7 +9,6 @@ import (
 	"syscall"
 
 	"github.com/codegangsta/cli"
-	"github.com/docker/libcontainer/system"
 	"github.com/hashicorp/errwrap"
 
 	"github.com/yuuki1/droot/log"
@@ -146,11 +145,11 @@ func doRun(c *cli.Context) error {
 	}
 
 	log.Debug("setgid", gid)
-	if err := system.Setgid(gid); err != nil {
+	if err := osutil.Setgid(gid); err != nil {
 		return fmt.Errorf("Failed to set group %d:", gid, err)
 	}
 	log.Debug("setuid", uid)
-	if err := system.Setuid(uid); err != nil {
+	if err := osutil.Setuid(uid); err != nil {
 		return fmt.Errorf("Failed to set user %d:", uid, err)
 	}
 
