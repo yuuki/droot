@@ -23,8 +23,8 @@ var CommandPull = cli.Command{
 	Flags: []cli.Flag{
 		cli.StringFlag{Name: "dest, d", Usage: "Local filesystem path (ex. /var/containers/app)"},
 		cli.StringFlag{Name: "src, s", Usage: "Amazon S3 endpoint (ex. s3://drootexample/app.tar.gz)"},
-		cli.StringFlag{Name: "user, u", Usage: "User (ID or name) to set after extracting archive"},
-		cli.StringFlag{Name: "group, g", Usage: "Group (ID or name) to set after extracting archive"},
+		cli.StringFlag{Name: "user, u", Usage: "User (ID or name) to set after extracting archive (required superuser)"},
+		cli.StringFlag{Name: "group, g", Usage: "Group (ID or name) to set after extracting archive (required superuser)"},
 	},
 }
 
@@ -44,16 +44,7 @@ func doPull(c *cli.Context) error {
 		return fmt.Errorf("Not s3 scheme %s", srcURL)
 	}
 
-	// If dest dir doesn't exists, create it
-	if !osutil.ExistsDir(destDir) {
-		if err := os.Mkdir(destDir, 0755); err != nil {
-			return fmt.Errorf("Failed to mkdir %s", destDir)
-		}
-		//TODO if the process has chown capabilities, run chown
-	}
-
 	uid, gid := os.Getuid(), os.Getgid()
-
 	if group := c.String("group"); group != "" {
 		if gid, err = osutil.LookupGroup(group); err != nil {
 			return fmt.Errorf("Failed to lookup group:", err)
@@ -94,6 +85,13 @@ func doPull(c *cli.Context) error {
 	log.Info("Sync:", "from", rawDir, "to", destDir)
 	if err := archive.Rsync(rawDir, destDir); err != nil {
 		return fmt.Errorf("Failed to rsync: %s", err)
+	}
+
+	if err := os.Lchown(destDir, uid, gid); err != nil {
+		return fmt.Errorf("Failed to chown %d:%d: %s", uid, gid, err)
+	}
+	if err := os.Chmod(destDir, os.FileMode(0755)); err != nil {
+		return fmt.Errorf("Failed to chmod %s: %s", destDir, err)
 	}
 
 	return nil
