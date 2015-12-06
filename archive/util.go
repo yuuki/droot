@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/docker/docker/pkg/archive"
+	"github.com/hashicorp/errwrap"
 
 	"github.com/yuuki1/droot/osutil"
 )
@@ -16,21 +17,14 @@ const compressionBufSize = 32768
 var RsyncDefaultOpts = []string{"-av", "--delete"}
 
 func ExtractTarGz(in io.Reader, dest string, uid int, gid int) (err error) {
-	nolchown := true
-	if uid < 0 {
-		nolchown = false
-	}
-	if gid < 0 {
-		nolchown = false
-	}
-
 	return archive.Untar(in, dest, &archive.TarOptions{
 		Compression: archive.Gzip,
-		NoLchown: nolchown,
+		NoLchown:    false,
 		ChownOpts: &archive.TarChownOptions{
 			UID: uid,
 			GID: gid,
 		},
+		ExcludePatterns: []string{"dev/"}, // prevent operation not permitted
 	})
 }
 
@@ -66,7 +60,7 @@ func Compress(in io.Reader) io.ReadCloser {
 			err = bufWriter.Flush()
 		}
 		if err != nil {
-			pWriter.CloseWithError(err)
+			pWriter.CloseWithError(errwrap.Wrapf("Failed to compress: {{err}}", err))
 		} else {
 			pWriter.Close()
 		}
@@ -74,4 +68,3 @@ func Compress(in io.Reader) io.ReadCloser {
 
 	return pReader
 }
-

@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/golang/mock/gomock"
 	godocker "github.com/fsouza/go-dockerclient"
+	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -36,4 +36,3 @@ func TestExportImage(t *testing.T) {
 
 	assert.NoError(t, err)
 }
-

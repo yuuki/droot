@@ -51,6 +51,10 @@ $ sudo droot run --bind /var/log/ --root /var/containers/app command
 $ sudo droot umount --root /var/containers/app
 ```
 
+```bash
+$ sudo droot rm --root /var/containers/app
+```
+
 ### How to set your AWS credentials
 
 Droot push/pull subcommands support the following methods to set your AWS credentials.
@@ -76,7 +80,6 @@ DOCKER_CERT_PATH=/home/yuuki/.docker/machine/machines/dev
 
 ## Roodmap
 
-- `rm` command to clean container environment
 - `rmi` command to clean a image on S3
 - `pull` command with the rsync option
 - `push/pull` other compression algorithms
@@ -85,6 +88,7 @@ DOCKER_CERT_PATH=/home/yuuki/.docker/machine/machines/dev
 - drivers except Amazon S3
 - `run` reads `.docekrenv`, `.dockerinit`
 - reduce fork&exec
+- `push/pull` S3 download/upload part-size options
 
 ## Development
 
@@ -100,6 +104,7 @@ $ ./script/build_in_container.sh
 ### Release
 
 ```bash
+$ vim ./cmd/version.go
 $ ./script/build_in_container.sh cross
 $ ghr -u yuuki1 -p 2 $VERSION snapshot/
 ```
