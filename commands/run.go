@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/codegangsta/cli"
+	"github.com/docker/docker/pkg/fileutils"
 	"github.com/docker/docker/pkg/mount"
 	"github.com/hashicorp/errwrap"
 
@@ -186,8 +187,8 @@ func bindMount(bindDir string, rootDir string, readonly bool) error {
 
 	containerDir := fp.Join(rootDir, destDir)
 
-	if err := os.MkdirAll(containerDir, os.FileMode(0755)); err != nil {
-		return errwrap.Wrapf(fmt.Sprintf("Failed to mkdir %s: {{err}}", containerDir), err)
+	if err := fileutils.CreateIfNotExists(containerDir, true); err != nil { // mkdir -p
+		return errwrap.Wrapf(fmt.Sprintf("Failed to create directory: %s: {{err}}", containerDir), err)
 	}
 
 	ok, err = osutil.IsDirEmpty(containerDir)
