@@ -30,13 +30,13 @@ func ExistsDir(dir string) bool {
 func IsDirEmpty(dir string) (bool, error) {
 	f, err := os.Open(dir)
 	if err != nil {
-		return false, errwrap.Wrapf(fmt.Sprintf("Failed to open %s", dir), err)
+		return false, errwrap.Wrapf(fmt.Sprintf("Failed to open %s: {{err}}", dir), err)
 	}
 	defer f.Close()
 
 	_, err = f.Readdir(1)
 	if err == io.EOF {
-		return true, errwrap.Wrapf(fmt.Sprintf("Failed to readdir %s", dir), err)
+		return true, nil
 	}
 	return false, err // Either not empty or error, suits both cases
 }
