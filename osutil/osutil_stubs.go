@@ -7,14 +7,6 @@ import (
 	"runtime"
 )
 
-func GetMountsByRoot(rootDir string) ([]string, error) {
-	return nil, fmt.Errorf("osutil: GetMountsByRoot not implemented on %s/%s", runtime.GOOS, runtime.GOARCH)
-}
-
-func UmountRoot(rootDir string) (err error) {
-	return fmt.Errorf("osutil: UmountRoot not implemented on %s/%s", runtime.GOOS, runtime.GOARCH)
-}
-
 func LookupGroup(id string) (int, error) {
 	return -1, fmt.Errorf("osutil: LookupGroup not implemented on %s/%s", runtime.GOOS, runtime.GOARCH)
 }

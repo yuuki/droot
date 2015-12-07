@@ -92,14 +92,6 @@ func UmountRoot(rootDir string) error {
 	return nil
 }
 
-func BindMount(src, dest string) error {
-	return mount.Mount(src, dest, "bind", "")
-}
-
-func RObindMount(src, dest string) error {
-	return mount.Mount(src, dest, "bind", "remount,ro,bind")
-}
-
 // Mknod unless path does not exists.
 func Mknod(path string, mode uint32, dev int) error {
 	if ExistsFile(path) {
