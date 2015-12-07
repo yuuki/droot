@@ -38,7 +38,7 @@ func IsDirEmpty(dir string) (bool, error) {
 	if err == io.EOF {
 		return true, nil
 	}
-	return false, err // Either not empty or error, suits both cases
+	return false, nil
 }
 
 func RunCmd(name string, arg ...string) error {
