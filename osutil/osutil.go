@@ -6,10 +6,11 @@ import (
 	"os"
 	"os/exec"
 	fp "path/filepath"
+	"strings"
 	"syscall"
-	"time"
 
 	"github.com/hashicorp/errwrap"
+	"github.com/docker/docker/pkg/mount"
 
 	"github.com/yuuki1/droot/log"
 )
@@ -59,56 +60,44 @@ func Cp(from, to string) error {
 	return nil
 }
 
-func BindMount(src, dest string) error {
-	if err := RunCmd("mount", "--bind", src, dest); err != nil {
+func GetMountsByRoot(rootDir string) ([]*mount.Info, error) {
+	mounts, err := mount.GetMounts()
+	if err != nil {
+		return nil, err
+	}
+
+	targets := make([]*mount.Info, 0)
+	for _, m := range mounts {
+		if strings.HasPrefix(m.Mountpoint, fp.Clean(rootDir)) {
+			targets = append(targets, m)
+		}
+	}
+
+	return targets, nil
+}
+
+func UmountRoot(rootDir string) error {
+	mounts, err := GetMountsByRoot(rootDir)
+	if err != nil {
 		return err
 	}
+
+	for _, m := range mounts {
+		if err := mount.Unmount(m.Mountpoint); err != nil {
+			return err
+		}
+		log.Debug("umount:", m.Mountpoint)
+	}
+
 	return nil
+}
+
+func BindMount(src, dest string) error {
+	return mount.Mount(src, dest, "bind", "")
 }
 
 func RObindMount(src, dest string) error {
-	if err := RunCmd("mount", "-o", "remount,ro,bind", src, dest); err != nil {
-		return err
-	}
-	return nil
-}
-
-func Mounted(mountpoint string) (bool, error) {
-	mntpoint, err := os.Stat(mountpoint)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
-		}
-		return false, err
-	}
-	parent, err := os.Stat(fp.Join(mountpoint, ".."))
-	if err != nil {
-		return false, err
-	}
-	mntpointSt := mntpoint.Sys().(*syscall.Stat_t)
-	parentSt := parent.Sys().(*syscall.Stat_t)
-	return mntpointSt.Dev != parentSt.Dev, nil
-}
-
-// Unmount will unmount the target filesystem, so long as it is mounted.
-func Unmount(target string, flag int) error {
-	if mounted, err := Mounted(target); err != nil || !mounted {
-		return errwrap.Wrapf(fmt.Sprintf("Failed to unmount %s: {{err}}", target), err)
-	}
-	return ForceUnmount(target, flag)
-}
-
-// ForceUnmount will force an unmount of the target filesystem, regardless if
-// it is mounted or not.
-func ForceUnmount(target string, flag int) (err error) {
-	// Simple retry logic for unmount
-	for i := 0; i < 10; i++ {
-		if err = syscall.Unmount(target, flag); err == nil {
-			return err
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	return
+	return mount.Mount(src, dest, "bind", "remount,ro,bind")
 }
 
 // Mknod unless path does not exists.
