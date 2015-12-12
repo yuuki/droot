@@ -33,16 +33,17 @@ func (c *Client) ExportImage(imageID string) (io.ReadCloser, error) {
 	if err != nil {
 		return nil, errwrap.Wrapf(fmt.Sprintf("Failed to create container (imageID:%s): {{err}}", imageID), err)
 	}
-	defer func(containerID string) error {
-		return c.docker.RemoveContainer(docker.RemoveContainerOptions{
-			ID:    containerID,
-			Force: true,
-		})
-	}(container.ID)
 
 	pReader, pWriter := io.Pipe()
 
 	go func() {
+		defer func() {
+			c.docker.RemoveContainer(docker.RemoveContainerOptions{
+				ID:    container.ID,
+				Force: true,
+			})
+		}()
+
 		err := c.docker.ExportContainer(docker.ExportContainerOptions{
 			ID:           container.ID,
 			OutputStream: pWriter,
