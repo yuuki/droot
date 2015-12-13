@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	"github.com/docker/docker/pkg/archive"
-	"github.com/hashicorp/errwrap"
 
+	"github.com/yuuki1/droot/errwrap"
 	"github.com/yuuki1/droot/osutil"
 )
 
@@ -60,7 +60,7 @@ func Compress(in io.Reader) io.ReadCloser {
 			err = bufWriter.Flush()
 		}
 		if err != nil {
-			pWriter.CloseWithError(errwrap.Wrapf("Failed to compress: {{err}}", err))
+			pWriter.CloseWithError(errwrap.Wrapf(err, "Failed to compress: {{err}}"))
 		} else {
 			pWriter.Close()
 		}

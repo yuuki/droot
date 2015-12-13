@@ -1,11 +1,11 @@
 package docker
 
 import (
-	"fmt"
 	"io"
 
 	"github.com/fsouza/go-dockerclient"
-	"github.com/hashicorp/errwrap"
+
+	"github.com/yuuki1/droot/errwrap"
 )
 
 const exportBufSize = 32768
@@ -31,7 +31,7 @@ func (c *Client) ExportImage(imageID string) (io.ReadCloser, error) {
 		},
 	})
 	if err != nil {
-		return nil, errwrap.Wrapf(fmt.Sprintf("Failed to create container (imageID:%s): {{err}}", imageID), err)
+		return nil, errwrap.Wrapff(err, "Failed to create container (imageID:%s): {{err}}", imageID)
 	}
 
 	pReader, pWriter := io.Pipe()
@@ -49,7 +49,7 @@ func (c *Client) ExportImage(imageID string) (io.ReadCloser, error) {
 			OutputStream: pWriter,
 		})
 		if err != nil {
-			err = errwrap.Wrapf(fmt.Sprintf("Failed to export container %s: {{err}}", container.ID), err)
+			err = errwrap.Wrapff(err, "Failed to export container %s: {{err}}", container.ID)
 			pWriter.CloseWithError(err)
 		} else {
 			pWriter.Close()

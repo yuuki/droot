@@ -10,8 +10,8 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
-	"github.com/hashicorp/errwrap"
 
+	"github.com/yuuki1/droot/errwrap"
 	"github.com/yuuki1/droot/log"
 )
 
@@ -37,7 +37,7 @@ func (clt *S3Client) ExistsBucket(bucket string) (bool, error) {
 		Bucket: &bucket,
 	})
 	if err != nil {
-		return false, errwrap.Wrapf(fmt.Sprintf("Failed to list s3 objects %s: {{err}}", bucket), err)
+		return false, errwrap.Wrapff(err, "Failed to list s3 objects %s: {{err}}", bucket)
 	}
 	return true, nil
 }
@@ -62,7 +62,7 @@ func (clt *S3Client) Upload(s3Url *url.URL, reader io.Reader) (string, error) {
 		u.PartSize = uploadPartSize
 	})
 	if err != nil {
-		return "", errwrap.Wrapf("Failed to upload s3: {{err}}", err)
+		return "", errwrap.Wrapf(err, "Failed to upload s3: {{err}}")
 	}
 
 	return upOutput.Location, nil
@@ -87,7 +87,7 @@ func (clt *S3Client) Download(s3Url *url.URL, writer io.WriterAt) (int64, error)
 		d.PartSize = downloadPartSize
 	})
 	if err != nil {
-		return -1, errwrap.Wrapf("Failed to download s3: {{err}}", err)
+		return -1, errwrap.Wrapf(err, "Failed to download s3: {{err}}")
 	}
 
 	return nBytes, nil

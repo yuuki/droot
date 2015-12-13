@@ -1,7 +1,6 @@
 package osutil
 
 import (
-	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -10,8 +9,8 @@ import (
 	"syscall"
 
 	"github.com/docker/docker/pkg/mount"
-	"github.com/hashicorp/errwrap"
 
+	"github.com/yuuki1/droot/errwrap"
 	"github.com/yuuki1/droot/log"
 )
 
@@ -30,7 +29,7 @@ func ExistsDir(dir string) bool {
 func IsDirEmpty(dir string) (bool, error) {
 	f, err := os.Open(dir)
 	if err != nil {
-		return false, errwrap.Wrapf(fmt.Sprintf("Failed to open %s: {{err}}", dir), err)
+		return false, errwrap.Wrapff(err, "Failed to open %s: {{err}}", dir)
 	}
 	defer f.Close()
 
@@ -48,7 +47,7 @@ func RunCmd(name string, arg ...string) error {
 		log.Debug(string(out))
 	}
 	if err != nil {
-		return errwrap.Wrapf(fmt.Sprintf("Failed to exec %s %s: {{err}}", name, arg), err)
+		return errwrap.Wrapff(err, "Failed to exec %s %s: {{err}}", name, arg)
 	}
 	return nil
 }
@@ -98,7 +97,7 @@ func Mknod(path string, mode uint32, dev int) error {
 		return nil
 	}
 	if err := syscall.Mknod(path, mode, dev); err != nil {
-		return errwrap.Wrapf(fmt.Sprintf("Failed to mknod %s: {{err}}", path), err)
+		return errwrap.Wrapff(err, "Failed to mknod %s: {{err}}", path)
 	}
 	return nil
 }
@@ -108,7 +107,7 @@ func Symlink(oldname, newname string) error {
 	if err := os.Symlink(oldname, newname); err != nil {
 		// Ignore already created symlink
 		if _, ok := err.(*os.LinkError); !ok {
-			return errwrap.Wrapf(fmt.Sprintf("Failed to symlink %s %s: {{err}}", oldname, newname), err)
+			return errwrap.Wrapff(err, "Failed to symlink %s %s: {{err}}", oldname, newname)
 		}
 	}
 	return nil
@@ -117,7 +116,7 @@ func Symlink(oldname, newname string) error {
 func Execv(cmd string, args []string, env []string) error {
 	name, err := exec.LookPath(cmd)
 	if err != nil {
-		return errwrap.Wrapf(fmt.Sprintf("Not found %s: {{err}}", cmd), err)
+		return errwrap.Wrapff(err, "Not found %s: {{err}}", cmd)
 	}
 
 	log.Debug("exec: ", name, args)

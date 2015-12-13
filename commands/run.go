@@ -11,8 +11,8 @@ import (
 	"github.com/codegangsta/cli"
 	"github.com/docker/docker/pkg/fileutils"
 	"github.com/docker/docker/pkg/mount"
-	"github.com/hashicorp/errwrap"
 
+	"github.com/yuuki1/droot/errwrap"
 	"github.com/yuuki1/droot/log"
 	"github.com/yuuki1/droot/osutil"
 )
@@ -181,14 +181,14 @@ func bindMount(bindDir string, rootDir string, readonly bool) error {
 	}
 	if ok {
 		if _, err := os.Create(fp.Join(srcDir, ".droot.keep")); err != nil {
-			return errwrap.Wrapf("Failed to create .droot.keep: {{err}}", err)
+			return errwrap.Wrapf(err, "Failed to create .droot.keep: {{err}}")
 		}
 	}
 
 	containerDir := fp.Join(rootDir, destDir)
 
 	if err := fileutils.CreateIfNotExists(containerDir, true); err != nil { // mkdir -p
-		return errwrap.Wrapf(fmt.Sprintf("Failed to create directory: %s: {{err}}", containerDir), err)
+		return errwrap.Wrapff(err, "Failed to create directory: %s: {{err}}", containerDir)
 	}
 
 	ok, err = osutil.IsDirEmpty(containerDir)
@@ -198,13 +198,13 @@ func bindMount(bindDir string, rootDir string, readonly bool) error {
 	if ok {
 		log.Debug("bind mount", bindDir, "to", containerDir)
 		if err := mount.Mount(srcDir, containerDir, "none", "bind,rw"); err != nil {
-			return errwrap.Wrapf(fmt.Sprintf("Failed to bind mount %s: {{err}}", containerDir), err)
+			return errwrap.Wrapff(err, "Failed to bind mount %s: {{err}}", containerDir)
 		}
 
 		if readonly {
 			log.Debug("robind mount", bindDir, "to", containerDir)
 			if err := mount.Mount(srcDir, containerDir, "none", "remount,ro,bind"); err != nil {
-				return errwrap.Wrapf(fmt.Sprintf("Failed to robind mount %s: {{err}}", containerDir), err)
+				return errwrap.Wrapff(err, "Failed to robind mount %s: {{err}}", containerDir)
 			}
 		}
 	}
@@ -219,7 +219,7 @@ func createDevices(rootDir string, uid, gid int) error {
 	}
 
 	if err := os.Lchown(nullDir, uid, gid); err != nil {
-		return errwrap.Wrapf(fmt.Sprintf("Failed to lchown %s: {{err}}", nullDir), err)
+		return errwrap.Wrapff(err, "Failed to lchown %s: {{err}}", nullDir)
 	}
 
 	zeroDir := fp.Join(rootDir, "/dev/zero")
@@ -228,7 +228,7 @@ func createDevices(rootDir string, uid, gid int) error {
 	}
 
 	if err := os.Lchown(zeroDir, uid, gid); err != nil {
-		return errwrap.Wrapf(fmt.Sprintf("Failed to lchown %s:", zeroDir), err)
+		return errwrap.Wrapff(err, "Failed to lchown %s:", zeroDir)
 	}
 
 	for _, f := range []string{"/dev/random", "/dev/urandom"} {
@@ -238,7 +238,7 @@ func createDevices(rootDir string, uid, gid int) error {
 		}
 
 		if err := os.Lchown(randomDir, uid, gid); err != nil {
-			return errwrap.Wrapf(fmt.Sprintf("Failed to lchown %s: {{err}}", randomDir), err)
+			return errwrap.Wrapff(err, "Failed to lchown %s: {{err}}", randomDir)
 		}
 	}
 
