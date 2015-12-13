@@ -1,48 +1,34 @@
 package aws
 
 import (
-	"bytes"
-	"io/ioutil"
-	"net/http"
-	"net/url"
-	"sync"
 	"testing"
 
-	"github.com/aws/aws-sdk-go/aws/request"
-	"github.com/aws/aws-sdk-go/awstesting/unit"
+	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go/service/s3/s3iface"
+	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
 )
 
-var buf12MB = make([]byte, 1024*1024*12)
-
-func NewTestS3Client() *S3Client {
-	var m sync.Mutex
-	svc := s3.New(unit.Session)
-	svc.Handlers.Unmarshal.Clear()
-	svc.Handlers.UnmarshalMeta.Clear()
-	svc.Handlers.UnmarshalError.Clear()
-	svc.Handlers.Send.Clear()
-	svc.Handlers.Send.PushBack(func(r *request.Request) {
-		m.Lock()
-		defer m.Unlock()
-
-		r.HTTPResponse = &http.Response{
-			StatusCode: 200,
-			Body:       ioutil.NopCloser(bytes.NewReader(buf12MB)),
-			Header:     http.Header{},
-		}
-	})
-
-	return &S3Client{svc: svc}
+func NewTestS3Client(mockSvc s3iface.S3API) *S3Client {
+	return &S3Client{svc: mockSvc}
 }
 
-func TestUpload(t *testing.T) {
-	s3cli := NewTestS3Client()
+func TestExistsBucket(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
 
-	s3Url, _ := url.Parse("s3://droot-sandbox/images/app.tar.gz")
-	location, err := s3cli.Upload(s3Url, bytes.NewReader(buf12MB))
+	mockS3 := NewMockS3API(ctrl)
+	mockS3.EXPECT().ListObjects(&s3.ListObjectsInput{
+		Bucket: aws.String("droot-containers"),
+	}).Return(&s3.ListObjectsOutput{
+	}, nil)
+
+	svc := NewTestS3Client(mockS3)
+
+	exists, err := svc.ExistsBucket("droot-containers")
 
 	assert.NoError(t, err)
-	assert.Equal(t, "https://droot-sandbox.s3.mock-region.amazonaws.com/images/app.tar.gz", location)
+	assert.Equal(t, true, exists)
 }
+
