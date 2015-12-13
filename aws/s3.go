@@ -53,7 +53,7 @@ func (clt *S3Client) Upload(s3Url *url.URL, reader io.Reader) (string, error) {
 		return "", fmt.Errorf("No such bucket: %s", bucket)
 	}
 
-	uploader := s3manager.NewUploaderWithClient(clt.svc)
+	uploader := newS3Uploader(clt.svc)
 	upOutput, err := uploader.Upload(&s3manager.UploadInput{
 		Bucket: &bucket,
 		Key:    &object,
@@ -79,7 +79,7 @@ func (clt *S3Client) Download(s3Url *url.URL, writer io.WriterAt) (int64, error)
 		return -1, fmt.Errorf("No such bucket: %s", bucket)
 	}
 
-	downloader := s3manager.NewDownloaderWithClient(clt.svc)
+	downloader := newS3Downloader(clt.svc)
 	nBytes, err := downloader.Download(writer, &s3.GetObjectInput{
 		Bucket: &bucket,
 		Key:    &object,
