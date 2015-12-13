@@ -9,6 +9,7 @@ gen:
 	go get golang.org/x/tools/cmd/stringer
 	go get github.com/golang/mock/mockgen
 	go generate ./...
+	mockgen -source ${GOPATH}/src/github.com/aws/aws-sdk-go/service/s3/s3iface/interface.go -destination aws/s3mock.go -package aws
 
 build: deps gen
 	go build -o $(BIN) ./cmd
