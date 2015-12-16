@@ -93,6 +93,7 @@ DOCKER_CERT_PATH=/home/yuuki/.docker/machine/machines/dev
 - `run` reads `.docekrenv`, `.dockerinit`
 - reduce fork&exec
 - `push/pull` S3 download/upload part-size options
+- `push/pull` verifying sha256sum
 
 ## Development
 
