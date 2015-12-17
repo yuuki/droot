@@ -1,6 +1,6 @@
 BIN = droot
 
-all: clean lint test build
+all: clean test build
 
 test: testdeps
 	go test -v ./...
