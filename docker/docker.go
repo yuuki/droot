@@ -1,11 +1,11 @@
 package docker
 
 import (
-	"fmt"
 	"io"
 
-	"github.com/fsouza/go-dockerclient"
-	"github.com/hashicorp/errwrap"
+	godocker "github.com/fsouza/go-dockerclient"
+
+	"github.com/yuuki1/droot/errwrap"
 )
 
 const exportBufSize = 32768
@@ -25,30 +25,31 @@ func NewClient() (*Client, error) {
 }
 
 func (c *Client) ExportImage(imageID string) (io.ReadCloser, error) {
-	container, err := c.docker.CreateContainer(docker.CreateContainerOptions{
-		Config: &docker.Config{
+	container, err := c.docker.CreateContainer(godocker.CreateContainerOptions{
+		Config: &godocker.Config{
 			Image: imageID,
 		},
 	})
 	if err != nil {
-		return nil, errwrap.Wrapf(fmt.Sprintf("Failed to create container (imageID:%s): {{err}}", imageID), err)
+		return nil, errwrap.Wrapff(err, "Failed to create container (imageID:%s): {{err}}", imageID)
 	}
-	defer func(containerID string) error {
-		return c.docker.RemoveContainer(docker.RemoveContainerOptions{
-			ID:    containerID,
-			Force: true,
-		})
-	}(container.ID)
 
 	pReader, pWriter := io.Pipe()
 
 	go func() {
-		err := c.docker.ExportContainer(docker.ExportContainerOptions{
+		defer func() {
+			c.docker.RemoveContainer(godocker.RemoveContainerOptions{
+				ID:    container.ID,
+				Force: true,
+			})
+		}()
+
+		err := c.docker.ExportContainer(godocker.ExportContainerOptions{
 			ID:           container.ID,
 			OutputStream: pWriter,
 		})
 		if err != nil {
-			err = errwrap.Wrapf(fmt.Sprintf("Failed to export container %s: {{err}}", container.ID), err)
+			err = errwrap.Wrapff(err, "Failed to export container %s: {{err}}", container.ID)
 			pWriter.CloseWithError(err)
 		} else {
 			pWriter.Close()

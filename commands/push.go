@@ -61,7 +61,7 @@ func doPush(c *cli.Context) error {
 	defer gzipReader.Close()
 
 	log.Info("s3 uploading to", to)
-	location, err := aws.NewS3Client().Upload(s3Url, gzipReader)
+	location, err := aws.NewS3Client().Upload(s3Url.Host, s3Url.Path, gzipReader)
 	if err != nil {
 		return fmt.Errorf("Failed to upload file: %s", err)
 	}

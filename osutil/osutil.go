@@ -1,16 +1,16 @@
 package osutil
 
 import (
-	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	fp "path/filepath"
+	"strings"
 	"syscall"
-	"time"
 
-	"github.com/hashicorp/errwrap"
+	"github.com/docker/docker/pkg/mount"
 
+	"github.com/yuuki1/droot/errwrap"
 	"github.com/yuuki1/droot/log"
 )
 
@@ -29,15 +29,15 @@ func ExistsDir(dir string) bool {
 func IsDirEmpty(dir string) (bool, error) {
 	f, err := os.Open(dir)
 	if err != nil {
-		return false, errwrap.Wrapf(fmt.Sprintf("Failed to open %s", dir), err)
+		return false, errwrap.Wrapff(err, "Failed to open %s: {{err}}", dir)
 	}
 	defer f.Close()
 
-	_, err = f.Readdir(1)
+	_, err = f.Readdirnames(1)
 	if err == io.EOF {
-		return true, errwrap.Wrapf(fmt.Sprintf("Failed to readdir %s", dir), err)
+		return true, nil
 	}
-	return false, err // Either not empty or error, suits both cases
+	return false, nil
 }
 
 func RunCmd(name string, arg ...string) error {
@@ -47,7 +47,7 @@ func RunCmd(name string, arg ...string) error {
 		log.Debug(string(out))
 	}
 	if err != nil {
-		return errwrap.Wrapf(fmt.Sprintf("Failed to exec %s %s: {{err}}", name, arg), err)
+		return errwrap.Wrapff(err, "Failed to exec %s %s: {{err}}", name, arg)
 	}
 	return nil
 }
@@ -59,56 +59,36 @@ func Cp(from, to string) error {
 	return nil
 }
 
-func BindMount(src, dest string) error {
-	if err := RunCmd("mount", "--bind", src, dest); err != nil {
-		return err
-	}
-	return nil
-}
-
-func RObindMount(src, dest string) error {
-	if err := RunCmd("mount", "-o", "remount,ro,bind", src, dest); err != nil {
-		return err
-	}
-	return nil
-}
-
-func Mounted(mountpoint string) (bool, error) {
-	mntpoint, err := os.Stat(mountpoint)
+func GetMountsByRoot(rootDir string) ([]*mount.Info, error) {
+	mounts, err := mount.GetMounts()
 	if err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
+		return nil, err
+	}
+
+	targets := make([]*mount.Info, 0)
+	for _, m := range mounts {
+		if strings.HasPrefix(m.Mountpoint, fp.Clean(rootDir)) {
+			targets = append(targets, m)
 		}
-		return false, err
 	}
-	parent, err := os.Stat(fp.Join(mountpoint, ".."))
+
+	return targets, nil
+}
+
+func UmountRoot(rootDir string) error {
+	mounts, err := GetMountsByRoot(rootDir)
 	if err != nil {
-		return false, err
+		return err
 	}
-	mntpointSt := mntpoint.Sys().(*syscall.Stat_t)
-	parentSt := parent.Sys().(*syscall.Stat_t)
-	return mntpointSt.Dev != parentSt.Dev, nil
-}
 
-// Unmount will unmount the target filesystem, so long as it is mounted.
-func Unmount(target string, flag int) error {
-	if mounted, err := Mounted(target); err != nil || !mounted {
-		return errwrap.Wrapf(fmt.Sprintf("Failed to unmount %s: {{err}}", target), err)
-	}
-	return ForceUnmount(target, flag)
-}
-
-// ForceUnmount will force an unmount of the target filesystem, regardless if
-// it is mounted or not.
-func ForceUnmount(target string, flag int) (err error) {
-	// Simple retry logic for unmount
-	for i := 0; i < 10; i++ {
-		if err = syscall.Unmount(target, flag); err == nil {
+	for _, m := range mounts {
+		if err := mount.Unmount(m.Mountpoint); err != nil {
 			return err
 		}
-		time.Sleep(100 * time.Millisecond)
+		log.Debug("umount:", m.Mountpoint)
 	}
-	return
+
+	return nil
 }
 
 // Mknod unless path does not exists.
@@ -117,7 +97,7 @@ func Mknod(path string, mode uint32, dev int) error {
 		return nil
 	}
 	if err := syscall.Mknod(path, mode, dev); err != nil {
-		return errwrap.Wrapf(fmt.Sprintf("Failed to mknod %s: {{err}}", path), err)
+		return errwrap.Wrapff(err, "Failed to mknod %s: {{err}}", path)
 	}
 	return nil
 }
@@ -127,7 +107,7 @@ func Symlink(oldname, newname string) error {
 	if err := os.Symlink(oldname, newname); err != nil {
 		// Ignore already created symlink
 		if _, ok := err.(*os.LinkError); !ok {
-			return errwrap.Wrapf(fmt.Sprintf("Failed to symlink %s %s: {{err}}", oldname, newname), err)
+			return errwrap.Wrapff(err, "Failed to symlink %s %s: {{err}}", oldname, newname)
 		}
 	}
 	return nil
@@ -136,7 +116,7 @@ func Symlink(oldname, newname string) error {
 func Execv(cmd string, args []string, env []string) error {
 	name, err := exec.LookPath(cmd)
 	if err != nil {
-		return errwrap.Wrapf(fmt.Sprintf("Not found %s: {{err}}", cmd), err)
+		return errwrap.Wrapff(err, "Not found %s: {{err}}", cmd)
 	}
 
 	log.Debug("exec: ", name, args)

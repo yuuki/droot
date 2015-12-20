@@ -1,13 +1,17 @@
 droot  [![Travis Build Status](https://travis-ci.org/yuuki1/droot.svg?branch=master)](https://travis-ci.org/yuuki1/droot)
 =====
 
-Droot is a super-easy container tool to chroot a docker image without docker.
+Droot is a super-easy application container engine to build, ship, run with chroot instead of docker run, and with Amazon S3 instead of docker registry. It aims to simply escape dependency hell.
 
 ## Overview
 
-[Docker](https://www.docker.com) has a powerful concept about an application deployment process, that is Build, Ship, Run. But there are many cases that docker runtime is beyond our current capabilities.
+[Docker](https://www.docker.com) has a powerful concept about an application deployment process, that is Build, Ship, Run. But there are many cases that docker runtime is too complicated and beyond our current capabilities, especially on production.
 
 Droot provides a simpler container runtime without annoying Linux Namespaces. Droot depends on traditional Linux functions such as chroot(2), Linux capabilities(7) and a bind mount. `droot` helps you to chroot a container image built by `docker` and to import/export container images on Amazon S3.
+
+- Build: `docker build`
+- Ship: Upload images to S3, and Download images from S3.
+- Run: chroot(2), Linux capabilities(7), and a bind mount.
 
 ![droot concept](http://cdn-ak.f.st-hatena.com/images/fotolife/y/y_uuki/20151129/20151129193210.png?1448793174)
 
@@ -89,6 +93,7 @@ DOCKER_CERT_PATH=/home/yuuki/.docker/machine/machines/dev
 - `run` reads `.docekrenv`, `.dockerinit`
 - reduce fork&exec
 - `push/pull` S3 download/upload part-size options
+- `push/pull` verifying sha256sum
 
 ## Development
 

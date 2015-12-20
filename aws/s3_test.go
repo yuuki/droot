@@ -2,47 +2,54 @@ package aws
 
 import (
 	"bytes"
-	"io/ioutil"
-	"net/http"
-	"net/url"
-	"sync"
 	"testing"
 
-	"github.com/aws/aws-sdk-go/aws/request"
-	"github.com/aws/aws-sdk-go/awstesting/unit"
+	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 )
 
-var buf12MB = make([]byte, 1024*1024*12)
+func TestExistsBucket(t *testing.T) {
+	mockS3 := new(S3API)
 
-func NewTestS3Client() *S3Client {
-	var m sync.Mutex
-	svc := s3.New(unit.Session)
-	svc.Handlers.Unmarshal.Clear()
-	svc.Handlers.UnmarshalMeta.Clear()
-	svc.Handlers.UnmarshalError.Clear()
-	svc.Handlers.Send.Clear()
-	svc.Handlers.Send.PushBack(func(r *request.Request) {
-		m.Lock()
-		defer m.Unlock()
+	mockS3.On("ListObjects", &s3.ListObjectsInput{
+		Bucket: aws.String("droot-containers"),
+	}).Return(&s3.ListObjectsOutput{}, nil)
 
-		r.HTTPResponse = &http.Response{
-			StatusCode: 200,
-			Body:       ioutil.NopCloser(bytes.NewReader(buf12MB)),
-			Header:     http.Header{},
-		}
-	})
+	c := &S3Client{svc: mockS3}
 
-	return &S3Client{svc: svc}
+	exists, err := c.ExistsBucket("droot-containers")
+
+	assert.NoError(t, err)
+	assert.Equal(t, true, exists)
 }
 
 func TestUpload(t *testing.T) {
-	s3cli := NewTestS3Client()
+	mockS3 := new(S3API)
+	mockUploader := new(mockS3uploader)
 
-	s3Url, _ := url.Parse("s3://droot-sandbox/images/app.tar.gz")
-	location, err := s3cli.Upload(s3Url, bytes.NewReader(buf12MB))
+	mockS3.On("ListObjects", &s3.ListObjectsInput{
+		Bucket: aws.String("droot-containers"),
+	}).Return(&s3.ListObjectsOutput{}, nil)
+
+	in := bytes.NewReader([]byte{})
+
+	mockUploader.On("Upload", &s3manager.UploadInput{
+		Bucket: aws.String("droot-containers"),
+		Key: aws.String("app.tar.gz"),
+		Body: in,
+	}, mock.AnythingOfType("func(*s3manager.Uploader)"),
+	).Return(&s3manager.UploadOutput{
+		Location: "https://droot-containers.s3-ap-northeast-1.amazonaws.com/app.tar.gz",
+	}, nil)
+
+	c := &S3Client{svc: mockS3, uploader: mockUploader}
+
+	location, err := c.Upload("droot-containers", "app.tar.gz", in)
 
 	assert.NoError(t, err)
-	assert.Equal(t, "https://droot-sandbox.s3.mock-region.amazonaws.com/images/app.tar.gz", location)
+	assert.Equal(t, "https://droot-containers.s3-ap-northeast-1.amazonaws.com/app.tar.gz", location)
+
 }

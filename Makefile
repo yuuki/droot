@@ -1,14 +1,15 @@
 BIN = droot
 
-all: clean lint test build
+all: clean test build
 
 test: testdeps
 	go test -v ./...
 
 gen:
-	go get golang.org/x/tools/cmd/stringer
-	go get github.com/golang/mock/mockgen
+	go get github.com/vektra/mockery/.../
 	go generate ./...
+	mockery -all -inpkg
+	mockery -all -dir ${GOPATH}/src/github.com/aws/aws-sdk-go/service/s3/s3iface -print | perl -pe 's/^package mocks/package aws/' > aws/mock_s3api.go 
 
 build: deps gen
 	go build -o $(BIN) ./cmd

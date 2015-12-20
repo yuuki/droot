@@ -37,3 +37,4 @@ func Error(v ...interface{}) {
 func Errorf(format string, v ...interface{}) {
 	log.Fatalf(format, v...)
 }
+

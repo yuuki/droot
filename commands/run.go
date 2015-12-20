@@ -9,9 +9,10 @@ import (
 	"syscall"
 
 	"github.com/codegangsta/cli"
-	"github.com/docker/libcontainer/system"
-	"github.com/hashicorp/errwrap"
+	"github.com/docker/docker/pkg/fileutils"
+	"github.com/docker/docker/pkg/mount"
 
+	"github.com/yuuki1/droot/errwrap"
 	"github.com/yuuki1/droot/log"
 	"github.com/yuuki1/droot/osutil"
 )
@@ -104,9 +105,13 @@ func doRun(c *cli.Context) error {
 		}
 	}
 
-	// bind the directories
-	if err := bindSystemMount(rootDir); err != nil {
-		return fmt.Errorf("Failed to bind system mount:", err)
+	// mount -t proc none {{rootDir}}/proc
+	if err := mount.Mount("none", fp.Join(rootDir, "/proc"), "proc", ""); err != nil {
+		return fmt.Errorf("Failed to mount /proc: %s", err)
+	}
+	// mount --rbind /sys {{rootDir}}/sys
+	if err := mount.Mount("/sys", fp.Join(rootDir, "/sys"), "none", "rbind"); err != nil {
+		return fmt.Errorf("Failed to mount /sys: %s", err)
 	}
 
 	for _, dir := range c.StringSlice("bind") {
@@ -146,11 +151,11 @@ func doRun(c *cli.Context) error {
 	}
 
 	log.Debug("setgid", gid)
-	if err := system.Setgid(gid); err != nil {
+	if err := osutil.Setgid(gid); err != nil {
 		return fmt.Errorf("Failed to set group %d:", gid, err)
 	}
 	log.Debug("setuid", uid)
-	if err := system.Setuid(uid); err != nil {
+	if err := osutil.Setuid(uid); err != nil {
 		return fmt.Errorf("Failed to set user %d:", uid, err)
 	}
 
@@ -176,14 +181,14 @@ func bindMount(bindDir string, rootDir string, readonly bool) error {
 	}
 	if ok {
 		if _, err := os.Create(fp.Join(srcDir, ".droot.keep")); err != nil {
-			return errwrap.Wrapf("Failed to create .droot.keep: {{err}}", err)
+			return errwrap.Wrapf(err, "Failed to create .droot.keep: {{err}}")
 		}
 	}
 
 	containerDir := fp.Join(rootDir, destDir)
 
-	if err := os.MkdirAll(containerDir, os.FileMode(0755)); err != nil {
-		return errwrap.Wrapf(fmt.Sprintf("Failed to mkdir %s: {{err}}", containerDir), err)
+	if err := fileutils.CreateIfNotExists(containerDir, true); err != nil { // mkdir -p
+		return errwrap.Wrapff(err, "Failed to create directory: %s: {{err}}", containerDir)
 	}
 
 	ok, err = osutil.IsDirEmpty(containerDir)
@@ -192,33 +197,15 @@ func bindMount(bindDir string, rootDir string, readonly bool) error {
 	}
 	if ok {
 		log.Debug("bind mount", bindDir, "to", containerDir)
-		if err := osutil.BindMount(srcDir, containerDir); err != nil {
-			return errwrap.Wrapf(fmt.Sprintf("Failed to bind mount %s: {{err}}", containerDir), err)
+		if err := mount.Mount(srcDir, containerDir, "none", "bind,rw"); err != nil {
+			return errwrap.Wrapff(err, "Failed to bind mount %s: {{err}}", containerDir)
 		}
 
 		if readonly {
 			log.Debug("robind mount", bindDir, "to", containerDir)
-			if err := osutil.RObindMount(srcDir, containerDir); err != nil {
-				return errwrap.Wrapf(fmt.Sprintf("Failed to robind mount %s: {{err}}", containerDir), err)
+			if err := mount.Mount(srcDir, containerDir, "none", "remount,ro,bind"); err != nil {
+				return errwrap.Wrapff(err, "Failed to robind mount %s: {{err}}", containerDir)
 			}
-		}
-	}
-
-	return nil
-}
-
-func bindSystemMount(rootDir string) error {
-	procDir := fp.Join(rootDir, "/proc")
-	if ok, err := osutil.Mounted(procDir); !ok && err == nil {
-		if err := osutil.RunCmd("mount", "-t", "proc", "none", procDir); err != nil {
-			return errwrap.Wrapf("Failed to mount /proc: {{err}}", err)
-		}
-	}
-
-	sysDir := fp.Join(rootDir, "/sys")
-	if ok, err := osutil.Mounted(sysDir); !ok && err == nil {
-		if err := osutil.RunCmd("mount", "--rbind", "/sys", sysDir); err != nil {
-			return errwrap.Wrapf("Failed to mount /sys: {{err}}", err)
 		}
 	}
 
@@ -232,7 +219,7 @@ func createDevices(rootDir string, uid, gid int) error {
 	}
 
 	if err := os.Lchown(nullDir, uid, gid); err != nil {
-		return errwrap.Wrapf(fmt.Sprintf("Failed to lchown %s: {{err}}", nullDir), err)
+		return errwrap.Wrapff(err, "Failed to lchown %s: {{err}}", nullDir)
 	}
 
 	zeroDir := fp.Join(rootDir, "/dev/zero")
@@ -241,7 +228,7 @@ func createDevices(rootDir string, uid, gid int) error {
 	}
 
 	if err := os.Lchown(zeroDir, uid, gid); err != nil {
-		return errwrap.Wrapf(fmt.Sprintf("Failed to lchown %s:", zeroDir), err)
+		return errwrap.Wrapff(err, "Failed to lchown %s:", zeroDir)
 	}
 
 	for _, f := range []string{"/dev/random", "/dev/urandom"} {
@@ -251,7 +238,7 @@ func createDevices(rootDir string, uid, gid int) error {
 		}
 
 		if err := os.Lchown(randomDir, uid, gid); err != nil {
-			return errwrap.Wrapf(fmt.Sprintf("Failed to lchown %s: {{err}}", randomDir), err)
+			return errwrap.Wrapff(err, "Failed to lchown %s: {{err}}", randomDir)
 		}
 	}
 
