@@ -20,6 +20,8 @@ const downloadPartSize = uploadPartSize
 
 type S3Client struct {
 	svc s3iface.S3API
+	uploader s3uploader
+	downloader s3downloader
 }
 
 func NewS3Client() *S3Client {
@@ -29,7 +31,11 @@ func NewS3Client() *S3Client {
 	} else {
 		svc = s3.New(session.New())
 	}
-	return &S3Client{svc: svc}
+	return &S3Client{
+		svc: svc,
+		uploader: newS3Uploader(svc),
+		downloader: newS3Downloader(svc),
+	}
 }
 
 func (clt *S3Client) ExistsBucket(bucket string) (bool, error) {
@@ -42,9 +48,7 @@ func (clt *S3Client) ExistsBucket(bucket string) (bool, error) {
 	return true, nil
 }
 
-func (clt *S3Client) Upload(s3Url *url.URL, reader io.Reader) (string, error) {
-	bucket, object := s3Url.Host, s3Url.Path
-
+func (clt *S3Client) Upload(bucket, key string , reader io.Reader) (string, error) {
 	ok, err := clt.ExistsBucket(bucket)
 	if err != nil {
 		return "", err
@@ -53,10 +57,9 @@ func (clt *S3Client) Upload(s3Url *url.URL, reader io.Reader) (string, error) {
 		return "", fmt.Errorf("No such bucket: %s", bucket)
 	}
 
-	uploader := newS3Uploader(clt.svc)
-	upOutput, err := uploader.Upload(&s3manager.UploadInput{
+	upOutput, err := clt.uploader.Upload(&s3manager.UploadInput{
 		Bucket: &bucket,
-		Key:    &object,
+		Key:    &key,
 		Body:   reader,
 	}, func(u *s3manager.Uploader) {
 		u.PartSize = uploadPartSize
@@ -79,8 +82,7 @@ func (clt *S3Client) Download(s3Url *url.URL, writer io.WriterAt) (int64, error)
 		return -1, fmt.Errorf("No such bucket: %s", bucket)
 	}
 
-	downloader := newS3Downloader(clt.svc)
-	nBytes, err := downloader.Download(writer, &s3.GetObjectInput{
+	nBytes, err := clt.downloader.Download(writer, &s3.GetObjectInput{
 		Bucket: &bucket,
 		Key:    &object,
 	}, func(d *s3manager.Downloader) {

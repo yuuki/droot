@@ -6,10 +6,10 @@ test: testdeps
 	go test -v ./...
 
 gen:
-	go get golang.org/x/tools/cmd/stringer
-	go get github.com/golang/mock/mockgen
+	go get github.com/vektra/mockery/.../
 	go generate ./...
-	mockgen -source ${GOPATH}/src/github.com/aws/aws-sdk-go/service/s3/s3iface/interface.go -destination aws/s3mock.go -package aws
+	mockery -all -inpkg
+	mockery -all -dir ${GOPATH}/src/github.com/aws/aws-sdk-go/service/s3/s3iface -print | perl -pe 's/^package mocks/package aws/' > aws/mock_s3api.go 
 
 build: deps gen
 	go build -o $(BIN) ./cmd

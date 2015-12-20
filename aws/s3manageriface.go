@@ -11,7 +11,7 @@ import (
 )
 
 type s3uploader interface {
-	Upload(*s3.PutObjectInput, ...func(*s3manager.Uploader)) (*s3manager.UploadOutput, error)
+	Upload(*s3manager.UploadInput, func(*s3manager.Uploader)) (*s3manager.UploadOutput, error)
 }
 
 type _s3uploader struct {
@@ -22,8 +22,8 @@ func newS3Uploader(svc s3iface.S3API) *_s3uploader {
 	return &_s3uploader{uploader: s3manager.NewUploaderWithClient(svc)}
 }
 
-func (c *_s3uploader) Upload(input *s3manager.UploadInput, options ...func(*s3manager.Uploader)) (*s3manager.UploadOutput, error) {
-	return c.uploader.Upload(input, options...)
+func (c *_s3uploader) Upload(input *s3manager.UploadInput, option func(*s3manager.Uploader)) (*s3manager.UploadOutput, error) {
+	return c.uploader.Upload(input, option)
 }
 
 
