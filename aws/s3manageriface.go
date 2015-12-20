@@ -1,7 +1,5 @@
 package aws
 
-//go:generate mockgen -source $GOFILE -package aws -destination s3manageriface_mock.go
-
 import (
 	"io"
 
