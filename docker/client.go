@@ -1,7 +1,5 @@
 package docker
 
-//go:generate mockgen -source $GOFILE -package docker -destination client_mock.go
-
 import (
 	godocker "github.com/fsouza/go-dockerclient"
 )
