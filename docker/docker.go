@@ -3,7 +3,7 @@ package docker
 import (
 	"io"
 
-	"github.com/fsouza/go-dockerclient"
+	godocker "github.com/fsouza/go-dockerclient"
 
 	"github.com/yuuki1/droot/errwrap"
 )
@@ -25,8 +25,8 @@ func NewClient() (*Client, error) {
 }
 
 func (c *Client) ExportImage(imageID string) (io.ReadCloser, error) {
-	container, err := c.docker.CreateContainer(docker.CreateContainerOptions{
-		Config: &docker.Config{
+	container, err := c.docker.CreateContainer(godocker.CreateContainerOptions{
+		Config: &godocker.Config{
 			Image: imageID,
 		},
 	})
@@ -38,13 +38,13 @@ func (c *Client) ExportImage(imageID string) (io.ReadCloser, error) {
 
 	go func() {
 		defer func() {
-			c.docker.RemoveContainer(docker.RemoveContainerOptions{
+			c.docker.RemoveContainer(godocker.RemoveContainerOptions{
 				ID:    container.ID,
 				Force: true,
 			})
 		}()
 
-		err := c.docker.ExportContainer(docker.ExportContainerOptions{
+		err := c.docker.ExportContainer(godocker.ExportContainerOptions{
 			ID:           container.ID,
 			OutputStream: pWriter,
 		})

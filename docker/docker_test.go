@@ -5,28 +5,28 @@ import (
 	"time"
 
 	godocker "github.com/fsouza/go-dockerclient"
-	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 )
 
 func TestExportImage(t *testing.T) {
-	mockCtrl := gomock.NewController(t)
-	defer mockCtrl.Finish()
-
-	mockDocker := NewMockdockerclient(mockCtrl)
+	mockDocker := new(mockDockerclient)
 
 	containerID := "container ID"
 
-	mockDocker.EXPECT().CreateContainer(gomock.Any()).Return(&godocker.Container{
+	mockDocker.On("CreateContainer", mock.Anything).Return(&godocker.Container{
 		ID: containerID,
 	}, nil)
-	mockDocker.EXPECT().ExportContainer(gomock.Any()).Do(func(opts godocker.ExportContainerOptions) {
-		assert.Equal(t, opts.ID, containerID)
-	}).Return(nil)
-	mockDocker.EXPECT().RemoveContainer(gomock.Any()).Do(func(opts godocker.RemoveContainerOptions) {
-		assert.Equal(t, opts.ID, containerID)
-		assert.Equal(t, opts.Force, true)
-	}).Return(nil)
+	mockDocker.On("ExportContainer", mock.Anything).Return(nil).Run(func(args mock.Arguments) {
+		id := args.Get(0).(godocker.ExportContainerOptions).ID
+		assert.Equal(t, id, containerID)
+	})
+	mockDocker.On("RemoveContainer", mock.Anything).Return(nil).Run(func(args mock.Arguments) {
+		id := args.Get(0).(godocker.RemoveContainerOptions).ID
+		force := args.Get(0).(godocker.RemoveContainerOptions).Force
+		assert.Equal(t, id, containerID)
+		assert.Equal(t, force, true)
+	})
 
 	client := &Client{docker: mockDocker}
 	r, err := client.ExportImage("aaaaaaaaaaaa")
