@@ -46,11 +46,11 @@ func setDebugOutputLevel() {
 		}
 	}
 
-	debugEnv := os.Getenv("DOCHROOT_DEBUG")
+	debugEnv := os.Getenv("DROOT_DEBUG")
 	if debugEnv != "" {
 		showDebug, err := strconv.ParseBool(debugEnv)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error parsing boolean value from DOCHROOT_DEBUG: %s\n", err)
+			fmt.Fprintf(os.Stderr, "Error parsing boolean value from DROOT_DEBUG: %s\n", err)
 			os.Exit(1)
 		}
 		log.IsDebug = showDebug
