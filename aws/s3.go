@@ -19,8 +19,8 @@ const uploadPartSize = 64 * 1024 * 1024 // 64MB part size
 const downloadPartSize = uploadPartSize
 
 type S3Client struct {
-	svc s3iface.S3API
-	uploader s3uploader
+	svc        s3iface.S3API
+	uploader   s3uploader
 	downloader s3downloader
 }
 
@@ -32,8 +32,8 @@ func NewS3Client() *S3Client {
 		svc = s3.New(session.New())
 	}
 	return &S3Client{
-		svc: svc,
-		uploader: newS3Uploader(svc),
+		svc:        svc,
+		uploader:   newS3Uploader(svc),
 		downloader: newS3Downloader(svc),
 	}
 }
@@ -48,7 +48,7 @@ func (clt *S3Client) ExistsBucket(bucket string) (bool, error) {
 	return true, nil
 }
 
-func (clt *S3Client) Upload(bucket, key string , reader io.Reader) (string, error) {
+func (clt *S3Client) Upload(bucket, key string, reader io.Reader) (string, error) {
 	ok, err := clt.ExistsBucket(bucket)
 	if err != nil {
 		return "", err

@@ -38,8 +38,8 @@ func TestUpload(t *testing.T) {
 
 	mockUploader.On("Upload", &s3manager.UploadInput{
 		Bucket: aws.String("droot-containers"),
-		Key: aws.String("app.tar.gz"),
-		Body: in,
+		Key:    aws.String("app.tar.gz"),
+		Body:   in,
 	}, mock.AnythingOfType("func(*s3manager.Uploader)"),
 	).Return(&s3manager.UploadOutput{
 		Location: "https://droot-containers.s3-ap-northeast-1.amazonaws.com/app.tar.gz",

@@ -24,7 +24,6 @@ func (c *_s3uploader) Upload(input *s3manager.UploadInput, option func(*s3manage
 	return c.uploader.Upload(input, option)
 }
 
-
 type s3downloader interface {
 	Download(io.WriterAt, *s3.GetObjectInput, ...func(*s3manager.Downloader)) (int64, error)
 }
