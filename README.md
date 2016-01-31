@@ -107,14 +107,6 @@ It is recommanded to use Docker for development if you are on OSX and other OSs.
 $ ./script/build_in_container.sh
 ```
 
-### Release
-
-```bash
-$ vim ./cmd/version.go
-$ ./script/build_in_container.sh cross
-$ ghr -u yuuki1 -p 2 $VERSION snapshot/
-```
-
 ## Contribution
 
 1. Fork ([https://github.com/yuuki1/droot/fork](https://github.com/yuuki1/droot/fork))
