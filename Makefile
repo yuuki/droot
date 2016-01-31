@@ -1,6 +1,6 @@
 BIN = droot
 
-all: clean test build
+all: clean build test
 
 test: testdeps
 	go test -v ./...
@@ -24,8 +24,14 @@ lint: testdeps
 	golint ./... | tee .golint.txt
 	test ! -s $(LINT_RET)
 
-cross: deps
-	goxc -tasks='xc archive' -bc 'linux,!arm darwin' -d . -resources-include='README*'
+patch: gobump
+	./script/release.sh patch
+
+minor: gobump
+	./script/release.sh minor
+
+gobump:
+	go get github.com/motemen/gobump/cmd/gobump
 
 deps:
 	go get -d -v ./...
@@ -39,10 +45,6 @@ testdeps:
 	go get github.com/mattn/goveralls
 
 clean:
-	rm -fr build
 	go clean
 
-cover: testdeps
-	goveralls
-
-.PHONY: test build lint deps testdeps clean cover
+.PHONY: test build lint patch minor gobump deps testdeps clean
