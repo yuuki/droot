@@ -46,7 +46,8 @@ func doPush(c *cli.Context) error {
 	// In the Following, pipe like  `docker export ... | gzip -c | aws s3`
 	// to avoid to use a temporary file.
 
-	log.Info("export", repository)
+	log.Info("-->", "Exporting docker image", to)
+
 	docker, err := docker.NewClient()
 	if err != nil {
 		return fmt.Errorf("Failed to create docker client: %s", err)
@@ -60,12 +61,14 @@ func doPush(c *cli.Context) error {
 	gzipReader := archive.Compress(imageReader)
 	defer gzipReader.Close()
 
-	log.Info("s3 uploading to", to)
+	log.Info("-->", "Uploading archive to", to)
+
 	location, err := aws.NewS3Client().Upload(s3Url.Host, s3Url.Path, gzipReader)
 	if err != nil {
 		return fmt.Errorf("Failed to upload file: %s", err)
 	}
-	log.Info("uploaded", location)
+
+	log.Info("-->", "Uploaded to", location)
 
 	return nil
 }
