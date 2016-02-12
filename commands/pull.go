@@ -65,11 +65,12 @@ func doPull(c *cli.Context) error {
 		os.Remove(f.Name())
 	}(tmp)
 
+	log.Info("-->", "Downloading", s3URL, "to", tmp.Name(), nBytes, "bytes")
+
 	nBytes, err := aws.NewS3Client().Download(s3URL, tmp)
 	if err != nil {
 		return fmt.Errorf("Failed to download file(%s) from s3: %s", srcURL, err)
 	}
-	log.Info("downloaded", "from", s3URL, "to", tmp.Name(), nBytes, "bytes")
 
 	rawDir, err := ioutil.TempDir(os.TempDir(), "droot_raw")
 	if err != nil {
@@ -77,12 +78,14 @@ func doPull(c *cli.Context) error {
 	}
 	defer os.RemoveAll(rawDir)
 
-	log.Info("Extract archive:", tmp.Name(), "to", rawDir)
+	log.Info("-->", "Extracting archive", tmp.Name(), "to", rawDir)
+
 	if err := archive.ExtractTarGz(tmp, rawDir, uid, gid); err != nil {
 		return fmt.Errorf("Failed to extract archive: %s", err)
 	}
 
-	log.Info("Sync:", "from", rawDir, "to", destDir)
+	log.Info("-->", "Syncing", "from", rawDir, "to", destDir)
+
 	if err := archive.Rsync(rawDir, destDir); err != nil {
 		return fmt.Errorf("Failed to rsync: %s", err)
 	}
