@@ -74,12 +74,11 @@ func doPull(c *cli.Context) error {
 		os.Remove(f.Name())
 	}(tmp)
 
-	nBytes, err := aws.NewS3Client().Download(s3URL, tmp)
-	if err != nil {
+	log.Info("-->", "Downloading", s3URL, "to", tmp.Name())
+
+	if _, err := aws.NewS3Client().Download(s3URL, tmp); err != nil {
 		return fmt.Errorf("Failed to download file(%s) from s3: %s", srcURL, err)
 	}
-
-	log.Info("-->", "Downloading", s3URL, "to", tmp.Name(), nBytes, "bytes")
 
 	rawDir, err := ioutil.TempDir(os.TempDir(), "droot_raw")
 	if err != nil {
