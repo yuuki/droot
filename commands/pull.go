@@ -15,7 +15,7 @@ import (
 	"github.com/yuuki1/droot/osutil"
 )
 
-var CommandArgPull = "--dest DESTINATION_DIRECTORY --src S3_ENDPOINT [--user USER] [--grpup GROUP]"
+var CommandArgPull = "--dest DESTINATION_DIRECTORY --src S3_ENDPOINT [--user USER] [--grpup GROUP] [--mode MODE]"
 var CommandPull = cli.Command{
 	Name:   "pull",
 	Usage:  "Pull an extracted docker image from s3",
@@ -25,6 +25,7 @@ var CommandPull = cli.Command{
 		cli.StringFlag{Name: "src, s", Usage: "Amazon S3 endpoint (ex. s3://drootexample/app.tar.gz)"},
 		cli.StringFlag{Name: "user, u", Usage: "User (ID or name) to set after extracting archive (required superuser)"},
 		cli.StringFlag{Name: "group, g", Usage: "Group (ID or name) to set after extracting archive (required superuser)"},
+		cli.StringFlag{Name: "mode, m", Usage: "Mode of deployment. 'rsync' or 'symlink'. default is 'rsync'"},
 	},
 }
 
@@ -42,6 +43,14 @@ func doPull(c *cli.Context) error {
 	}
 	if s3URL.Scheme != "s3" {
 		return fmt.Errorf("Not s3 scheme %s", srcURL)
+	}
+
+	mode := c.String("mode")
+	if mode == "" {
+		mode = "rsync"
+	}
+	if mode != "rsync" && mode != "symlink" {
+		return fmt.Errorf("Invalid mode %s. '--mode' must be 'rsync' or 'symlink'.", mode)
 	}
 
 	uid, gid := os.Getuid(), os.Getgid()
