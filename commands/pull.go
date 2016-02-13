@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/codegangsta/cli"
+	"github.com/docker/docker/pkg/fileutils"
 
 	"github.com/yuuki1/droot/archive"
 	"github.com/yuuki1/droot/aws"
@@ -92,10 +93,50 @@ func doPull(c *cli.Context) error {
 		return fmt.Errorf("Failed to extract archive: %s", err)
 	}
 
-	log.Info("-->", "Syncing", "from", rawDir, "to", destDir)
+	if mode == "rsync" {
+		log.Info("-->", "Syncing", "from", rawDir, "to", destDir)
 
-	if err := archive.Rsync(rawDir, destDir); err != nil {
-		return fmt.Errorf("Failed to rsync: %s", err)
+		if err := archive.Rsync(rawDir, destDir); err != nil {
+			return fmt.Errorf("Failed to rsync: %s", err)
+		}
+	} else if mode == "symlink" {
+		mainDir := destDir + ".drootmain"
+		backupDir := destDir + ".drootbackup"
+
+		for _, dir := range []string{mainDir, backupDir} {
+			if err := fileutils.CreateIfNotExists(dir, true); err != nil { // mkdir -p
+				return fmt.Errorf("Failed to create directory %s: %s", dir, err)
+			}
+		}
+
+		// Atomic deploy by symlink
+		// 1. rsync maindir => backupdir
+		// 2. delete destdir symlink
+		// 3. ln -s backupdir destdir
+		// 4. rsync rawdir => maindir
+		// 5. delete destdir symlink
+		// 6. ln -s maindir destdir
+
+		if err := archive.Rsync(mainDir, backupDir); err != nil {
+			return fmt.Errorf("Failed to rsync: %s", err)
+		}
+		if err := os.Remove(destDir); err != nil {
+			return fmt.Errorf("Failed to delete %s: %s", destDir, err)
+		}
+		if err := osutil.Symlink(backupDir, destDir); err != nil {
+			return fmt.Errorf("Failed to create symlink %s: %s", destDir, err)
+		}
+		if err := archive.Rsync(rawDir, mainDir); err != nil {
+			return fmt.Errorf("Failed to rsync: %s", err)
+		}
+		if err := os.Remove(destDir); err != nil {
+			return fmt.Errorf("Failed to delete %s: %s", destDir, err)
+		}
+		if err := osutil.Symlink(mainDir, destDir); err != nil {
+			return fmt.Errorf("Failed to create symlink %s: %s", destDir, err)
+		}
+	} else {
+		return fmt.Errorf("Unreachable code. invalid mode %s", mode)
 	}
 
 	if err := os.Lchown(destDir, uid, gid); err != nil {
