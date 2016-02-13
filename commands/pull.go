@@ -117,18 +117,22 @@ func doPull(c *cli.Context) error {
 		// 5. delete destdir symlink
 		// 6. ln -s maindir destdir
 
+		log.Info("-->", "Syncing", "from", mainDir, "to", backupDir)
 		if err := archive.Rsync(mainDir, backupDir); err != nil {
 			return fmt.Errorf("Failed to rsync: %s", err)
 		}
+		log.Info("-->", "Creating symlink", destDir, "=>", backupDir)
 		if err := os.Remove(destDir); err != nil {
 			return fmt.Errorf("Failed to delete %s: %s", destDir, err)
 		}
 		if err := osutil.Symlink(backupDir, destDir); err != nil {
 			return fmt.Errorf("Failed to create symlink %s: %s", destDir, err)
 		}
+		log.Info("-->", "Syncing", "from", rawDir, "to", mainDir)
 		if err := archive.Rsync(rawDir, mainDir); err != nil {
 			return fmt.Errorf("Failed to rsync: %s", err)
 		}
+		log.Info("-->", "Creating symlink", destDir, "=>", mainDir)
 		if err := os.Remove(destDir); err != nil {
 			return fmt.Errorf("Failed to delete %s: %s", destDir, err)
 		}
