@@ -100,8 +100,10 @@ func doPull(c *cli.Context) error {
 			return fmt.Errorf("Failed to rsync: %s", err)
 		}
 	} else if mode == "symlink" {
-		mainDir := destDir + ".drootmain"
-		backupDir := destDir + ".drootbackup"
+		mainLink := destDir + ".drootmain"
+		backupLink := destDir + ".drootbackup"
+		mainDir := destDir + ".d/main"
+		backupDir := destDir + ".d/backup"
 
 		for _, dir := range []string{mainDir, backupDir} {
 			if err := fileutils.CreateIfNotExists(dir, true); err != nil { // mkdir -p
@@ -109,35 +111,34 @@ func doPull(c *cli.Context) error {
 			}
 		}
 
+		if err := osutil.Symlink(mainDir, mainLink); err != nil {
+			return fmt.Errorf("Failed to create symlink %s: %s", mainLink, err)
+		}
+		if err := osutil.Symlink(backupDir, backupLink); err != nil {
+			return fmt.Errorf("Failed to create symlink %s: %s", backupLink, err)
+		}
+
 		// Atomic deploy by symlink
 		// 1. rsync maindir => backupdir
-		// 2. delete destdir symlink
-		// 3. ln -s backupdir destdir
-		// 4. rsync rawdir => maindir
-		// 5. delete destdir symlink
-		// 6. ln -s maindir destdir
+		// 2. mv -T backuplink destdir
+		// 3. rsync rawdir => maindir
+		// 4. mv -T mainlink destdir
 
 		log.Info("-->", "Syncing", "from", mainDir, "to", backupDir)
 		if err := archive.Rsync(mainDir, backupDir); err != nil {
 			return fmt.Errorf("Failed to rsync: %s", err)
 		}
-		log.Info("-->", "Creating symlink", destDir, "=>", backupDir)
-		if err := os.Remove(destDir); err != nil {
-			return fmt.Errorf("Failed to delete %s: %s", destDir, err)
-		}
-		if err := osutil.Symlink(backupDir, destDir); err != nil {
-			return fmt.Errorf("Failed to create symlink %s: %s", destDir, err)
+		log.Info("-->", "Renaming", "from", backupLink, "to", destDir)
+		if err := os.Rename(backupLink, destDir); err != nil {
+			return fmt.Errorf("Failed to rename %s: %s", destDir, err)
 		}
 		log.Info("-->", "Syncing", "from", rawDir, "to", mainDir)
 		if err := archive.Rsync(rawDir, mainDir); err != nil {
 			return fmt.Errorf("Failed to rsync: %s", err)
 		}
-		log.Info("-->", "Creating symlink", destDir, "=>", mainDir)
-		if err := os.Remove(destDir); err != nil {
-			return fmt.Errorf("Failed to delete %s: %s", destDir, err)
-		}
-		if err := osutil.Symlink(mainDir, destDir); err != nil {
-			return fmt.Errorf("Failed to create symlink %s: %s", destDir, err)
+		log.Info("-->", "Renaming", "from", mainLink, "to", destDir)
+		if err := os.Rename(mainLink, destDir); err != nil {
+			return fmt.Errorf("Failed to rename %s: %s", destDir, err)
 		}
 	} else {
 		return fmt.Errorf("Unreachable code. invalid mode %s", mode)
