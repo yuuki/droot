@@ -170,4 +170,3 @@ func deployWithSymlink(srcDir, destDir string) error {
 
 	return nil
 }
-
