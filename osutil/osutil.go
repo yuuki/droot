@@ -19,6 +19,11 @@ func ExistsFile(file string) bool {
 	return err == nil && !f.IsDir()
 }
 
+func IsSymlink(file string) bool {
+	f, err := os.Lstat(file)
+	return err == nil && f.Mode()&os.ModeSymlink == os.ModeSymlink
+}
+
 func ExistsDir(dir string) bool {
 	if f, err := os.Stat(dir); os.IsNotExist(err) || !f.IsDir() {
 		return false
