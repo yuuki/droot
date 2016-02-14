@@ -111,6 +111,13 @@ func doPull(c *cli.Context) error {
 			}
 		}
 
+		// Return error if the working directory that droot internally uses exists
+		for _, link := range []string{mainLink, backupLink, destDir} {
+			if !osutil.IsSymlink(link) && (osutil.ExistsFile(link) || osutil.ExistsDir(link)) {
+				return fmt.Errorf("%s already exists. Please use another directory as --dest option or delete %s", link)
+			}
+		}
+
 		if err := osutil.Symlink(mainDir, mainLink); err != nil {
 			return fmt.Errorf("Failed to create symlink %s: %s", mainLink, err)
 		}
