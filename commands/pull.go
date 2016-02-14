@@ -57,12 +57,12 @@ func doPull(c *cli.Context) error {
 	uid, gid := os.Getuid(), os.Getgid()
 	if group := c.String("group"); group != "" {
 		if gid, err = osutil.LookupGroup(group); err != nil {
-			return fmt.Errorf("Failed to lookup group:", err)
+			return fmt.Errorf("Failed to lookup group: %s", err)
 		}
 	}
 	if user := c.String("user"); user != "" {
 		if uid, err = osutil.LookupUser(user); err != nil {
-			return fmt.Errorf("Failed to lookup user:", err)
+			return fmt.Errorf("Failed to lookup user: %s", err)
 		}
 	}
 
@@ -137,7 +137,7 @@ func deployWithSymlink(srcDir, destDir string) error {
 	// Return error if the working directory that droot internally uses exists
 	for _, link := range []string{mainLink, backupLink, destDir} {
 		if !osutil.IsSymlink(link) && (osutil.ExistsFile(link) || osutil.ExistsDir(link)) {
-			return fmt.Errorf("%s already exists. Please use another directory as --dest option or delete %s", link)
+			return fmt.Errorf("%s already exists. Please use another directory as --dest option or delete %s", link, link)
 		}
 	}
 

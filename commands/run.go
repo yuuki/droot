@@ -83,12 +83,12 @@ func doRun(c *cli.Context) error {
 
 	if group := c.String("group"); group != "" {
 		if gid, err = osutil.LookupGroup(group); err != nil {
-			return fmt.Errorf("Failed to lookup group:", err)
+			return fmt.Errorf("Failed to lookup group: %s", err)
 		}
 	}
 	if user := c.String("user"); user != "" {
 		if uid, err = osutil.LookupUser(user); err != nil {
-			return fmt.Errorf("Failed to lookup user:", err)
+			return fmt.Errorf("Failed to lookup user: %s", err)
 		}
 	}
 
@@ -97,10 +97,10 @@ func doRun(c *cli.Context) error {
 		for _, f := range copyFiles {
 			srcFile, destFile := fp.Join("/", f), fp.Join(rootDir, f)
 			if err := osutil.Cp(srcFile, destFile); err != nil {
-				return fmt.Errorf("Failed to copy %s:", f, err)
+				return fmt.Errorf("Failed to copy %s: %s", f, err)
 			}
 			if err := os.Lchown(destFile, uid, gid); err != nil {
-				return fmt.Errorf("Failed to lchown %s:", f, err)
+				return fmt.Errorf("Failed to lchown %s: %s", f, err)
 			}
 		}
 	}
@@ -116,47 +116,47 @@ func doRun(c *cli.Context) error {
 
 	for _, dir := range c.StringSlice("bind") {
 		if err := bindMount(dir, rootDir, false); err != nil {
-			return fmt.Errorf("Failed to bind mount %s:", dir, err)
+			return fmt.Errorf("Failed to bind mount %s: %s", dir, err)
 		}
 	}
 	for _, dir := range c.StringSlice("robind") {
 		if err := bindMount(dir, rootDir, true); err != nil {
-			return fmt.Errorf("Failed to robind mount %s:", dir, err)
+			return fmt.Errorf("Failed to robind mount %s: %s", dir, err)
 		}
 	}
 
 	// create symlinks
 	if err := osutil.Symlink("../run/lock", fp.Join(rootDir, "/var/lock")); err != nil {
-		return fmt.Errorf("Failed to symlink lock file:", err)
+		return fmt.Errorf("Failed to symlink lock file: %s", err)
 	}
 
 	if err := createDevices(rootDir, uid, gid); err != nil {
-		return fmt.Errorf("Failed to create devices:", err)
+		return fmt.Errorf("Failed to create devices: %s", err)
 	}
 
 	log.Debug("chroot", rootDir, command)
 
 	if err := syscall.Chroot(rootDir); err != nil {
-		return fmt.Errorf("Failed to chroot:", err)
+		return fmt.Errorf("Failed to chroot: %s", err)
 	}
 	if err := syscall.Chdir("/"); err != nil {
-		return fmt.Errorf("Failed to chdir /:", err)
+		return fmt.Errorf("Failed to chdir /: %s", err)
 	}
 
 	if !c.Bool("no-dropcaps") {
 		log.Debug("drop capabilities")
 		if err := osutil.DropCapabilities(keepCaps); err != nil {
-			return fmt.Errorf("Failed to drop capabilities:", err)
+			return fmt.Errorf("Failed to drop capabilities: %s", err)
 		}
 	}
 
 	log.Debug("setgid", gid)
 	if err := osutil.Setgid(gid); err != nil {
-		return fmt.Errorf("Failed to set group %d:", gid, err)
+		return fmt.Errorf("Failed to set group %d: %s", gid, err)
 	}
 	log.Debug("setuid", uid)
 	if err := osutil.Setuid(uid); err != nil {
-		return fmt.Errorf("Failed to set user %d:", uid, err)
+		return fmt.Errorf("Failed to set user %d: %s", uid, err)
 	}
 
 	return osutil.Execv(command[0], command[0:], os.Environ())
