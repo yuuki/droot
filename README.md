@@ -104,7 +104,7 @@ It is recommanded to use Docker for development if you are on OSX and other OSs.
 ### build in Docker container
 
 ```bash
-$ ./script/build_in_container.sh
+$ ./script/build_in_container.sh make build
 ```
 
 ## Contribution
