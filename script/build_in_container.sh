@@ -11,7 +11,7 @@ fi
 
 docker build -t $DOCKER_IMAGE_NAME .
 
-docker run --volume "$GOPATH"/src/:/go/src/ -e GOOS=$GOOS -e GOARCH=$GOARCH --name $DOCKER_CONTAINER_NAME $DOCKER_IMAGE_NAME make "$@"
+docker run --volume "$GOPATH"/src/:/go/src/ -e GOOS=$GOOS -e GOARCH=$GOARCH --name $DOCKER_CONTAINER_NAME $DOCKER_IMAGE_NAME "$@"
 
 if [[ "$@" == *"clean"* ]] && [[ -d bin ]]; then
   rm -Rf bin
