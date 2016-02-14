@@ -1,4 +1,4 @@
-droot  [![Travis Build Status](https://travis-ci.org/yuuki1/droot.svg?branch=master)](https://travis-ci.org/yuuki1/droot) [![Go Report Card](https://goreportcard.com/badge/github.com/yuuki1/droot)](https://goreportcard.com/report/github.com/yuuki1/droot) [![License](http://img.shields.io/:license-mit-blue.svg)](http://doge.mit-license.org)
+droot  [![Latest Version](http;//img.shields.io/github/release/yuuki1/droot.svg?style=flat-square)](https://github.com/yuuki1/droot/releases) [![Travis Build Status](https://travis-ci.org/yuuki1/droot.svg?branch=master)](https://travis-ci.org/yuuki1/droot) [![Go Report Card](https://goreportcard.com/badge/github.com/yuuki1/droot)](https://goreportcard.com/report/github.com/yuuki1/droot) [![License](http://img.shields.io/:license-mit-blue.svg)](http://doge.mit-license.org)
 =====
 
 Droot is a super-easy application container engine to build, ship, run with chroot instead of docker run, and with Amazon S3 instead of docker registry. It aims to simply escape dependency hell.
