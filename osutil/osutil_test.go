@@ -39,3 +39,18 @@ func TestIsSymlink(t *testing.T) {
 	assert.True(t, IsSymlink(tmpDir+"/symlink"))
 }
 
+func TestExistsDir(t *testing.T) {
+	assert.False(t, ExistsDir("/paht/to/notexist"))
+
+	tmpDir := os.TempDir()
+	tmp, _ := ioutil.TempFile(tmpDir, "droot_test")
+	defer func() {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		os.Remove(tmpDir)
+	}()
+
+	assert.True(t, ExistsDir(tmpDir))
+	assert.False(t, ExistsDir(tmp.Name()))
+}
+
