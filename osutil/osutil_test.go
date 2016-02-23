@@ -74,3 +74,7 @@ func TestIsDirEmpty(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+func TestRunCmd(t *testing.T) {
+	assert.NoError(t, RunCmd("/bin/ls"))
+	assert.Error(t, RunCmd("/bin/hoge"))
+}
