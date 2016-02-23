@@ -16,7 +16,6 @@ func TestExistsFile(t *testing.T) {
 	defer func() {
 		tmp.Close()
 		os.Remove(tmp.Name())
-		os.Remove(tmpDir)
 	}()
 
 	assert.True(t, ExistsFile(tmp.Name()))
@@ -29,7 +28,6 @@ func TestIsSymlink(t *testing.T) {
 	defer func() {
 		tmp.Close()
 		os.Remove(tmp.Name())
-		os.Remove(tmpDir)
 	}()
 
 	assert.False(t, IsSymlink(tmp.Name()))
@@ -47,10 +45,32 @@ func TestExistsDir(t *testing.T) {
 	defer func() {
 		tmp.Close()
 		os.Remove(tmp.Name())
-		os.Remove(tmpDir)
 	}()
 
 	assert.True(t, ExistsDir(tmpDir))
 	assert.False(t, ExistsDir(tmp.Name()))
+}
+
+func TestIsDirEmpty(t *testing.T) {
+	ok, err := IsDirEmpty("/paht/to/notexist")
+	assert.False(t, ok)
+	assert.Error(t, err)
+
+	tmpDir := os.TempDir()
+	os.Mkdir(tmpDir+"/empty", 0755)
+	os.Mkdir(tmpDir+"/noempty", 0755)
+	os.Create(tmpDir+"/noempty/test")
+	defer func() {
+		os.Remove(tmpDir+"/empty")
+		os.RemoveAll(tmpDir+"/noempty")
+	}()
+
+	ok, err = IsDirEmpty(tmpDir+"/empty")
+	assert.True(t, ok)
+	assert.NoError(t, err)
+
+	ok, err = IsDirEmpty(tmpDir+"/noempty")
+	assert.False(t, ok)
+	assert.NoError(t, err)
 }
 
