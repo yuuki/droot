@@ -98,7 +98,7 @@ DOCKER_CERT_PATH=/home/yuuki/.docker/machine/machines/dev
 
 ## Development
 
-Droot uses a library with cgo, so it is necessary to build in Linux for a Linux binary.
+Droot uses a package using cgo, so it is necessary to build in Linux for a Linux binary.
 It is recommanded to use Docker for development if you are on OSX and other OSs.
 
 ### build in Docker container
