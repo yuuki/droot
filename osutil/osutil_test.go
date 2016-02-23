@@ -78,3 +78,19 @@ func TestRunCmd(t *testing.T) {
 	assert.NoError(t, RunCmd("/bin/ls"))
 	assert.Error(t, RunCmd("/bin/hoge"))
 }
+
+func TestSymlink(t *testing.T) {
+	tmpDir := os.TempDir()
+	tmp, _ := ioutil.TempFile(tmpDir, "droot_test")
+	defer func() {
+		tmp.Close()
+		os.Remove(tmp.Name())
+	}()
+
+	assert.NoError(t, Symlink(tmp.Name(), tmp.Name()+"/symlink"))
+	assert.NoError(t, Symlink(tmp.Name(), tmp.Name()+"/symlink"), "Ignore already exist symlink file")
+	os.Create(tmpDir+"/droot_dummy")
+	assert.NoError(t, Symlink(tmp.Name(), tmpDir+"/droot_dummy"), "Ignore already exist file")
+	os.Remove(tmp.Name()+"/symlink")
+}
+
