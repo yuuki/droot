@@ -7,6 +7,7 @@ import (
 type dockerclient interface {
 	RemoveContainer(opts godocker.RemoveContainerOptions) error
 	CreateContainer(opts godocker.CreateContainerOptions) (*godocker.Container, error)
+	StartContainer(id string, hostConfig *godocker.HostConfig) error
 	ExportContainer(opts godocker.ExportContainerOptions) error
 }
 
@@ -31,6 +32,10 @@ func (d *_dockerclient) RemoveContainer(opts godocker.RemoveContainerOptions) er
 
 func (d *_dockerclient) CreateContainer(opts godocker.CreateContainerOptions) (*godocker.Container, error) {
 	return d.docker.CreateContainer(opts)
+}
+
+func (d *_dockerclient) StartContainer(id string, hostConfig *godocker.HostConfig) error {
+	return d.docker.StartContainer(id, hostConfig)
 }
 
 func (d *_dockerclient) ExportContainer(opts godocker.ExportContainerOptions) error {

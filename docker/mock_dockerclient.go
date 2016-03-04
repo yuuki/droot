@@ -41,6 +41,18 @@ func (_m *mockDockerclient) CreateContainer(opts godocker.CreateContainerOptions
 
 	return r0, r1
 }
+func (_m *mockDockerclient) StartContainer(id string, hostConfig *godocker.HostConfig) error {
+	ret := _m.Called(id, hostConfig)
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(string, *godocker.HostConfig) error); ok {
+		r0 = rf(id, hostConfig)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
 func (_m *mockDockerclient) ExportContainer(opts godocker.ExportContainerOptions) error {
 	ret := _m.Called(opts)
 
