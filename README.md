@@ -95,6 +95,7 @@ DOCKER_CERT_PATH=/home/yuuki/.docker/machine/machines/dev
 - `push/pull` S3 download/upload part-size options
 - `push/pull` verifying sha256sum
 - `pull` backup/rollback option
+- `run` inherit docker environment variables
 
 ## Development
 
