@@ -53,6 +53,25 @@ func (_m *mockDockerclient) StartContainer(id string, hostConfig *godocker.HostC
 
 	return r0
 }
+func (_m *mockDockerclient) WaitContainer(id string) (int, error) {
+	ret := _m.Called(id)
+
+	var r0 int
+	if rf, ok := ret.Get(0).(func(string) int); ok {
+		r0 = rf(id)
+	} else {
+		r0 = ret.Get(0).(int)
+	}
+
+	var r1 error
+	if rf, ok := ret.Get(1).(func(string) error); ok {
+		r1 = rf(id)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
 func (_m *mockDockerclient) ExportContainer(opts godocker.ExportContainerOptions) error {
 	ret := _m.Called(opts)
 

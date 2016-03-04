@@ -24,7 +24,6 @@ func NewClient() (*Client, error) {
 	}, nil
 }
 
-
 // Export a docker image into the archive of filesystem.
 // Save an environ of the docker image into `/.drootenv` to preserve it.
 func (c *Client) ExportImage(imageID string) (io.ReadCloser, error) {
@@ -46,6 +45,10 @@ func (c *Client) ExportImage(imageID string) (io.ReadCloser, error) {
 			Force: true,
 		})
 		return nil, errwrap.Wrapff(err, "Failed to remove container (containerID:%s): {{err}}", container.ID)
+	}
+
+	if _, err := c.docker.WaitContainer(container.ID); err != nil {
+		return nil, errwrap.Wrapff(err, "Failed to wait container (containerID:%s): {{err}}", container.ID)
 	}
 
 	pReader, pWriter := io.Pipe()
