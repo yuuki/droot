@@ -160,11 +160,13 @@ func doRun(c *cli.Context) error {
 		return fmt.Errorf("Failed to set user %d: %s", uid, err)
 	}
 
-	env, err := getEnvironFromEnvFile("/.drootenv")
-	if err != nil {
-		return fmt.Errorf("Failed to environ from '/.drootenv'")
+	var env []string
+	if osutil.ExistsFile("/.drootenv") {
+		env, err = getEnvironFromEnvFile("/.drootenv")
+		if err != nil {
+			return fmt.Errorf("Failed to read environ from '/.drootenv'")
+		}
 	}
-
 	return osutil.Execv(command[0], command[0:], env)
 }
 
