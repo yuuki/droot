@@ -7,6 +7,10 @@ import (
 	"runtime"
 )
 
+func Execv(cmd string, args []string, env []string) error {
+	return fmt.Errorf("osutil: Execv not implemented on %s/%s", runtime.GOOS, runtime.GOARCH)
+}
+
 func LookupGroup(id string) (int, error) {
 	return -1, fmt.Errorf("osutil: LookupGroup not implemented on %s/%s", runtime.GOOS, runtime.GOARCH)
 }

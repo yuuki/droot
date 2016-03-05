@@ -4,10 +4,10 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"golang.org/x/sys/unix"
 	"os"
 	fp "path/filepath"
 	"strings"
-	"syscall"
 
 	"github.com/codegangsta/cli"
 	"github.com/docker/docker/pkg/fileutils"
@@ -137,10 +137,10 @@ func doRun(c *cli.Context) error {
 
 	log.Debug("chroot", rootDir, command)
 
-	if err := syscall.Chroot(rootDir); err != nil {
+	if err := unix.Chroot(rootDir); err != nil {
 		return fmt.Errorf("Failed to chroot: %s", err)
 	}
-	if err := syscall.Chdir("/"); err != nil {
+	if err := unix.Chdir("/"); err != nil {
 		return fmt.Errorf("Failed to chdir /: %s", err)
 	}
 
@@ -220,7 +220,7 @@ func bindMount(bindDir string, rootDir string, readonly bool) error {
 
 func createDevices(rootDir string, uid, gid int) error {
 	nullDir := fp.Join(rootDir, os.DevNull)
-	if err := osutil.Mknod(nullDir, syscall.S_IFCHR|uint32(os.FileMode(0666)), 1*256+3); err != nil {
+	if err := osutil.Mknod(nullDir, unix.S_IFCHR|uint32(os.FileMode(0666)), 1*256+3); err != nil {
 		return err
 	}
 
@@ -229,7 +229,7 @@ func createDevices(rootDir string, uid, gid int) error {
 	}
 
 	zeroDir := fp.Join(rootDir, "/dev/zero")
-	if err := osutil.Mknod(zeroDir, syscall.S_IFCHR|uint32(os.FileMode(0666)), 1*256+3); err != nil {
+	if err := osutil.Mknod(zeroDir, unix.S_IFCHR|uint32(os.FileMode(0666)), 1*256+3); err != nil {
 		return err
 	}
 
@@ -239,7 +239,7 @@ func createDevices(rootDir string, uid, gid int) error {
 
 	for _, f := range []string{"/dev/random", "/dev/urandom"} {
 		randomDir := fp.Join(rootDir, f)
-		if err := osutil.Mknod(randomDir, syscall.S_IFCHR|uint32(os.FileMode(0666)), 1*256+9); err != nil {
+		if err := osutil.Mknod(randomDir, unix.S_IFCHR|uint32(os.FileMode(0666)), 1*256+9); err != nil {
 			return err
 		}
 

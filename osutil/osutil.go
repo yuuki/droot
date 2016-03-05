@@ -1,12 +1,12 @@
 package osutil
 
 import (
+	"golang.org/x/sys/unix"
 	"io"
 	"os"
 	"os/exec"
 	fp "path/filepath"
 	"strings"
-	"syscall"
 
 	"github.com/docker/docker/pkg/mount"
 
@@ -101,7 +101,7 @@ func Mknod(path string, mode uint32, dev int) error {
 	if ExistsFile(path) {
 		return nil
 	}
-	if err := syscall.Mknod(path, mode, dev); err != nil {
+	if err := unix.Mknod(path, mode, dev); err != nil {
 		return errwrap.Wrapff(err, "Failed to mknod %s: {{err}}", path)
 	}
 	return nil
@@ -118,13 +118,3 @@ func Symlink(oldname, newname string) error {
 	return nil
 }
 
-func Execv(cmd string, args []string, env []string) error {
-	name, err := exec.LookPath(cmd)
-	if err != nil {
-		return errwrap.Wrapff(err, "Not found %s: {{err}}", cmd)
-	}
-
-	log.Debug("exec: ", name, args)
-
-	return syscall.Exec(name, args, env)
-}
