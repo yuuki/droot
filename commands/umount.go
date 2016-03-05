@@ -3,6 +3,7 @@ package commands
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 
 	"github.com/codegangsta/cli"
 
@@ -20,10 +21,14 @@ var CommandUmount = cli.Command{
 }
 
 func doUmount(c *cli.Context) error {
-	rootDir := c.String("root")
-	if rootDir == "" {
+	if c.String("root") == "" {
 		cli.ShowCommandHelp(c, "umount")
 		return errors.New("--root option required")
+	}
+
+	rootDir, err := filepath.Abs(c.String("root"))
+	if err != nil {
+		return err
 	}
 
 	if !osutil.ExistsDir(rootDir) {
