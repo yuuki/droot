@@ -8,8 +8,6 @@ import (
 	"github.com/yuuki1/droot/errwrap"
 )
 
-const exportBufSize = 32768
-
 type Client struct {
 	docker dockerclient
 }
