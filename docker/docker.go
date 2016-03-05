@@ -27,9 +27,9 @@ func NewClient() (*Client, error) {
 func (c *Client) ExportImage(imageID string) (io.ReadCloser, error) {
 	container, err := c.docker.CreateContainer(godocker.CreateContainerOptions{
 		Config: &godocker.Config{
-			Image: imageID,
+			Image:      imageID,
 			Entrypoint: []string{"/bin/sh"}, // Clear the exising entrypoint
-			Cmd: []string{"-c", "printenv > /.drootenv"},
+			Cmd:        []string{"-c", "printenv > /.drootenv"},
 		},
 	})
 	if err != nil {

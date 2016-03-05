@@ -117,4 +117,3 @@ func Symlink(oldname, newname string) error {
 	}
 	return nil
 }
-

@@ -59,17 +59,17 @@ func TestIsDirEmpty(t *testing.T) {
 	tmpDir := os.TempDir()
 	os.Mkdir(tmpDir+"/empty", 0755)
 	os.Mkdir(tmpDir+"/noempty", 0755)
-	os.Create(tmpDir+"/noempty/test")
+	os.Create(tmpDir + "/noempty/test")
 	defer func() {
-		os.Remove(tmpDir+"/empty")
-		os.RemoveAll(tmpDir+"/noempty")
+		os.Remove(tmpDir + "/empty")
+		os.RemoveAll(tmpDir + "/noempty")
 	}()
 
-	ok, err = IsDirEmpty(tmpDir+"/empty")
+	ok, err = IsDirEmpty(tmpDir + "/empty")
 	assert.True(t, ok)
 	assert.NoError(t, err)
 
-	ok, err = IsDirEmpty(tmpDir+"/noempty")
+	ok, err = IsDirEmpty(tmpDir + "/noempty")
 	assert.False(t, ok)
 	assert.NoError(t, err)
 }
@@ -89,8 +89,7 @@ func TestSymlink(t *testing.T) {
 
 	assert.NoError(t, Symlink(tmp.Name(), tmp.Name()+"/symlink"))
 	assert.NoError(t, Symlink(tmp.Name(), tmp.Name()+"/symlink"), "Ignore already exist symlink file")
-	os.Create(tmpDir+"/droot_dummy")
+	os.Create(tmpDir + "/droot_dummy")
 	assert.NoError(t, Symlink(tmp.Name(), tmpDir+"/droot_dummy"), "Ignore already exist file")
-	os.Remove(tmp.Name()+"/symlink")
+	os.Remove(tmp.Name() + "/symlink")
 }
-
