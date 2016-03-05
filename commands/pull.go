@@ -16,7 +16,7 @@ import (
 	"github.com/yuuki1/droot/osutil"
 )
 
-var CommandArgPull = "--dest DESTINATION_DIRECTORY --src S3_ENDPOINT [--user USER] [--grpup GROUP] [--mode MODE]"
+var CommandArgPull = "--dest DESTINATION_DIRECTORY --src S3_ENDPOINT [--mode MODE]"
 var CommandPull = cli.Command{
 	Name:   "pull",
 	Usage:  "Pull an extracted docker image from s3",
@@ -24,8 +24,6 @@ var CommandPull = cli.Command{
 	Flags: []cli.Flag{
 		cli.StringFlag{Name: "dest, d", Usage: "Local filesystem path (ex. /var/containers/app)"},
 		cli.StringFlag{Name: "src, s", Usage: "Amazon S3 endpoint (ex. s3://drootexample/app.tar.gz)"},
-		cli.StringFlag{Name: "user, u", Usage: "User (ID or name) to set after extracting archive (required superuser)"},
-		cli.StringFlag{Name: "group, g", Usage: "Group (ID or name) to set after extracting archive (required superuser)"},
 		cli.StringFlag{Name: "mode, m", Usage: "Mode of deployment. 'rsync' or 'symlink'. default is 'rsync'"},
 	},
 }
@@ -54,18 +52,6 @@ func doPull(c *cli.Context) error {
 		return fmt.Errorf("Invalid mode %s. '--mode' must be 'rsync' or 'symlink'.", mode)
 	}
 
-	uid, gid := os.Getuid(), os.Getgid()
-	if group := c.String("group"); group != "" {
-		if gid, err = osutil.LookupGroup(group); err != nil {
-			return fmt.Errorf("Failed to lookup group: %s", err)
-		}
-	}
-	if user := c.String("user"); user != "" {
-		if uid, err = osutil.LookupUser(user); err != nil {
-			return fmt.Errorf("Failed to lookup user: %s", err)
-		}
-	}
-
 	tmp, err := ioutil.TempFile(os.TempDir(), "droot_gzip")
 	if err != nil {
 		return fmt.Errorf("Failed to create temporary file: %s", err)
@@ -89,7 +75,7 @@ func doPull(c *cli.Context) error {
 
 	log.Info("-->", "Extracting archive", tmp.Name(), "to", rawDir)
 
-	if err := archive.ExtractTarGz(tmp, rawDir, uid, gid); err != nil {
+	if err := archive.ExtractTarGz(tmp, rawDir); err != nil {
 		return fmt.Errorf("Failed to extract archive: %s", err)
 	}
 
@@ -105,13 +91,6 @@ func doPull(c *cli.Context) error {
 		}
 	} else {
 		return fmt.Errorf("Unreachable code. invalid mode %s", mode)
-	}
-
-	if err := os.Lchown(destDir, uid, gid); err != nil {
-		return fmt.Errorf("Failed to chown %d:%d: %s", uid, gid, err)
-	}
-	if err := os.Chmod(destDir, os.FileMode(0755)); err != nil {
-		return fmt.Errorf("Failed to chmod %s: %s", destDir, err)
 	}
 
 	return nil

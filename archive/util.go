@@ -16,15 +16,11 @@ const compressionBufSize = 32768
 
 var RsyncDefaultOpts = []string{"-av", "--delete"}
 
-func ExtractTarGz(in io.Reader, dest string, uid int, gid int) (err error) {
+func ExtractTarGz(in io.Reader, dest string) (err error) {
 	return archive.Untar(in, dest, &archive.TarOptions{
 		Compression: archive.Gzip,
-		NoLchown:    false,
-		ChownOpts: &archive.TarChownOptions{
-			UID: uid,
-			GID: gid,
-		},
-		ExcludePatterns: []string{"dev/"}, // prevent operation not permitted
+		NoLchown:    true,
+		ExcludePatterns: []string{"dev/"}, // prevent 'operation not permitted'
 	})
 }
 
