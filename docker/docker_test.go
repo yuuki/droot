@@ -17,6 +17,8 @@ func TestExportImage(t *testing.T) {
 	mockDocker.On("CreateContainer", mock.Anything).Return(&godocker.Container{
 		ID: containerID,
 	}, nil)
+	mockDocker.On("StartContainer", containerID, mock.Anything).Return(nil)
+	mockDocker.On("WaitContainer", containerID).Return(0, nil)
 	mockDocker.On("ExportContainer", mock.Anything).Return(nil).Run(func(args mock.Arguments) {
 		id := args.Get(0).(godocker.ExportContainerOptions).ID
 		assert.Equal(t, id, containerID)

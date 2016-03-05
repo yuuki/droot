@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
 	"os"
@@ -159,7 +160,12 @@ func doRun(c *cli.Context) error {
 		return fmt.Errorf("Failed to set user %d: %s", uid, err)
 	}
 
-	return osutil.Execv(command[0], command[0:], os.Environ())
+	env, err := getEnvironFromEnvFile("/.drootenv")
+	if err != nil {
+		return fmt.Errorf("Failed to environ from '/.drootenv'")
+	}
+
+	return osutil.Execv(command[0], command[0:], env)
 }
 
 func bindMount(bindDir string, rootDir string, readonly bool) error {
@@ -243,4 +249,27 @@ func createDevices(rootDir string, uid, gid int) error {
 	}
 
 	return nil
+}
+
+func getEnvironFromEnvFile(filename string) ([]string, error) {
+	f, err := os.Open(filename)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	var env []string
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		l := strings.Trim(scanner.Text(), " \n\t")
+		if len(l) == 0 {
+			continue
+		}
+		if len(strings.Split(l, "=")) != 2 { // line should be `key=value`
+			continue
+		}
+		env = append(env, l)
+	}
+
+	return env, nil
 }
