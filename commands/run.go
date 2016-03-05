@@ -39,7 +39,7 @@ var CommandRun = cli.Command{
 		},
 		cli.BoolFlag{
 			Name:  "copy-files, cp",
-			Usage: "Copy host from containersuch as /etc/hosts, /etc/group, /etc/passwd, /etc/hosts",
+			Usage: "Copy host files to container such as /etc/group, /etc/passwd, /etc/resolv.conf, /etc/hosts",
 		},
 		cli.BoolFlag{Name: "no-dropcaps", Usage: "Provide COMMAND's process in chroot with root permission (dangerous)"},
 	},
