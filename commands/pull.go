@@ -3,6 +3,7 @@ package commands
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"io/ioutil"
 	"net/url"
 	"os"
@@ -29,19 +30,22 @@ var CommandPull = cli.Command{
 }
 
 func doPull(c *cli.Context) error {
-	destDir := c.String("dest")
-	srcURL := c.String("src")
-	if destDir == "" || srcURL == "" {
+	if c.String("dest") == "" || c.String("src") == "" {
 		cli.ShowCommandHelp(c, "pull")
 		return errors.New("--src and --dest option required ")
 	}
 
-	s3URL, err := url.Parse(srcURL)
+	destDir, err := filepath.Abs(c.String("dest"))
+	if err != nil {
+		return err
+	}
+
+	s3URL, err := url.Parse(c.String("src"))
 	if err != nil {
 		return err
 	}
 	if s3URL.Scheme != "s3" {
-		return fmt.Errorf("Not s3 scheme %s", srcURL)
+		return fmt.Errorf("Not s3 scheme %s", s3URL.String())
 	}
 
 	mode := c.String("mode")
@@ -64,7 +68,7 @@ func doPull(c *cli.Context) error {
 	log.Info("-->", "Downloading", s3URL, "to", tmp.Name())
 
 	if _, err := aws.NewS3Client().Download(s3URL, tmp); err != nil {
-		return fmt.Errorf("Failed to download file(%s) from s3: %s", srcURL, err)
+		return fmt.Errorf("Failed to download file(%s) from s3: %s", s3URL.String(), err)
 	}
 
 	rawDir, err := ioutil.TempDir(os.TempDir(), "droot_raw")
