@@ -48,7 +48,7 @@ $ droot pull --dest /var/containers/app --src s3://drootexamples/app.tar.gz
 ```
 
 ```bash
-$ sudo droot run --bind /var/log/ --root /var/containers/app command
+$ sudo droot run --cp --bind /var/log --root /var/containers/app command
 ```
 
 ```bash
@@ -84,17 +84,16 @@ DOCKER_CERT_PATH=/home/yuuki/.docker/machine/machines/dev
 
 ## Roodmap
 
-- `rmi` command to clean a image on S3
+- `rmi` command to clean an archive on S3
 - `pull` command with the rsync option
 - `push/pull` other compression algorithms
 - image versioning
 - `pull` from docker registry
 - drivers except Amazon S3
-- `run` reads `.docekrenv`, `.dockerinit`
-- reduce fork&exec
 - `push/pull` S3 download/upload part-size options
 - `push/pull` verifying sha256sum
 - `pull` backup/rollback option
+- `import` command to import an archive from S3 as Docker image
 
 ## Development
 
