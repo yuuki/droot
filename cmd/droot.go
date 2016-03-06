@@ -87,7 +87,7 @@ func main() {
 	app.Email = "https://github.com/yuuki1/droot"
 	app.Commands = commands.Commands
 	app.CommandNotFound = cmdNotFound
-	app.Usage = "droot is a CLI tool for chrooting a docker image."
+	app.Usage = "droot is a super-easy container with chroot without docker."
 	app.Version = Version
 
 	app.Flags = []cli.Flag{
