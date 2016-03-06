@@ -3,10 +3,10 @@ package commands
 import (
 	"errors"
 	"fmt"
-	"path/filepath"
 	"io/ioutil"
 	"net/url"
 	"os"
+	"path/filepath"
 
 	"github.com/codegangsta/cli"
 	"github.com/docker/docker/pkg/fileutils"

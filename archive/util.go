@@ -18,8 +18,8 @@ var RsyncDefaultOpts = []string{"-av", "--delete"}
 
 func ExtractTarGz(in io.Reader, dest string) (err error) {
 	return archive.Untar(in, dest, &archive.TarOptions{
-		Compression: archive.Gzip,
-		NoLchown:    true,
+		Compression:     archive.Gzip,
+		NoLchown:        true,
 		ExcludePatterns: []string{"dev/"}, // prevent 'operation not permitted'
 	})
 }
