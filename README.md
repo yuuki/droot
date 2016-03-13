@@ -1,4 +1,4 @@
-droot  [![Latest Version](http://img.shields.io/github/release/yuuki1/droot.svg?style=flat-square)](https://github.com/yuuki1/droot/releases) [![Travis Build Status](https://travis-ci.org/yuuki1/droot.svg?branch=master)](https://travis-ci.org/yuuki1/droot) [![Go Report Card](https://goreportcard.com/badge/github.com/yuuki1/droot)](https://goreportcard.com/report/github.com/yuuki1/droot) [![License](http://img.shields.io/:license-mit-blue.svg)](http://doge.mit-license.org)
+droot  [![Latest Version](http://img.shields.io/github/release/yuuki/droot.svg?style=flat-square)](https://github.com/yuuki/droot/releases) [![Travis Build Status](https://travis-ci.org/yuuki/droot.svg?branch=master)](https://travis-ci.org/yuuki/droot) [![Go Report Card](https://goreportcard.com/badge/github.com/yuuki/droot)](https://goreportcard.com/report/github.com/yuuki/droot) [![License](http://img.shields.io/:license-mit-blue.svg)](http://doge.mit-license.org)
 =====
 
 Droot is a super-easy container to build, ship, run with chroot instead of docker run. It aims to simply escape dependency hell.
@@ -24,17 +24,17 @@ Droot provides a simpler container runtime without annoying Linux Namespaces. Dr
 
 ### Homebrew
 ```bash
-$ brew tap yuuki1/droot
+$ brew tap yuuki/droot
 $ brew install droot
 ```
 
 ### Download binary from GitHub Releases
-[Releases・yuuki1/droot - GitHub](https://github.com/yuuki1/droot/releases)
+[Releases・yuuki/droot - GitHub](https://github.com/yuuki/droot/releases)
 
 ### Build from source
 ```bash
- $ go get github.com/yuuki1/droot
- $ go install github.com/yuuki1/droot/cmd
+ $ go get github.com/yuuki/droot
+ $ go install github.com/yuuki/droot/cmd
 ```
 
 ## Usage
@@ -108,7 +108,7 @@ $ ./script/build_in_container.sh make build
 
 ## Contribution
 
-1. Fork ([https://github.com/yuuki1/droot/fork](https://github.com/yuuki1/droot/fork))
+1. Fork ([https://github.com/yuuki/droot/fork](https://github.com/yuuki/droot/fork))
 1. Create a feature branch
 1. Commit your changes
 1. Rebase your local changes against the master branch
@@ -117,4 +117,4 @@ $ ./script/build_in_container.sh make build
 
 ## Author
 
-[y_uuki](https://github.com/yuuki1)
+[y_uuki](https://github.com/yuuki)

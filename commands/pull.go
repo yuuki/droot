@@ -11,10 +11,10 @@ import (
 	"github.com/codegangsta/cli"
 	"github.com/docker/docker/pkg/fileutils"
 
-	"github.com/yuuki1/droot/archive"
-	"github.com/yuuki1/droot/aws"
-	"github.com/yuuki1/droot/log"
-	"github.com/yuuki1/droot/osutil"
+	"github.com/yuuki/droot/archive"
+	"github.com/yuuki/droot/aws"
+	"github.com/yuuki/droot/log"
+	"github.com/yuuki/droot/osutil"
 )
 
 var CommandArgPull = "--dest DESTINATION_DIRECTORY --src S3_ENDPOINT [--mode MODE]"

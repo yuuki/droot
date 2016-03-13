@@ -17,4 +17,4 @@ if [[ "$@" == *"clean"* ]] && [[ -d bin ]]; then
   rm -Rf bin
 fi
 
-docker cp $DOCKER_CONTAINER_NAME:/go/src/github.com/yuuki1/droot/droot .
+docker cp $DOCKER_CONTAINER_NAME:/go/src/github.com/yuuki/droot/droot .

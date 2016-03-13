@@ -5,7 +5,7 @@ import (
 
 	godocker "github.com/fsouza/go-dockerclient"
 
-	"github.com/yuuki1/droot/errwrap"
+	"github.com/yuuki/droot/errwrap"
 )
 
 type Client struct {

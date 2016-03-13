@@ -24,4 +24,4 @@ git push origin master
 "$ROOT"/script/build_in_container.sh "$ROOT"/script/build_release.sh
 
 # make github release draft
-ghr --username yuuki1 --replace --draft "v$new_version" snapshot/
+ghr --username yuuki --replace --draft "v$new_version" snapshot/

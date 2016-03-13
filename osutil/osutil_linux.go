@@ -9,9 +9,9 @@ import (
 	"syscall"
 
 	"github.com/docker/libcontainer/system"
-	"github.com/yuuki1/go-group"
+	"github.com/yuuki/go-group"
 
-	"github.com/yuuki1/droot/log"
+	"github.com/yuuki/droot/log"
 )
 
 func LookupGroup(id string) (int, error) {

@@ -8,8 +8,8 @@ import (
 
 	"github.com/docker/docker/pkg/archive"
 
-	"github.com/yuuki1/droot/errwrap"
-	"github.com/yuuki1/droot/osutil"
+	"github.com/yuuki/droot/errwrap"
+	"github.com/yuuki/droot/osutil"
 )
 
 const compressionBufSize = 32768

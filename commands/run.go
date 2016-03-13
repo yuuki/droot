@@ -13,9 +13,9 @@ import (
 	"github.com/docker/docker/pkg/fileutils"
 	"github.com/docker/docker/pkg/mount"
 
-	"github.com/yuuki1/droot/errwrap"
-	"github.com/yuuki1/droot/log"
-	"github.com/yuuki1/droot/osutil"
+	"github.com/yuuki/droot/errwrap"
+	"github.com/yuuki/droot/log"
+	"github.com/yuuki/droot/osutil"
 )
 
 var CommandArgRun = "--root ROOT_DIR [--user USER] [--group GROUP] [--bind SRC-PATH[:DEST-PATH]] [--robind SRC-PATH[:DEST-PATH]] [--no-dropcaps] -- COMMAND"

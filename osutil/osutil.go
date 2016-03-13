@@ -10,8 +10,8 @@ import (
 
 	"github.com/docker/docker/pkg/mount"
 
-	"github.com/yuuki1/droot/errwrap"
-	"github.com/yuuki1/droot/log"
+	"github.com/yuuki/droot/errwrap"
+	"github.com/yuuki/droot/log"
 )
 
 func ExistsFile(file string) bool {
