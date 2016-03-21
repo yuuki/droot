@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
 	"golang.org/x/sys/unix"
@@ -13,6 +12,7 @@ import (
 	"github.com/docker/docker/pkg/fileutils"
 	"github.com/docker/docker/pkg/mount"
 
+	"github.com/yuuki/droot/environ"
 	"github.com/yuuki/droot/errwrap"
 	"github.com/yuuki/droot/log"
 	"github.com/yuuki/droot/osutil"
@@ -162,7 +162,7 @@ func doRun(c *cli.Context) error {
 
 	var env []string
 	if osutil.ExistsFile("/.drootenv") {
-		env, err = getEnvironFromEnvFile("/.drootenv")
+		env, err = environ.GetEnvironFromEnvFile("/.drootenv")
 		if err != nil {
 			return fmt.Errorf("Failed to read environ from '/.drootenv'")
 		}
@@ -251,27 +251,4 @@ func createDevices(rootDir string, uid, gid int) error {
 	}
 
 	return nil
-}
-
-func getEnvironFromEnvFile(filename string) ([]string, error) {
-	f, err := os.Open(filename)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-
-	var env []string
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		l := strings.Trim(scanner.Text(), " \n\t")
-		if len(l) == 0 {
-			continue
-		}
-		if len(strings.Split(l, "=")) != 2 { // line should be `key=value`
-			continue
-		}
-		env = append(env, l)
-	}
-
-	return env, nil
 }
