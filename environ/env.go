@@ -2,6 +2,7 @@ package environ
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"strings"
 )
@@ -29,4 +30,37 @@ func GetEnvironFromEnvFile(filename string) ([]string, error) {
 	}
 
 	return env, nil
+}
+
+// Merge env string array. `dst` and `src` must be KEY=VALUE format.
+// If the items of `dst` and `src` has the same KEY, those of `src` overrides those of `dst`.
+func MergeEnviron(dst []string, src []string) ([]string, error) {
+	for _, s := range src {
+		kv := strings.SplitN(s, "=", 2)
+		if len(kv) != 2 {
+			return nil, fmt.Errorf("Invalid env format: %s", s)
+		}
+		sk := kv[0]
+
+		copied := false
+
+		for i, d := range dst {
+			kv = strings.SplitN(d, "=", 2)
+			if len(kv) != 2 {
+				return nil, fmt.Errorf("Invalid env format: %s", d)
+			}
+			dk := kv[0]
+			if sk == dk {
+				dst[i] = s
+				copied = true
+			}
+		}
+
+		if !copied {
+			dst = append(dst, s)
+			copied = false
+		}
+	}
+
+	return dst, nil
 }
