@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+const DROOT_ENV_FILE_PATH = "/.drootenv"
+
 func GetEnvironFromEnvFile(filename string) ([]string, error) {
 	f, err := os.Open(filename)
 	if err != nil {

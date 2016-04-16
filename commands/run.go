@@ -161,10 +161,10 @@ func doRun(c *cli.Context) error {
 	}
 
 	var env []string
-	if osutil.ExistsFile("/.drootenv") {
-		env, err = environ.GetEnvironFromEnvFile("/.drootenv")
+	if osutil.ExistsFile(environ.DROOT_ENV_FILE_PATH) {
+		env, err = environ.GetEnvironFromEnvFile(environ.DROOT_ENV_FILE_PATH)
 		if err != nil {
-			return fmt.Errorf("Failed to read environ from '/.drootenv'")
+			return fmt.Errorf("Failed to read environ from '%s'", environ.DROOT_ENV_FILE_PATH)
 		}
 	}
 	return osutil.Execv(command[0], command[0:], env)
