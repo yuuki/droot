@@ -9,6 +9,8 @@ gen:
 	go get github.com/vektra/mockery/.../
 	go generate ./...
 	mockery -all -inpkg
+
+genaws:
 	mockery -all -dir ${GOPATH}/src/github.com/aws/aws-sdk-go/service/s3/s3iface -print | perl -pe 's/^package mocks/package aws/' > aws/mock_s3api.go 
 
 build: deps gen
