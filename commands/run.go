@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
 	"golang.org/x/sys/unix"
@@ -13,6 +12,7 @@ import (
 	"github.com/docker/docker/pkg/fileutils"
 	"github.com/docker/docker/pkg/mount"
 
+	"github.com/yuuki/droot/environ"
 	"github.com/yuuki/droot/errwrap"
 	"github.com/yuuki/droot/log"
 	"github.com/yuuki/droot/osutil"
@@ -42,6 +42,11 @@ var CommandRun = cli.Command{
 			Usage: "Copy host files to container such as /etc/group, /etc/passwd, /etc/resolv.conf, /etc/hosts",
 		},
 		cli.BoolFlag{Name: "no-dropcaps", Usage: "Provide COMMAND's process in chroot with root permission (dangerous)"},
+		cli.StringSliceFlag{
+			Name: "env, e",
+			Value: &cli.StringSlice{},
+			Usage: "Set environment variables",
+		},
 	},
 }
 
@@ -77,6 +82,16 @@ func doRun(c *cli.Context) error {
 
 	if !osutil.ExistsDir(rootDir) {
 		return fmt.Errorf("No such directory %s:", rootDir)
+	}
+
+	// Check env format KEY=VALUE
+	env := c.StringSlice("env")
+	if len(env) > 0 {
+		for _, e := range env {
+			if len(strings.SplitN(e, "=", 2)) != 2 {
+				return fmt.Errorf("Invalid env format: %s", e)
+			}
+		}
 	}
 
 	var err error
@@ -160,11 +175,14 @@ func doRun(c *cli.Context) error {
 		return fmt.Errorf("Failed to set user %d: %s", uid, err)
 	}
 
-	var env []string
-	if osutil.ExistsFile("/.drootenv") {
-		env, err = getEnvironFromEnvFile("/.drootenv")
+	if osutil.ExistsFile(environ.DROOT_ENV_FILE_PATH) {
+		envFromFile, err := environ.GetEnvironFromEnvFile(environ.DROOT_ENV_FILE_PATH)
 		if err != nil {
-			return fmt.Errorf("Failed to read environ from '/.drootenv'")
+			return fmt.Errorf("Failed to read environ from '%s'", environ.DROOT_ENV_FILE_PATH)
+		}
+		env, err = environ.MergeEnviron(envFromFile, env)
+		if err != nil {
+			return fmt.Errorf("Failed to merge environ: %s", err)
 		}
 	}
 	return osutil.Execv(command[0], command[0:], env)
@@ -251,27 +269,4 @@ func createDevices(rootDir string, uid, gid int) error {
 	}
 
 	return nil
-}
-
-func getEnvironFromEnvFile(filename string) ([]string, error) {
-	f, err := os.Open(filename)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-
-	var env []string
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		l := strings.Trim(scanner.Text(), " \n\t")
-		if len(l) == 0 {
-			continue
-		}
-		if len(strings.Split(l, "=")) != 2 { // line should be `key=value`
-			continue
-		}
-		env = append(env, l)
-	}
-
-	return env, nil
 }

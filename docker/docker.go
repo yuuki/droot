@@ -6,6 +6,7 @@ import (
 	godocker "github.com/fsouza/go-dockerclient"
 
 	"github.com/yuuki/droot/errwrap"
+	"github.com/yuuki/droot/environ"
 )
 
 type Client struct {
@@ -29,7 +30,7 @@ func (c *Client) ExportImage(imageID string) (io.ReadCloser, error) {
 		Config: &godocker.Config{
 			Image:      imageID,
 			Entrypoint: []string{"/bin/sh"}, // Clear the exising entrypoint
-			Cmd:        []string{"-c", "printenv > /.drootenv"},
+			Cmd:        []string{"-c", "printenv", ">", environ.DROOT_ENV_FILE_PATH},
 		},
 	})
 	if err != nil {
