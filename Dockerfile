@@ -1,7 +1,6 @@
 FROM golang:1.6.0
 
 RUN go get  github.com/golang/lint/golint \
-            golang.org/x/tools/cmd/vet \
             github.com/mattn/goveralls \
             golang.org/x/tools/cover \
             github.com/tools/godep \
