@@ -103,7 +103,7 @@ func Mknod(path string, mode uint32, dev int) error {
 
 // Symlink, but ignore already exists file.
 func Symlink(oldname, newname string) error {
-	log.Debugf("symlink", oldname, newname)
+	log.Debug("symlink", oldname, newname)
 	if err := os.Symlink(oldname, newname); err != nil {
 		// Ignore already created symlink
 		if _, ok := err.(*os.LinkError); !ok {
