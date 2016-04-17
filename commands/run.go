@@ -220,21 +220,15 @@ func bindMount(bindDir string, rootDir string, readonly bool) error {
 		return errwrap.Wrapff(err, "Failed to create directory: %s: {{err}}", containerDir)
 	}
 
-	ok, err = osutil.IsDirEmpty(containerDir)
-	if err != nil {
-		return err
+	log.Debug("bind mount", bindDir, "to", containerDir)
+	if err := osutil.MountIfNotMounted(srcDir, containerDir, "none", "bind,rw"); err != nil {
+		return errwrap.Wrapff(err, "Failed to bind mount %s: {{err}}", containerDir)
 	}
-	if ok {
-		log.Debug("bind mount", bindDir, "to", containerDir)
-		if err := osutil.MountIfNotMounted(srcDir, containerDir, "none", "bind,rw"); err != nil {
-			return errwrap.Wrapff(err, "Failed to bind mount %s: {{err}}", containerDir)
-		}
 
-		if readonly {
-			log.Debug("robind mount", bindDir, "to", containerDir)
-			if err := osutil.MountIfNotMounted(srcDir, containerDir, "none", "remount,ro,bind"); err != nil {
-				return errwrap.Wrapff(err, "Failed to robind mount %s: {{err}}", containerDir)
-			}
+	if readonly {
+		log.Debug("robind mount", bindDir, "to", containerDir)
+		if err := osutil.MountIfNotMounted(srcDir, containerDir, "none", "remount,ro,bind"); err != nil {
+			return errwrap.Wrapff(err, "Failed to robind mount %s: {{err}}", containerDir)
 		}
 	}
 
