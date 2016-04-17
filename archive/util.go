@@ -4,17 +4,13 @@ import (
 	"bufio"
 	"compress/gzip"
 	"io"
-	"strings"
 
 	"github.com/docker/docker/pkg/archive"
 
 	"github.com/yuuki/droot/errwrap"
-	"github.com/yuuki/droot/osutil"
 )
 
 const compressionBufSize = 32768
-
-var RsyncDefaultOpts = []string{"-av", "--delete"}
 
 func ExtractTarGz(in io.Reader, dest string) (err error) {
 	return archive.Untar(in, dest, &archive.TarOptions{
@@ -22,24 +18,6 @@ func ExtractTarGz(in io.Reader, dest string) (err error) {
 		NoLchown:        true,
 		ExcludePatterns: []string{"dev/"}, // prevent 'operation not permitted'
 	})
-}
-
-func Rsync(from, to string, arg ...string) error {
-	from = from + "/"
-	// append "/" when not terminated by "/"
-	if strings.LastIndex(to, "/") != len(to)-1 {
-		to = to + "/"
-	}
-
-	// TODO --exclude, --excluded-from
-	rsyncArgs := []string{}
-	rsyncArgs = append(rsyncArgs, RsyncDefaultOpts...)
-	rsyncArgs = append(rsyncArgs, from, to)
-	if err := osutil.RunCmd("rsync", rsyncArgs...); err != nil {
-		return err
-	}
-
-	return nil
 }
 
 func Compress(in io.Reader) io.ReadCloser {
