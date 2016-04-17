@@ -11,7 +11,6 @@ import (
 	"github.com/codegangsta/cli"
 
 	"github.com/yuuki/droot/environ"
-	"github.com/yuuki/droot/errwrap"
 	"github.com/yuuki/droot/log"
 	"github.com/yuuki/droot/mounter"
 	"github.com/yuuki/droot/osutil"
@@ -159,17 +158,14 @@ func doRun(c *cli.Context) error {
 	}
 
 	if !c.Bool("no-dropcaps") {
-		log.Debug("drop capabilities")
 		if err := osutil.DropCapabilities(keepCaps); err != nil {
 			return fmt.Errorf("Failed to drop capabilities: %s", err)
 		}
 	}
 
-	log.Debug("setgid", gid)
 	if err := osutil.Setgid(gid); err != nil {
 		return fmt.Errorf("Failed to set group %d: %s", gid, err)
 	}
-	log.Debug("setuid", uid)
 	if err := osutil.Setuid(uid); err != nil {
 		return fmt.Errorf("Failed to set user %d: %s", uid, err)
 	}
@@ -217,7 +213,8 @@ func createDevices(rootDir string, uid, gid int) error {
 	}
 
 	if err := os.Lchown(nullDir, uid, gid); err != nil {
-		return errwrap.Wrapff(err, "Failed to lchown %s: {{err}}", nullDir)
+		log.Debugf("Failed to lchown %s: %s\n", nullDir, err)
+		return err
 	}
 
 	zeroDir := fp.Join(rootDir, "/dev/zero")
@@ -226,7 +223,8 @@ func createDevices(rootDir string, uid, gid int) error {
 	}
 
 	if err := os.Lchown(zeroDir, uid, gid); err != nil {
-		return errwrap.Wrapff(err, "Failed to lchown %s:", zeroDir)
+		log.Debugf("Failed to lchown %s: %s\n", zeroDir, err)
+		return err
 	}
 
 	for _, f := range []string{"/dev/random", "/dev/urandom"} {
@@ -236,7 +234,8 @@ func createDevices(rootDir string, uid, gid int) error {
 		}
 
 		if err := os.Lchown(randomDir, uid, gid); err != nil {
-			return errwrap.Wrapff(err, "Failed to lchown %s: {{err}}", randomDir)
+			log.Debugf("Failed to lchown %s: %s\n", randomDir, err)
+			return err
 		}
 	}
 

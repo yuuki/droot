@@ -8,7 +8,6 @@ import (
 
 	"github.com/docker/docker/pkg/mount"
 
-	"github.com/yuuki/droot/errwrap"
 	"github.com/yuuki/droot/log"
 )
 
@@ -32,7 +31,7 @@ func ExistsDir(dir string) bool {
 func IsDirEmpty(dir string) bool {
 	f, err := os.Open(dir)
 	if err != nil {
-		log.Debugf("Failed to open %s: %s", dir, err)
+		log.Debugf("Failed to open %s: %s\n", dir, err)
 		return false
 	}
 	defer f.Close()
@@ -51,7 +50,8 @@ func RunCmd(name string, arg ...string) error {
 		log.Debug(string(out))
 	}
 	if err != nil {
-		return errwrap.Wrapff(err, "Failed to exec %s %s: {{err}}", name, arg)
+		log.Debugf("Failed to exec %s %s: %s", name, arg, err)
+		return err
 	}
 	return nil
 }
@@ -84,18 +84,22 @@ func Mknod(path string, mode uint32, dev int) error {
 	if ExistsFile(path) {
 		return nil
 	}
+
+	log.Debugf("mknod %s %d %d", path, mode, dev)
 	if err := unix.Mknod(path, mode, dev); err != nil {
-		return errwrap.Wrapff(err, "Failed to mknod %s: {{err}}", path)
+		return err
 	}
 	return nil
 }
 
 // Symlink, but ignore already exists file.
 func Symlink(oldname, newname string) error {
+	log.Debugf("symlink", oldname, newname)
 	if err := os.Symlink(oldname, newname); err != nil {
 		// Ignore already created symlink
 		if _, ok := err.(*os.LinkError); !ok {
-			return errwrap.Wrapff(err, "Failed to symlink %s %s: {{err}}", oldname, newname)
+			log.Debugf("Failed to symlink %s %s: %s", oldname, newname, err)
+			return err
 		}
 	}
 	return nil
