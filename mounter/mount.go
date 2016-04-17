@@ -33,9 +33,11 @@ func ResolveRootDir(dir string) (string, error) {
 		return dir, err
 	}
 
-	dir, err = os.Readlink(dir)
-	if err != nil {
-		return dir, err
+	if osutil.IsSymlink(dir) {
+		dir, err = os.Readlink(dir)
+		if err != nil {
+			return dir, err
+		}
 	}
 
 	return fp.Clean(dir), nil
