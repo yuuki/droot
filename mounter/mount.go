@@ -77,11 +77,11 @@ func (m *Mounter) BindMount(hostDir, containerDir string) error {
 }
 
 func (m *Mounter) RoBindMount(hostDir, containerDir string) error {
-	containerDir = fp.Join(m.rootDir, containerDir)
-
 	if err := m.BindMount(hostDir, containerDir); err != nil {
 		return err
 	}
+
+	containerDir = fp.Join(m.rootDir, containerDir)
 
 	if err := osutil.MountIfNotMounted(hostDir, containerDir, "none", "remount,ro,bind"); err != nil {
 		return err
