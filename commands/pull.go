@@ -101,4 +101,3 @@ func doPull(c *cli.Context) error {
 
 	return nil
 }
-

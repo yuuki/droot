@@ -126,4 +126,3 @@ func Chroot(rootDir string) error {
 
 	return nil
 }
-

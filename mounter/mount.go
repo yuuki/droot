@@ -3,8 +3,8 @@ package mounter
 import (
 	"fmt"
 	"os"
-	"strings"
 	fp "path/filepath"
+	"strings"
 
 	"github.com/docker/docker/pkg/fileutils"
 	"github.com/docker/docker/pkg/mount"
@@ -121,4 +121,3 @@ func (m *Mounter) UmountRoot() error {
 
 	return nil
 }
-

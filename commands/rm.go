@@ -7,8 +7,8 @@ import (
 
 	"github.com/yuuki/droot/deploy"
 	"github.com/yuuki/droot/log"
-	"github.com/yuuki/droot/osutil"
 	"github.com/yuuki/droot/mounter"
+	"github.com/yuuki/droot/osutil"
 )
 
 var CommandArgRm = "--root DESTINATION_DIRECTORY"

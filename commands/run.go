@@ -1,9 +1,9 @@
 package commands
 
 import (
-	"golang.org/x/sys/unix"
 	"errors"
 	"fmt"
+	"golang.org/x/sys/unix"
 	"os"
 	fp "path/filepath"
 	"strings"
@@ -41,7 +41,7 @@ var CommandRun = cli.Command{
 		},
 		cli.BoolFlag{Name: "no-dropcaps", Usage: "Provide COMMAND's process in chroot with root permission (dangerous)"},
 		cli.StringSliceFlag{
-			Name: "env, e",
+			Name:  "env, e",
 			Value: &cli.StringSlice{},
 			Usage: "Set environment variables",
 		},

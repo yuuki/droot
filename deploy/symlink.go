@@ -64,7 +64,6 @@ func DeployWithSymlink(srcDir, destDir string) error {
 	return nil
 }
 
-
 func CleanupSymlink(destDir string) error {
 	mainLink := destDir + ".drootmain"
 	backupLink := destDir + ".drootbackup"
