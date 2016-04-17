@@ -79,6 +79,15 @@ func MountIfNotMounted(device, target, mType, options string) error {
 	return nil
 }
 
+func ForceMount(device, target, mType, options string) error {
+	log.Debug("mount", device, target, mType, options)
+	if err := mount.ForceMount(device, target, mType, options); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // Mknod unless path does not exists.
 func Mknod(path string, mode uint32, dev int) error {
 	if ExistsFile(path) {
