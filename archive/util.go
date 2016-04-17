@@ -12,10 +12,10 @@ import (
 
 const compressionBufSize = 32768
 
-func ExtractTarGz(in io.Reader, dest string) (err error) {
+func ExtractTarGz(in io.Reader, dest string, sameOwner bool) error {
 	return archive.Untar(in, dest, &archive.TarOptions{
 		Compression:     archive.Gzip,
-		NoLchown:        true,
+		NoLchown:        !sameOwner,
 		ExcludePatterns: []string{"dev/"}, // prevent 'operation not permitted'
 	})
 }

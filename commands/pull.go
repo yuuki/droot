@@ -25,6 +25,7 @@ var CommandPull = cli.Command{
 		cli.StringFlag{Name: "dest, d", Usage: "Local filesystem path (ex. /var/containers/app)"},
 		cli.StringFlag{Name: "src, s", Usage: "Amazon S3 endpoint (ex. s3://drootexample/app.tar.gz)"},
 		cli.StringFlag{Name: "mode, m", Usage: "Mode of deployment. 'rsync' or 'symlink'. default is 'rsync'"},
+		cli.BoolFlag{Name: "same-owner", Usage: "Try extracting files with the same ownership as exists in the archive (default for superuser)"},
 	},
 }
 
@@ -81,7 +82,7 @@ func doPull(c *cli.Context) error {
 
 	log.Info("-->", "Extracting archive", tmp.Name(), "to", rawDir)
 
-	if err := archive.ExtractTarGz(tmp, rawDir); err != nil {
+	if err := archive.ExtractTarGz(tmp, rawDir, c.Bool("same-owner")); err != nil {
 		return fmt.Errorf("Failed to extract archive: %s", err)
 	}
 
