@@ -8,7 +8,7 @@ import (
 	"github.com/yuuki/droot/osutil"
 )
 
-var RsyncDefaultOpts = []string{"-av", "--delete", "--exclude=/proc/", "--exclude=/sys/"}
+var RsyncDefaultOpts = []string{"-av", "--delete"}
 
 func Rsync(from, to string, arg ...string) error {
 	from = from + "/"
