@@ -9,11 +9,11 @@ import (
 	"strings"
 
 	"github.com/codegangsta/cli"
-	"github.com/docker/docker/pkg/fileutils"
 
 	"github.com/yuuki/droot/environ"
 	"github.com/yuuki/droot/errwrap"
 	"github.com/yuuki/droot/log"
+	"github.com/yuuki/droot/mounter"
 	"github.com/yuuki/droot/osutil"
 )
 
@@ -73,22 +73,13 @@ func doRun(c *cli.Context) error {
 		return errors.New("command required")
 	}
 
-	rootDir := c.String("root")
-	if rootDir == "" {
+	optRootDir := c.String("root")
+	if optRootDir == "" {
 		cli.ShowCommandHelp(c, "run")
 		return errors.New("--root option required")
 	}
 
-	if !osutil.ExistsDir(rootDir) {
-		return fmt.Errorf("No such directory %s:", rootDir)
-	}
-
-	var err error
-	rootDir, err = fp.Abs(rootDir)
-	if err != nil {
-		return err
-	}
-	rootDir, err = os.Readlink(rootDir)
+	rootDir, err := mounter.ResolveRootDir(optRootDir)
 	if err != nil {
 		return err
 	}
@@ -129,23 +120,28 @@ func doRun(c *cli.Context) error {
 		}
 	}
 
-	// mount -t proc none {{rootDir}}/proc
-	if err := osutil.MountIfNotMounted("none", fp.Join(rootDir, "/proc"), "proc", ""); err != nil {
-		return fmt.Errorf("Failed to mount /proc: %s", err)
-	}
-	// mount --rbind /sys {{rootDir}}/sys
-	if err := osutil.MountIfNotMounted("/sys", fp.Join(rootDir, "/sys"), "none", "rbind"); err != nil {
-		return fmt.Errorf("Failed to mount /sys: %s", err)
+	mnt := mounter.NewMounter(rootDir)
+
+	if err := mnt.MountSysProc(); err != nil {
+		return err
 	}
 
-	for _, dir := range c.StringSlice("bind") {
-		if err := bindMount(dir, rootDir, false); err != nil {
-			return fmt.Errorf("Failed to bind mount %s: %s", dir, err)
+	for _, val := range c.StringSlice("bind") {
+		hostDir, containerDir, err := parseBindOption(val)
+		if err != nil {
+			return err
+		}
+		if err := mnt.BindMount(hostDir, containerDir); err != nil {
+			return err
 		}
 	}
-	for _, dir := range c.StringSlice("robind") {
-		if err := bindMount(dir, rootDir, true); err != nil {
-			return fmt.Errorf("Failed to robind mount %s: %s", dir, err)
+	for _, val := range c.StringSlice("robind") {
+		hostDir, containerDir, err := parseBindOption(val)
+		if err != nil {
+			return err
+		}
+		if err := mnt.RoBindMount(hostDir, containerDir); err != nil {
+			return fmt.Errorf("Failed to robind mount %s: %s", val, err)
 		}
 	}
 
@@ -191,42 +187,27 @@ func doRun(c *cli.Context) error {
 	return osutil.Execv(command[0], command[0:], env)
 }
 
-func bindMount(bindDir string, rootDir string, readonly bool) error {
-	var srcDir, destDir string
+func parseBindOption(bindOption string) (string, string, error) {
+	var hostDir, containerDir string
 
-	d := strings.SplitN(bindDir, ":", 2)
+	d := strings.SplitN(bindOption, ":", 2)
 	if len(d) < 2 {
-		srcDir = d[0]
+		hostDir = d[0]
 	} else {
-		srcDir, destDir = d[0], d[1]
+		hostDir, containerDir = d[0], d[1]
 	}
-	if destDir == "" {
-		destDir = srcDir
-	}
-
-	if ok := osutil.IsDirEmpty(srcDir); ok {
-		if _, err := os.Create(fp.Join(srcDir, ".droot.keep")); err != nil {
-			return errwrap.Wrapf(err, "Failed to create .droot.keep: {{err}}")
-		}
+	if containerDir == "" {
+		containerDir = hostDir
 	}
 
-	containerDir := fp.Join(rootDir, destDir)
-
-	if err := fileutils.CreateIfNotExists(containerDir, true); err != nil { // mkdir -p
-		return errwrap.Wrapff(err, "Failed to create directory: %s: {{err}}", containerDir)
+	if !fp.IsAbs(hostDir) {
+		return hostDir, containerDir, fmt.Errorf("%s is not an absolute path", hostDir)
+	}
+	if !fp.IsAbs(containerDir) {
+		return hostDir, containerDir, fmt.Errorf("%s is not an absolute path", containerDir)
 	}
 
-	if err := osutil.MountIfNotMounted(srcDir, containerDir, "none", "bind,rw"); err != nil {
-		return errwrap.Wrapff(err, "Failed to bind mount %s: {{err}}", containerDir)
-	}
-
-	if readonly {
-		if err := osutil.MountIfNotMounted(srcDir, containerDir, "none", "remount,ro,bind"); err != nil {
-			return errwrap.Wrapff(err, "Failed to robind mount %s: {{err}}", containerDir)
-		}
-	}
-
-	return nil
+	return fp.Clean(hostDir), fp.Clean(containerDir), nil
 }
 
 func createDevices(rootDir string, uid, gid int) error {
