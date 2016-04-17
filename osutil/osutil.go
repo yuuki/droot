@@ -31,18 +31,19 @@ func ExistsDir(dir string) bool {
 	return true
 }
 
-func IsDirEmpty(dir string) (bool, error) {
+func IsDirEmpty(dir string) bool {
 	f, err := os.Open(dir)
 	if err != nil {
-		return false, errwrap.Wrapff(err, "Failed to open %s: {{err}}", dir)
+		log.Debugf("Failed to open %s: %s", dir, err)
+		return false
 	}
 	defer f.Close()
 
 	_, err = f.Readdirnames(1)
 	if err == io.EOF {
-		return true, nil
+		return true
 	}
-	return false, nil
+	return false
 }
 
 func RunCmd(name string, arg ...string) error {

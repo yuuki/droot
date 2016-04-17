@@ -52,9 +52,8 @@ func TestExistsDir(t *testing.T) {
 }
 
 func TestIsDirEmpty(t *testing.T) {
-	ok, err := IsDirEmpty("/paht/to/notexist")
+	ok := IsDirEmpty("/paht/to/notexist")
 	assert.False(t, ok)
-	assert.Error(t, err)
 
 	tmpDir := os.TempDir()
 	os.Mkdir(tmpDir+"/empty", 0755)
@@ -65,13 +64,11 @@ func TestIsDirEmpty(t *testing.T) {
 		os.RemoveAll(tmpDir + "/noempty")
 	}()
 
-	ok, err = IsDirEmpty(tmpDir + "/empty")
+	ok = IsDirEmpty(tmpDir + "/empty")
 	assert.True(t, ok)
-	assert.NoError(t, err)
 
-	ok, err = IsDirEmpty(tmpDir + "/noempty")
+	ok = IsDirEmpty(tmpDir + "/noempty")
 	assert.False(t, ok)
-	assert.NoError(t, err)
 }
 
 func TestRunCmd(t *testing.T) {

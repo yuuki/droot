@@ -204,11 +204,7 @@ func bindMount(bindDir string, rootDir string, readonly bool) error {
 		destDir = srcDir
 	}
 
-	ok, err := osutil.IsDirEmpty(srcDir)
-	if err != nil {
-		return err
-	}
-	if ok {
+	if ok := osutil.IsDirEmpty(srcDir); ok {
 		if _, err := os.Create(fp.Join(srcDir, ".droot.keep")); err != nil {
 			return errwrap.Wrapf(err, "Failed to create .droot.keep: {{err}}")
 		}
