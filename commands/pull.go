@@ -75,6 +75,9 @@ func doPull(c *cli.Context) error {
 		return fmt.Errorf("Failed to create temporary dir: %s", err)
 	}
 	defer os.RemoveAll(rawDir)
+	if err := os.Chmod(rawDir, 0755); err != nil {
+		return err
+	}
 
 	log.Info("-->", "Extracting archive", tmp.Name(), "to", rawDir)
 
