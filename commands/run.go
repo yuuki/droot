@@ -1,9 +1,9 @@
 package commands
 
 import (
+	"golang.org/x/sys/unix"
 	"errors"
 	"fmt"
-	"golang.org/x/sys/unix"
 	"os"
 	fp "path/filepath"
 	"strings"
@@ -158,13 +158,8 @@ func doRun(c *cli.Context) error {
 		return fmt.Errorf("Failed to create devices: %s", err)
 	}
 
-	log.Debug("chroot", rootDir, command)
-
-	if err := unix.Chroot(rootDir); err != nil {
+	if err := osutil.Chroot(rootDir); err != nil {
 		return fmt.Errorf("Failed to chroot: %s", err)
-	}
-	if err := unix.Chdir("/"); err != nil {
-		return fmt.Errorf("Failed to chdir /: %s", err)
 	}
 
 	if !c.Bool("no-dropcaps") {

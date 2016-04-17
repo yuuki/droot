@@ -133,3 +133,17 @@ func Symlink(oldname, newname string) error {
 	}
 	return nil
 }
+
+func Chroot(rootDir string) error {
+	log.Debug("chroot", rootDir)
+
+	if err := unix.Chroot(rootDir); err != nil {
+		return err
+	}
+	if err := unix.Chdir("/"); err != nil {
+		return err
+	}
+
+	return nil
+}
+
