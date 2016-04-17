@@ -11,5 +11,5 @@ func TestResolveRootDir(t *testing.T) {
 	assert.Error(t, err)
 
 	_, err = ResolveRootDir("../")
-	assert.Error(t, err)
+	assert.NoError(t, err)
 }
