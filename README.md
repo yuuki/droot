@@ -48,7 +48,7 @@ $ droot pull --dest /var/containers/app --src s3://drootexamples/app.tar.gz
 ```
 
 ```bash
-$ sudo droot run --cp --bind /var/log --root /var/containers/app command
+$ sudo droot run --cp --bind /var/log --root /var/containers/app -- command
 ```
 
 ```bash
