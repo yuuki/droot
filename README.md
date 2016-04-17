@@ -84,16 +84,12 @@ DOCKER_CERT_PATH=/home/yuuki/.docker/machine/machines/dev
 
 ## Roodmap
 
-- `rmi` command to clean an archive on S3
 - `pull` command with the rsync option
 - `push/pull` other compression algorithms
-- image versioning
 - `pull` from docker registry
-- drivers except Amazon S3
 - `push/pull` S3 download/upload part-size options
 - `push/pull` verifying sha256sum
 - `pull` backup/rollback option
-- `import` command to import an archive from S3 as Docker image
 
 ## Development
 
