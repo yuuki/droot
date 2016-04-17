@@ -2,12 +2,10 @@ package commands
 
 import (
 	"errors"
-	"fmt"
-	"path/filepath"
 
 	"github.com/codegangsta/cli"
 
-	"github.com/yuuki/droot/osutil"
+	"github.com/yuuki/droot/mounter"
 )
 
 var CommandArgUmount = "--root ROOT_DIR"
@@ -21,19 +19,17 @@ var CommandUmount = cli.Command{
 }
 
 func doUmount(c *cli.Context) error {
-	if c.String("root") == "" {
+	optRootDir := c.String("root")
+	if optRootDir == "" {
 		cli.ShowCommandHelp(c, "umount")
 		return errors.New("--root option required")
 	}
 
-	rootDir, err := filepath.Abs(c.String("root"))
+	rootDir, err := mounter.ResolveRootDir(optRootDir)
 	if err != nil {
 		return err
 	}
 
-	if !osutil.ExistsDir(rootDir) {
-		return fmt.Errorf("No such directory %s", rootDir)
-	}
-
-	return osutil.UmountRoot(rootDir)
+	mnt := mounter.NewMounter(rootDir)
+	return mnt.UmountRoot()
 }

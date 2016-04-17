@@ -5,8 +5,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	fp "path/filepath"
-	"strings"
 
 	"github.com/docker/docker/pkg/mount"
 
@@ -76,38 +74,6 @@ func MountIfNotMounted(device, target, mType, options string) error {
 		if err := mount.Mount(device, target, mType, options); err != nil {
 			return err
 		}
-	}
-
-	return nil
-}
-
-func GetMountsByRoot(rootDir string) ([]*mount.Info, error) {
-	mounts, err := mount.GetMounts()
-	if err != nil {
-		return nil, err
-	}
-
-	targets := make([]*mount.Info, 0)
-	for _, m := range mounts {
-		if strings.HasPrefix(m.Mountpoint, fp.Clean(rootDir)) {
-			targets = append(targets, m)
-		}
-	}
-
-	return targets, nil
-}
-
-func UmountRoot(rootDir string) error {
-	mounts, err := GetMountsByRoot(rootDir)
-	if err != nil {
-		return err
-	}
-
-	for _, m := range mounts {
-		if err := mount.Unmount(m.Mountpoint); err != nil {
-			return err
-		}
-		log.Debug("umount:", m.Mountpoint)
 	}
 
 	return nil

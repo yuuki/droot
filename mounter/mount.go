@@ -3,10 +3,13 @@ package mounter
 import (
 	"fmt"
 	"os"
+	"strings"
 	fp "path/filepath"
 
 	"github.com/docker/docker/pkg/fileutils"
+	"github.com/docker/docker/pkg/mount"
 
+	"github.com/yuuki/droot/log"
 	"github.com/yuuki/droot/osutil"
 )
 
@@ -80,6 +83,38 @@ func (m *Mounter) RoBindMount(hostDir, containerDir string) error {
 
 	if err := osutil.MountIfNotMounted(hostDir, containerDir, "none", "remount,ro,bind"); err != nil {
 		return err
+	}
+
+	return nil
+}
+
+func (m *Mounter) GetMountsRoot() ([]*mount.Info, error) {
+	mounts, err := mount.GetMounts()
+	if err != nil {
+		return nil, err
+	}
+
+	targets := make([]*mount.Info, 0)
+	for _, mo := range mounts {
+		if strings.HasPrefix(mo.Mountpoint, m.rootDir) {
+			targets = append(targets, mo)
+		}
+	}
+
+	return targets, nil
+}
+
+func (m *Mounter) UmountRoot() error {
+	mounts, err := m.GetMountsRoot()
+	if err != nil {
+		return err
+	}
+
+	for _, mo := range mounts {
+		if err := mount.Unmount(mo.Mountpoint); err != nil {
+			return err
+		}
+		log.Debug("umount:", mo.Mountpoint)
 	}
 
 	return nil
