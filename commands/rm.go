@@ -5,6 +5,8 @@ import (
 
 	"github.com/codegangsta/cli"
 
+	"github.com/yuuki/droot/deploy"
+	"github.com/yuuki/droot/log"
 	"github.com/yuuki/droot/osutil"
 	"github.com/yuuki/droot/mounter"
 )
@@ -37,5 +39,10 @@ func doRm(c *cli.Context) error {
 		return err
 	}
 
+	if osutil.IsSymlink(optRootDir) {
+		return deploy.CleanupSymlink(optRootDir)
+	}
+
+	log.Info("-->", "Removing", rootDir)
 	return osutil.RunCmd("rm", "-fr", rootDir)
 }

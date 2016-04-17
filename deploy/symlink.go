@@ -63,3 +63,25 @@ func DeployWithSymlink(srcDir, destDir string) error {
 
 	return nil
 }
+
+
+func CleanupSymlink(destDir string) error {
+	mainLink := destDir + ".drootmain"
+	backupLink := destDir + ".drootbackup"
+	contentDir := destDir + ".d/"
+
+	log.Info("-->", "Removing", backupLink)
+	if err := osutil.RunCmd("rm", "-f", backupLink); err != nil {
+		return err
+	}
+	log.Info("-->", "Removing", mainLink)
+	if err := osutil.RunCmd("rm", "-f", mainLink); err != nil {
+		return err
+	}
+	log.Info("-->", "Removing", contentDir)
+	if err := osutil.RunCmd("rm", "-fr", contentDir); err != nil {
+		return err
+	}
+
+	return osutil.RunCmd("rm", "-f", destDir)
+}
