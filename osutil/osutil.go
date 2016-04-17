@@ -64,6 +64,22 @@ func Cp(from, to string) error {
 	return nil
 }
 
+func MountIfNotMounted(device, target, mType, options string) error {
+	mounted, err := mount.Mounted(target)
+	if err != nil {
+		return err
+	}
+
+	if !mounted {
+		log.Debug("mount", device, target, mType, options)
+		if err := mount.Mount(device, target, mType, options); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func GetMountsByRoot(rootDir string) ([]*mount.Info, error) {
 	mounts, err := mount.GetMounts()
 	if err != nil {

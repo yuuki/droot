@@ -10,7 +10,6 @@ import (
 
 	"github.com/codegangsta/cli"
 	"github.com/docker/docker/pkg/fileutils"
-	"github.com/docker/docker/pkg/mount"
 
 	"github.com/yuuki/droot/environ"
 	"github.com/yuuki/droot/errwrap"
@@ -84,6 +83,16 @@ func doRun(c *cli.Context) error {
 		return fmt.Errorf("No such directory %s:", rootDir)
 	}
 
+	var err error
+	rootDir, err = fp.Abs(rootDir)
+	if err != nil {
+		return err
+	}
+	rootDir, err = os.Readlink(rootDir)
+	if err != nil {
+		return err
+	}
+
 	// Check env format KEY=VALUE
 	env := c.StringSlice("env")
 	if len(env) > 0 {
@@ -94,7 +103,6 @@ func doRun(c *cli.Context) error {
 		}
 	}
 
-	var err error
 	uid, gid := os.Getuid(), os.Getgid()
 
 	if group := c.String("group"); group != "" {
@@ -122,11 +130,11 @@ func doRun(c *cli.Context) error {
 	}
 
 	// mount -t proc none {{rootDir}}/proc
-	if err := mount.Mount("none", fp.Join(rootDir, "/proc"), "proc", ""); err != nil {
+	if err := osutil.MountIfNotMounted("none", fp.Join(rootDir, "/proc"), "proc", ""); err != nil {
 		return fmt.Errorf("Failed to mount /proc: %s", err)
 	}
 	// mount --rbind /sys {{rootDir}}/sys
-	if err := mount.Mount("/sys", fp.Join(rootDir, "/sys"), "none", "rbind"); err != nil {
+	if err := osutil.MountIfNotMounted("/sys", fp.Join(rootDir, "/sys"), "none", "rbind"); err != nil {
 		return fmt.Errorf("Failed to mount /sys: %s", err)
 	}
 
@@ -223,13 +231,13 @@ func bindMount(bindDir string, rootDir string, readonly bool) error {
 	}
 	if ok {
 		log.Debug("bind mount", bindDir, "to", containerDir)
-		if err := mount.Mount(srcDir, containerDir, "none", "bind,rw"); err != nil {
+		if err := osutil.MountIfNotMounted(srcDir, containerDir, "none", "bind,rw"); err != nil {
 			return errwrap.Wrapff(err, "Failed to bind mount %s: {{err}}", containerDir)
 		}
 
 		if readonly {
 			log.Debug("robind mount", bindDir, "to", containerDir)
-			if err := mount.Mount(srcDir, containerDir, "none", "remount,ro,bind"); err != nil {
+			if err := osutil.MountIfNotMounted(srcDir, containerDir, "none", "remount,ro,bind"); err != nil {
 				return errwrap.Wrapff(err, "Failed to robind mount %s: {{err}}", containerDir)
 			}
 		}
