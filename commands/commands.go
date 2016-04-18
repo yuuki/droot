@@ -7,6 +7,7 @@ import (
 )
 
 var Commands = []cli.Command{
+	CommandExport,
 	CommandPush,
 	CommandPull,
 	CommandRun,
