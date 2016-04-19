@@ -60,19 +60,6 @@ $ sudo droot umount --root /var/containers/app
 $ sudo droot rm --root /var/containers/app
 ```
 
-### How to set your AWS credentials
-
-Droot push/pull subcommands support the following methods to set your AWS credentials.
-
-- an IAM instance profile. http://docs.aws.amazon.com/codedeploy/latest/userguide/how-to-create-iam-instance-profile.html
-- Environment variables.
-```bash
-$ export AWS_ACCESS_KEY_ID=********
-$ export AWS_SECRET_ACCESS_KEY=********
-$ export AWS_REGION=********
-```
-- `~/.aws/credentials` [a standard to manage credentials in the AWS SDKs](http://blogs.aws.amazon.com/security/post/Tx3D6U6WSFGOK2H/A-New-and-Standardized-Way-to-Manage-Credentials-in-the-AWS-SDKs)
-
 ### How to set docker endpoint
 
 Droot push supports the environment variables same as docker-machine such as DOCKER_HOST, DOCKER_TLS_VERIFY, DOCKER_CERT_PATH.
