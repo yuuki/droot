@@ -12,6 +12,13 @@ import (
 
 const compressionBufSize = 32768
 
+func Untar(in io.Reader, dest string, sameOwner bool) error {
+	return archive.Untar(in, dest, &archive.TarOptions{
+		NoLchown:        !sameOwner,
+		ExcludePatterns: []string{"dev/"}, // prevent 'operation not permitted'
+	})
+}
+
 func ExtractTarGz(in io.Reader, dest string, sameOwner bool) error {
 	return archive.Untar(in, dest, &archive.TarOptions{
 		Compression:     archive.Gzip,
