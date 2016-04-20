@@ -16,12 +16,16 @@ build: deps gen
 fmt: deps
 	gofmt -s -w .
 
-LINT_RET = .golint.txt
-lint: testdeps
+validate: lint
 	go vet ./...
-	rm -f $(LINT_RET)
-	golint ./... | tee .golint.txt
-	test ! -s $(LINT_RET)
+	test -z "$(gofmt -s -l . | tee /dev/stderr)"
+
+lint:
+	out="$$(golint ./...)"; \
+	if [ -n "$$(golint ./...)" ]; then \
+		echo "$$out"; \
+		exit 1; \
+	fi
 
 patch: gobump
 	./script/release.sh patch
