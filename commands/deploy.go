@@ -52,7 +52,7 @@ func doDeploy(c *cli.Context) error {
 	}
 
 	switch c.String("mode") {
-	case "","rsync":
+	case "", "rsync":
 		log.Info("-->", "Syncing", "from", tmpDir, "to", rootDir)
 
 		if err := deploy.Rsync(tmpDir, rootDir); err != nil {
