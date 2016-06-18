@@ -38,7 +38,7 @@ func (c *Client) ExportImage(imageID string) (io.ReadCloser, error) {
 	}
 
 	// start container because creating container does not run above `printenv > /.drootenv`.
-	if err := c.docker.StartContainer(container.ID, &godocker.HostConfig{}); err != nil {
+	if err := c.docker.StartContainer(container.ID, nil); err != nil {
 		c.docker.RemoveContainer(godocker.RemoveContainerOptions{
 			ID:    container.ID,
 			Force: true,
