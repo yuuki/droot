@@ -2,30 +2,25 @@ BIN = droot
 
 all: clean build test
 
-test: testdeps
-	go test -v ./...
+test:
+	go test -v $$(go list ./... | grep -v vendor)
 
 gen:
 	go get github.com/vektra/mockery/.../
-	go generate ./...
+	go generate github.com/yuuki/droot/docker
 	mockery -all -inpkg
 
-build: deps gen
-	go build -o $(BIN) ./cmd/...
+build:
+	go build -o $(BIN) ./cmd/droot/.../
 
-fmt: deps
+fmt:
 	gofmt -s -w .
 
-validate: lint
-	go vet ./...
-	test -z "$(gofmt -s -l . | tee /dev/stderr)"
+vet:
+	go vet $$(go list ./... | grep -v vendor)
 
 lint:
-	out="$$(golint ./...)"; \
-	if [ -n "$$(golint ./...)" ]; then \
-		echo "$$out"; \
-		exit 1; \
-	fi
+	golint $$(go list ./... | grep -v vendor)
 
 patch: gobump
 	./script/release.sh patch
@@ -35,16 +30,6 @@ minor: gobump
 
 gobump:
 	go get github.com/motemen/gobump/cmd/gobump
-
-deps:
-	go get -d -v ./...
-
-testdeps:
-	go get -d -v -t ./...
-	go get github.com/golang/lint/golint
-	go get golang.org/x/tools/cmd/cover
-	go get github.com/axw/gocov/gocov
-	go get github.com/mattn/goveralls
 
 clean:
 	go clean
