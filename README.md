@@ -70,15 +70,6 @@ DOCKER_HOST=tcp://192.168.x.x:2376
 DOCKER_CERT_PATH=/home/yuuki/.docker/machine/machines/dev
 ```
 
-## Roodmap
-
-- `pull` command with the rsync option
-- `push/pull` other compression algorithms
-- `pull` from docker registry
-- `push/pull` S3 download/upload part-size options
-- `push/pull` verifying sha256sum
-- `pull` backup/rollback option
-
 ## Development
 
 Droot uses a package using cgo, so it is necessary to build in Linux for a Linux binary.
