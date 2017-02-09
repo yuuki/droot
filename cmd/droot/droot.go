@@ -6,7 +6,7 @@ import (
 	"path"
 	"strconv"
 
-	"github.com/codegangsta/cli"
+	"github.com/urfave/cli"
 
 	"github.com/yuuki/droot/commands"
 	"github.com/yuuki/droot/log"

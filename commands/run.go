@@ -8,7 +8,7 @@ import (
 	fp "path/filepath"
 	"strings"
 
-	"github.com/codegangsta/cli"
+	"github.com/urfave/cli"
 
 	"github.com/yuuki/droot/environ"
 	"github.com/yuuki/droot/log"

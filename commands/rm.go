@@ -3,7 +3,7 @@ package commands
 import (
 	"errors"
 
-	"github.com/codegangsta/cli"
+	"github.com/urfave/cli"
 
 	"github.com/yuuki/droot/deploy"
 	"github.com/yuuki/droot/log"
