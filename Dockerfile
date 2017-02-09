@@ -1,11 +1,6 @@
-FROM golang:1.6.0
+FROM golang:1.7.5
 
-RUN go get  github.com/golang/lint/golint \
-            github.com/mattn/goveralls \
-            golang.org/x/tools/cover \
-            github.com/tools/godep \
-	          github.com/axw/gocov/gocov \
-            github.com/laher/goxc \
+RUN go get  github.com/laher/goxc \
 	          golang.org/x/tools/cmd/stringer \
 	          github.com/golang/mock/mockgen
 
