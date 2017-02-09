@@ -11,7 +11,7 @@ gen:
 	mockery -all -inpkg
 
 build: deps gen
-	go build -o $(BIN) ./cmd
+	go build -o $(BIN) ./cmd/...
 
 fmt: deps
 	gofmt -s -w .
