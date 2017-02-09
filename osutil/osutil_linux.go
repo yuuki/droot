@@ -2,14 +2,15 @@ package osutil
 
 import (
 	"errors"
-	"golang.org/x/sys/unix"
 	"os/exec"
 	"os/user"
 	"strconv"
 	"syscall"
 
-	"github.com/docker/libcontainer/system"
-	"github.com/yuuki/go-group"
+	"golang.org/x/sys/unix"
+
+	"github.com/opencontainers/runc/libcontainer/system"
+	group "github.com/yuuki/go-group"
 
 	"github.com/yuuki/droot/log"
 )

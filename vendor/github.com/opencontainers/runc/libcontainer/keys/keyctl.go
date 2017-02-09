@@ -4,9 +4,9 @@ package keyctl
 
 import (
 	"fmt"
-	"strconv"
-	"strings"
 	"syscall"
+	"strings"
+	"strconv"
 	"unsafe"
 )
 
@@ -64,3 +64,4 @@ func ModKeyringPerm(ringId KeySerial, mask, setbits uint32) error {
 
 	return nil
 }
+

@@ -1,5 +1,5 @@
 {
-    "memo": "b886132a136ae63ef6a40d257a095551ae7d9cc94ab0b95615edb62b063e1b2c",
+    "memo": "cc0567a7b64c356c8122f031f9f5ee5472149fb9d04757fc4767ab04b5b2d007",
     "projects": [
         {
             "name": "github.com/Azure/go-ansiterm",
@@ -63,14 +63,6 @@
             "revision": "f2d77a61e3c169b43402a0a1e84f06daf29b8190",
             "packages": [
                 "."
-            ]
-        },
-        {
-            "name": "github.com/docker/libcontainer",
-            "version": "v2.2.1",
-            "revision": "5dc7ba0f24332273461e45bc49edcb4d5aa6c44c",
-            "packages": [
-                "system"
             ]
         },
         {
@@ -150,7 +142,7 @@
         {
             "name": "golang.org/x/net",
             "branch": "master",
-            "revision": "236b8f043b920452504e263bc21d354427127473",
+            "revision": "349ad30abdeb56e3933574142fb0e0a68785854d",
             "packages": [
                 "context",
                 "context/ctxhttp"
