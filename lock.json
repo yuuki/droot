@@ -1,0 +1,169 @@
+{
+    "memo": "b886132a136ae63ef6a40d257a095551ae7d9cc94ab0b95615edb62b063e1b2c",
+    "projects": [
+        {
+            "name": "github.com/Azure/go-ansiterm",
+            "branch": "master",
+            "revision": "fa152c58bc15761d0200cb75fe958b89a9d4888e",
+            "packages": [
+                ".",
+                "winterm"
+            ]
+        },
+        {
+            "name": "github.com/Microsoft/go-winio",
+            "version": "v0.3.8",
+            "revision": "fff283ad5116362ca252298cfc9b95828956d85d",
+            "packages": [
+                "."
+            ]
+        },
+        {
+            "name": "github.com/Sirupsen/logrus",
+            "version": "v0.11.2",
+            "revision": "c078b1e43f58d563c74cebe63c85789e76ddb627",
+            "packages": [
+                "."
+            ]
+        },
+        {
+            "name": "github.com/davecgh/go-spew",
+            "version": "v1.1.0",
+            "revision": "346938d642f2ec3594ed81d874461961cd0faa76",
+            "packages": [
+                "spew"
+            ]
+        },
+        {
+            "name": "github.com/docker/docker",
+            "version": "v1.13.1",
+            "revision": "092cba3727bb9b4a2f0e922cd6c0f93ea270e363",
+            "packages": [
+                "api/types/swarm",
+                "opts",
+                "pkg/archive",
+                "pkg/fileutils",
+                "pkg/homedir",
+                "pkg/jsonmessage",
+                "pkg/mount",
+                "pkg/stdcopy"
+            ]
+        },
+        {
+            "name": "github.com/docker/go-connections",
+            "version": "v0.2.1",
+            "revision": "990a1a1a70b0da4c4cb70e117971a4f0babfbf1a",
+            "packages": [
+                "nat"
+            ]
+        },
+        {
+            "name": "github.com/docker/go-units",
+            "version": "v0.3.1",
+            "revision": "f2d77a61e3c169b43402a0a1e84f06daf29b8190",
+            "packages": [
+                "."
+            ]
+        },
+        {
+            "name": "github.com/docker/libcontainer",
+            "version": "v2.2.1",
+            "revision": "5dc7ba0f24332273461e45bc49edcb4d5aa6c44c",
+            "packages": [
+                "system"
+            ]
+        },
+        {
+            "name": "github.com/fsouza/go-dockerclient",
+            "branch": "master",
+            "revision": "278cc927a7f7e7228f5e50f517ae2ca1076316a5",
+            "packages": [
+                "."
+            ]
+        },
+        {
+            "name": "github.com/hashicorp/errwrap",
+            "branch": "master",
+            "revision": "7554cd9344cec97297fa6649b055a8c98c2a1e55",
+            "packages": [
+                "."
+            ]
+        },
+        {
+            "name": "github.com/hashicorp/go-cleanhttp",
+            "branch": "master",
+            "revision": "ad28ea4487f05916463e2423a55166280e8254b5",
+            "packages": [
+                "."
+            ]
+        },
+        {
+            "name": "github.com/opencontainers/runc",
+            "version": "v0.1.1",
+            "revision": "baf6536d6259209c3edfa2b22237af82942d3dfa",
+            "packages": [
+                "libcontainer/system",
+                "libcontainer/user"
+            ]
+        },
+        {
+            "name": "github.com/pmezard/go-difflib",
+            "version": "v1.0.0",
+            "revision": "792786c7400a136282c1664665ae0a8db921c6c2",
+            "packages": [
+                "difflib"
+            ]
+        },
+        {
+            "name": "github.com/stretchr/objx",
+            "branch": "master",
+            "revision": "1a9d0bb9f541897e62256577b352fdbc1fb4fd94",
+            "packages": [
+                "."
+            ]
+        },
+        {
+            "name": "github.com/stretchr/testify",
+            "version": "v1.1.4",
+            "revision": "69483b4bd14f5845b5a1e55bca19e954e827f1d0",
+            "packages": [
+                "assert",
+                "mock"
+            ]
+        },
+        {
+            "name": "github.com/urfave/cli",
+            "version": "v1.19.1",
+            "revision": "0bdeddeeb0f650497d603c4ad7b20cfe685682f6",
+            "packages": [
+                "."
+            ]
+        },
+        {
+            "name": "github.com/yuuki/go-group",
+            "branch": "master",
+            "revision": "435643712a57277c84c6c347b5688f2ac7abae76",
+            "packages": [
+                "."
+            ]
+        },
+        {
+            "name": "golang.org/x/net",
+            "branch": "master",
+            "revision": "236b8f043b920452504e263bc21d354427127473",
+            "packages": [
+                "context",
+                "context/ctxhttp"
+            ]
+        },
+        {
+            "name": "golang.org/x/sys",
+            "branch": "master",
+            "revision": "7a6e5648d140666db5d920909e082ca00a87ba2c",
+            "packages": [
+                "unix",
+                "windows"
+            ]
+        }
+    ]
+}
