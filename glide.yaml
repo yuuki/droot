@@ -1,0 +1,24 @@
+package: github.com/yuuki/droot
+import:
+- package: github.com/docker/docker
+  version: ~1.13.1
+  subpackages:
+  - pkg/archive
+  - pkg/fileutils
+  - pkg/mount
+- package: github.com/fsouza/go-dockerclient
+- package: github.com/hashicorp/errwrap
+- package: github.com/opencontainers/runc
+  version: ~1.0.0-rc2
+  subpackages:
+  - libcontainer/system
+- package: github.com/stretchr/testify
+  version: ~1.1.4
+  subpackages:
+  - mock
+- package: github.com/urfave/cli
+  version: ~1.19.1
+- package: github.com/yuuki/go-group
+- package: golang.org/x/sys
+  subpackages:
+  - unix
