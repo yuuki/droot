@@ -22,3 +22,5 @@ import:
 - package: golang.org/x/sys
   subpackages:
   - unix
+- package: github.com/pkg/errors
+  version: ~0.8.0

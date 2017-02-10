@@ -20,9 +20,9 @@ func (c *dgramOpt) SetBPF(filter []bpf.RawInstruction) error {
 	if err != nil {
 		return err
 	}
-	prog := sockFProg{
+	prog := sysSockFProg{
 		Len:    uint16(len(filter)),
-		Filter: (*sockFilter)(unsafe.Pointer(&filter[0])),
+		Filter: (*sysSockFilter)(unsafe.Pointer(&filter[0])),
 	}
 	return os.NewSyscallError("setsockopt", setsockopt(s, sysSOL_SOCKET, sysSO_ATTACH_FILTER, unsafe.Pointer(&prog), uint32(unsafe.Sizeof(prog))))
 }

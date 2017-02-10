@@ -6,21 +6,24 @@ import (
 	"strings"
 
 	"github.com/Sirupsen/logrus"
-	"github.com/codegangsta/cli"
 	"github.com/opencontainers/runtime-spec/specs-go"
+	"github.com/urfave/cli"
 )
+
+// version will be populated by the Makefile, read from
+// VERSION file of the source code.
+var version = ""
 
 // gitCommit will be the hash that the binary was built from
 // and will be populated by the Makefile
 var gitCommit = ""
 
 const (
-	version    = "0.1.1"
 	specConfig = "config.json"
 	usage      = `Open Container Initiative runtime
-	
+
 runc is a command line client for running applications packaged according to
-the Open Container Format (OCF) and is a compliant implementation of the
+the Open Container Initiative (OCI) format and is a compliant implementation of the
 Open Container Initiative specification.
 
 runc integrates well with existing process supervisors to provide a production
@@ -30,11 +33,11 @@ direct child of the process supervisor.
 
 Containers are configured using bundles. A bundle for a container is a directory
 that includes a specification file named "` + specConfig + `" and a root filesystem.
-The root filesystem contains the contents of the container. 
+The root filesystem contains the contents of the container.
 
 To start a new instance of a container:
 
-    # runc start [ -b bundle ] <container-id>
+    # runc run [ -b bundle ] <container-id>
 
 Where "<container-id>" is your name for the instance of the container that you
 are starting. The name you provide for the container instance must be unique on
@@ -46,8 +49,10 @@ func main() {
 	app := cli.NewApp()
 	app.Name = "runc"
 	app.Usage = usage
-	v := []string{
-		version,
+
+	var v []string
+	if version != "" {
+		v = append(v, version)
 	}
 	if gitCommit != "" {
 		v = append(v, fmt.Sprintf("commit: %s", gitCommit))
@@ -86,6 +91,7 @@ func main() {
 	}
 	app.Commands = []cli.Command{
 		checkpointCommand,
+		createCommand,
 		deleteCommand,
 		eventsCommand,
 		execCommand,
@@ -93,11 +99,14 @@ func main() {
 		killCommand,
 		listCommand,
 		pauseCommand,
+		psCommand,
 		restoreCommand,
 		resumeCommand,
+		runCommand,
 		specCommand,
 		startCommand,
 		stateCommand,
+		updateCommand,
 	}
 	app.Before = func(context *cli.Context) error {
 		if context.GlobalBool("debug") {
@@ -116,7 +125,7 @@ func main() {
 		case "json":
 			logrus.SetFormatter(new(logrus.JSONFormatter))
 		default:
-			logrus.Fatalf("unknown log-format %q", context.GlobalString("log-format"))
+			return fmt.Errorf("unknown log-format %q", context.GlobalString("log-format"))
 		}
 		return nil
 	}

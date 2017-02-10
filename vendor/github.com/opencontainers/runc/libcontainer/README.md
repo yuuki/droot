@@ -77,12 +77,13 @@ config := &configs.Config{
 		Parent: "system",
 		Resources: &configs.Resources{
 			MemorySwappiness: nil,
-			AllowAllDevices:  false,
+			AllowAllDevices:  nil,
 			AllowedDevices:   configs.DefaultAllowedDevices,
 		},
 	},
 	MaskPaths: []string{
 		"/proc/kcore",
+		"/sys/firmware",
 	},
 	ReadonlyPaths: []string{
 		"/proc/sys", "/proc/sysrq-trigger", "/proc/irq", "/proc/bus",
@@ -184,10 +185,10 @@ process := &libcontainer.Process{
 	Stderr: os.Stderr,
 }
 
-err := container.Start(process)
+err := container.Run(process)
 if err != nil {
-	logrus.Fatal(err)
 	container.Destroy()
+	logrus.Fatal(err)
 	return
 }
 
@@ -219,6 +220,9 @@ container.Resume()
 
 // send signal to container's init process.
 container.Signal(signal)
+
+// update container resource constraints.
+container.Set(config)
 ```
 
 

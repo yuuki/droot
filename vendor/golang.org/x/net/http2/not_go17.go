@@ -10,13 +10,9 @@ import (
 	"crypto/tls"
 	"net"
 	"net/http"
-	"time"
 )
 
-type contextContext interface {
-	Done() <-chan struct{}
-	Err() error
-}
+type contextContext interface{}
 
 type fakeContext struct{}
 
@@ -79,9 +75,3 @@ func cloneTLSConfig(c *tls.Config) *tls.Config {
 		CurvePreferences:         c.CurvePreferences,
 	}
 }
-
-func (cc *ClientConn) Ping(ctx contextContext) error {
-	return cc.ping(ctx)
-}
-
-func (t *Transport) idleConnTimeout() time.Duration { return 0 }

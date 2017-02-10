@@ -141,7 +141,7 @@ func TestWriteDataPadded(t *testing.T) {
 			streamID:  1,
 			endStream: false,
 			data:      []byte("foo"),
-			pad:       []byte{0, 0, 0},
+			pad:       []byte("bar"),
 			wantHeader: FrameHeader{
 				Type:     FrameData,
 				Flags:    FlagDataPadded,
