@@ -14,7 +14,7 @@ build:
 	go build -o $(BIN) ./cmd/droot/.../
 
 fmt:
-	gofmt -s -w .
+	gofmt -s -w $$(git ls | grep -e '\.go$$' | grep -v vendor)
 
 vet:
 	go vet $$(go list ./... | grep -v vendor)
