@@ -5,6 +5,4 @@ go:
   - 1.8
 
 script:
-  - make clean
   - make test
-  - make build
