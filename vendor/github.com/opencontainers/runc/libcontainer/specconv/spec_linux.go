@@ -20,7 +20,7 @@ import (
 
 const wildcard = -1
 
-var namespaceMapping = map[specs.NamespaceType]configs.NamespaceType{
+var namespaceMapping = map[specs.LinuxNamespaceType]configs.NamespaceType{
 	specs.PIDNamespace:     configs.NEWPID,
 	specs.NetworkNamespace: configs.NEWNET,
 	specs.MountNamespace:   configs.NEWNS,
@@ -187,6 +187,9 @@ func CreateLibcontainerConfig(opts *CreateOpts) (*configs.Config, error) {
 		if !exists {
 			return nil, fmt.Errorf("namespace %q does not exist", ns)
 		}
+		if config.Namespaces.Contains(t) {
+			return nil, fmt.Errorf("malformed spec file: duplicated ns %q", ns)
+		}
 		config.Namespaces.Add(t, ns.Path)
 	}
 	if config.Namespaces.Contains(configs.NEWNET) {
@@ -227,6 +230,15 @@ func CreateLibcontainerConfig(opts *CreateOpts) (*configs.Config, error) {
 	if spec.Linux.Resources != nil && spec.Linux.Resources.OOMScoreAdj != nil {
 		config.OomScoreAdj = *spec.Linux.Resources.OOMScoreAdj
 	}
+	if spec.Process.Capabilities != nil {
+		config.Capabilities = &configs.Capabilities{
+			Bounding:    spec.Process.Capabilities.Bounding,
+			Effective:   spec.Process.Capabilities.Effective,
+			Permitted:   spec.Process.Capabilities.Permitted,
+			Inheritable: spec.Process.Capabilities.Inheritable,
+			Ambient:     spec.Process.Capabilities.Ambient,
+		}
+	}
 	createHooks(spec, config)
 	config.MountLabel = spec.Linux.MountLabel
 	config.Version = specs.Version
@@ -234,7 +246,7 @@ func CreateLibcontainerConfig(opts *CreateOpts) (*configs.Config, error) {
 }
 
 func createLibcontainerMount(cwd string, m specs.Mount) *configs.Mount {
-	flags, pgflags, data := parseMountOptions(m.Options)
+	flags, pgflags, data, ext := parseMountOptions(m.Options)
 	source := m.Source
 	if m.Type == "bind" {
 		if !filepath.IsAbs(source) {
@@ -248,6 +260,7 @@ func createLibcontainerMount(cwd string, m specs.Mount) *configs.Mount {
 		Data:             data,
 		Flags:            flags,
 		PropagationFlags: pgflags,
+		Extensions:       ext,
 	}
 }
 
@@ -258,10 +271,10 @@ func createCgroupConfig(name string, useSystemdCgroup bool, spec *specs.Spec) (*
 		Resources: &configs.Resources{},
 	}
 
-	if spec.Linux != nil && spec.Linux.CgroupsPath != nil {
-		myCgroupPath = libcontainerUtils.CleanPath(*spec.Linux.CgroupsPath)
+	if spec.Linux != nil && spec.Linux.CgroupsPath != "" {
+		myCgroupPath = libcontainerUtils.CleanPath(spec.Linux.CgroupsPath)
 		if useSystemdCgroup {
-			myCgroupPath = *spec.Linux.CgroupsPath
+			myCgroupPath = spec.Linux.CgroupsPath
 		}
 	}
 
@@ -302,8 +315,8 @@ func createCgroupConfig(name string, useSystemdCgroup bool, spec *specs.Spec) (*
 			major = int64(-1)
 			minor = int64(-1)
 		)
-		if d.Type != nil {
-			t = *d.Type
+		if d.Type != "" {
+			t = d.Type
 		}
 		if d.Major != nil {
 			major = *d.Major
@@ -311,10 +324,10 @@ func createCgroupConfig(name string, useSystemdCgroup bool, spec *specs.Spec) (*
 		if d.Minor != nil {
 			minor = *d.Minor
 		}
-		if d.Access == nil || *d.Access == "" {
+		if d.Access == "" {
 			return nil, fmt.Errorf("device access at %d field cannot be empty", i)
 		}
-		dt, err := stringToDeviceRune(t)
+		dt, err := stringToCgroupDeviceRune(t)
 		if err != nil {
 			return nil, err
 		}
@@ -322,7 +335,7 @@ func createCgroupConfig(name string, useSystemdCgroup bool, spec *specs.Spec) (*
 			Type:        dt,
 			Major:       major,
 			Minor:       minor,
-			Permissions: *d.Access,
+			Permissions: d.Access,
 			Allow:       d.Allow,
 		}
 		c.Resources.Devices = append(c.Resources.Devices, dd)
@@ -331,50 +344,49 @@ func createCgroupConfig(name string, useSystemdCgroup bool, spec *specs.Spec) (*
 	c.Resources.Devices = append(c.Resources.Devices, allowedDevices...)
 	if r.Memory != nil {
 		if r.Memory.Limit != nil {
-			c.Resources.Memory = int64(*r.Memory.Limit)
+			c.Resources.Memory = *r.Memory.Limit
 		}
 		if r.Memory.Reservation != nil {
-			c.Resources.MemoryReservation = int64(*r.Memory.Reservation)
+			c.Resources.MemoryReservation = *r.Memory.Reservation
 		}
 		if r.Memory.Swap != nil {
-			c.Resources.MemorySwap = int64(*r.Memory.Swap)
+			c.Resources.MemorySwap = *r.Memory.Swap
 		}
 		if r.Memory.Kernel != nil {
-			c.Resources.KernelMemory = int64(*r.Memory.Kernel)
+			c.Resources.KernelMemory = *r.Memory.Kernel
 		}
 		if r.Memory.KernelTCP != nil {
-			c.Resources.KernelMemoryTCP = int64(*r.Memory.KernelTCP)
+			c.Resources.KernelMemoryTCP = *r.Memory.KernelTCP
 		}
 		if r.Memory.Swappiness != nil {
-			swappiness := int64(*r.Memory.Swappiness)
-			c.Resources.MemorySwappiness = &swappiness
+			c.Resources.MemorySwappiness = r.Memory.Swappiness
 		}
 	}
 	if r.CPU != nil {
 		if r.CPU.Shares != nil {
-			c.Resources.CpuShares = int64(*r.CPU.Shares)
+			c.Resources.CpuShares = *r.CPU.Shares
 		}
 		if r.CPU.Quota != nil {
-			c.Resources.CpuQuota = int64(*r.CPU.Quota)
+			c.Resources.CpuQuota = *r.CPU.Quota
 		}
 		if r.CPU.Period != nil {
-			c.Resources.CpuPeriod = int64(*r.CPU.Period)
+			c.Resources.CpuPeriod = *r.CPU.Period
 		}
 		if r.CPU.RealtimeRuntime != nil {
-			c.Resources.CpuRtRuntime = int64(*r.CPU.RealtimeRuntime)
+			c.Resources.CpuRtRuntime = *r.CPU.RealtimeRuntime
 		}
 		if r.CPU.RealtimePeriod != nil {
-			c.Resources.CpuRtPeriod = int64(*r.CPU.RealtimePeriod)
+			c.Resources.CpuRtPeriod = *r.CPU.RealtimePeriod
 		}
-		if r.CPU.Cpus != nil {
-			c.Resources.CpusetCpus = *r.CPU.Cpus
+		if r.CPU.Cpus != "" {
+			c.Resources.CpusetCpus = r.CPU.Cpus
 		}
-		if r.CPU.Mems != nil {
-			c.Resources.CpusetMems = *r.CPU.Mems
+		if r.CPU.Mems != "" {
+			c.Resources.CpusetMems = r.CPU.Mems
 		}
 	}
 	if r.Pids != nil {
-		c.Resources.PidsLimit = *r.Pids.Limit
+		c.Resources.PidsLimit = r.Pids.Limit
 	}
 	if r.BlockIO != nil {
 		if r.BlockIO.Weight != nil {
@@ -398,40 +410,28 @@ func createCgroupConfig(name string, useSystemdCgroup bool, spec *specs.Spec) (*
 		}
 		if r.BlockIO.ThrottleReadBpsDevice != nil {
 			for _, td := range r.BlockIO.ThrottleReadBpsDevice {
-				var rate uint64
-				if td.Rate != nil {
-					rate = *td.Rate
-				}
+				rate := td.Rate
 				throttleDevice := configs.NewThrottleDevice(td.Major, td.Minor, rate)
 				c.Resources.BlkioThrottleReadBpsDevice = append(c.Resources.BlkioThrottleReadBpsDevice, throttleDevice)
 			}
 		}
 		if r.BlockIO.ThrottleWriteBpsDevice != nil {
 			for _, td := range r.BlockIO.ThrottleWriteBpsDevice {
-				var rate uint64
-				if td.Rate != nil {
-					rate = *td.Rate
-				}
+				rate := td.Rate
 				throttleDevice := configs.NewThrottleDevice(td.Major, td.Minor, rate)
 				c.Resources.BlkioThrottleWriteBpsDevice = append(c.Resources.BlkioThrottleWriteBpsDevice, throttleDevice)
 			}
 		}
 		if r.BlockIO.ThrottleReadIOPSDevice != nil {
 			for _, td := range r.BlockIO.ThrottleReadIOPSDevice {
-				var rate uint64
-				if td.Rate != nil {
-					rate = *td.Rate
-				}
+				rate := td.Rate
 				throttleDevice := configs.NewThrottleDevice(td.Major, td.Minor, rate)
 				c.Resources.BlkioThrottleReadIOPSDevice = append(c.Resources.BlkioThrottleReadIOPSDevice, throttleDevice)
 			}
 		}
 		if r.BlockIO.ThrottleWriteIOPSDevice != nil {
 			for _, td := range r.BlockIO.ThrottleWriteIOPSDevice {
-				var rate uint64
-				if td.Rate != nil {
-					rate = *td.Rate
-				}
+				rate := td.Rate
 				throttleDevice := configs.NewThrottleDevice(td.Major, td.Minor, rate)
 				c.Resources.BlkioThrottleWriteIOPSDevice = append(c.Resources.BlkioThrottleWriteIOPSDevice, throttleDevice)
 			}
@@ -439,8 +439,8 @@ func createCgroupConfig(name string, useSystemdCgroup bool, spec *specs.Spec) (*
 	}
 	for _, l := range r.HugepageLimits {
 		c.Resources.HugetlbLimit = append(c.Resources.HugetlbLimit, &configs.HugepageLimit{
-			Pagesize: *l.Pagesize,
-			Limit:    *l.Limit,
+			Pagesize: l.Pagesize,
+			Limit:    l.Limit,
 		})
 	}
 	if r.DisableOOMKiller != nil {
@@ -460,10 +460,25 @@ func createCgroupConfig(name string, useSystemdCgroup bool, spec *specs.Spec) (*
 	return c, nil
 }
 
-func stringToDeviceRune(s string) (rune, error) {
+func stringToCgroupDeviceRune(s string) (rune, error) {
 	switch s {
 	case "a":
 		return 'a', nil
+	case "b":
+		return 'b', nil
+	case "c":
+		return 'c', nil
+	default:
+		return 0, fmt.Errorf("invalid cgroup device type %q", s)
+	}
+}
+
+func stringToDeviceRune(s string) (rune, error) {
+	switch s {
+	case "p":
+		return 'p', nil
+	case "u":
+		return 'u', nil
 	case "b":
 		return 'b', nil
 	case "c":
@@ -534,6 +549,8 @@ func createDevices(spec *specs.Spec, config *configs.Config) error {
 	// merge in additional devices from the spec
 	for _, d := range spec.Linux.Devices {
 		var uid, gid uint32
+		var filemode os.FileMode = 0666
+
 		if d.UID != nil {
 			uid = *d.UID
 		}
@@ -544,12 +561,15 @@ func createDevices(spec *specs.Spec, config *configs.Config) error {
 		if err != nil {
 			return err
 		}
+		if d.FileMode != nil {
+			filemode = *d.FileMode
+		}
 		device := &configs.Device{
 			Type:     dt,
 			Path:     d.Path,
 			Major:    d.Major,
 			Minor:    d.Minor,
-			FileMode: *d.FileMode,
+			FileMode: filemode,
 			Uid:      uid,
 			Gid:      gid,
 		}
@@ -562,7 +582,7 @@ func setupUserNamespace(spec *specs.Spec, config *configs.Config) error {
 	if len(spec.Linux.UIDMappings) == 0 {
 		return nil
 	}
-	create := func(m specs.IDMapping) configs.IDMap {
+	create := func(m specs.LinuxIDMapping) configs.IDMap {
 		return configs.IDMap{
 			HostID:      int(m.HostID),
 			ContainerID: int(m.ContainerID),
@@ -592,11 +612,12 @@ func setupUserNamespace(spec *specs.Spec, config *configs.Config) error {
 
 // parseMountOptions parses the string and returns the flags, propagation
 // flags and any mount data that it contains.
-func parseMountOptions(options []string) (int, []int, string) {
+func parseMountOptions(options []string) (int, []int, string, int) {
 	var (
-		flag   int
-		pgflag []int
-		data   []string
+		flag     int
+		pgflag   []int
+		data     []string
+		extFlags int
 	)
 	flags := map[string]struct {
 		clear bool
@@ -638,6 +659,12 @@ func parseMountOptions(options []string) (int, []int, string) {
 		"rslave":      syscall.MS_SLAVE | syscall.MS_REC,
 		"runbindable": syscall.MS_UNBINDABLE | syscall.MS_REC,
 	}
+	extensionFlags := map[string]struct {
+		clear bool
+		flag  int
+	}{
+		"tmpcopyup": {false, configs.EXT_COPYUP},
+	}
 	for _, o := range options {
 		// If the option does not exist in the flags table or the flag
 		// is not supported on the platform,
@@ -650,14 +677,20 @@ func parseMountOptions(options []string) (int, []int, string) {
 			}
 		} else if f, exists := propagationFlags[o]; exists && f != 0 {
 			pgflag = append(pgflag, f)
+		} else if f, exists := extensionFlags[o]; exists && f.flag != 0 {
+			if f.clear {
+				extFlags &= ^f.flag
+			} else {
+				extFlags |= f.flag
+			}
 		} else {
 			data = append(data, o)
 		}
 	}
-	return flag, pgflag, strings.Join(data, ",")
+	return flag, pgflag, strings.Join(data, ","), extFlags
 }
 
-func setupSeccomp(config *specs.Seccomp) (*configs.Seccomp, error) {
+func setupSeccomp(config *specs.LinuxSeccomp) (*configs.Seccomp, error) {
 	if config == nil {
 		return nil, nil
 	}
@@ -695,30 +728,30 @@ func setupSeccomp(config *specs.Seccomp) (*configs.Seccomp, error) {
 			return nil, err
 		}
 
-		newCall := configs.Syscall{
-			Name:   call.Name,
-			Action: newAction,
-			Args:   []*configs.Arg{},
-		}
-
-		// Loop through all the arguments of the syscall and convert them
-		for _, arg := range call.Args {
-			newOp, err := seccomp.ConvertStringToOperator(string(arg.Op))
-			if err != nil {
-				return nil, err
+		for _, name := range call.Names {
+			newCall := configs.Syscall{
+				Name:   name,
+				Action: newAction,
+				Args:   []*configs.Arg{},
 			}
+			// Loop through all the arguments of the syscall and convert them
+			for _, arg := range call.Args {
+				newOp, err := seccomp.ConvertStringToOperator(string(arg.Op))
+				if err != nil {
+					return nil, err
+				}
 
-			newArg := configs.Arg{
-				Index:    arg.Index,
-				Value:    arg.Value,
-				ValueTwo: arg.ValueTwo,
-				Op:       newOp,
+				newArg := configs.Arg{
+					Index:    arg.Index,
+					Value:    arg.Value,
+					ValueTwo: arg.ValueTwo,
+					Op:       newOp,
+				}
+
+				newCall.Args = append(newCall.Args, &newArg)
 			}
-
-			newCall.Args = append(newCall.Args, &newArg)
+			newConfig.Syscalls = append(newConfig.Syscalls, &newCall)
 		}
-
-		newConfig.Syscalls = append(newConfig.Syscalls, &newCall)
 	}
 
 	return newConfig, nil
@@ -726,17 +759,20 @@ func setupSeccomp(config *specs.Seccomp) (*configs.Seccomp, error) {
 
 func createHooks(rspec *specs.Spec, config *configs.Config) {
 	config.Hooks = &configs.Hooks{}
-	for _, h := range rspec.Hooks.Prestart {
-		cmd := createCommandHook(h)
-		config.Hooks.Prestart = append(config.Hooks.Prestart, configs.NewCommandHook(cmd))
-	}
-	for _, h := range rspec.Hooks.Poststart {
-		cmd := createCommandHook(h)
-		config.Hooks.Poststart = append(config.Hooks.Poststart, configs.NewCommandHook(cmd))
-	}
-	for _, h := range rspec.Hooks.Poststop {
-		cmd := createCommandHook(h)
-		config.Hooks.Poststop = append(config.Hooks.Poststop, configs.NewCommandHook(cmd))
+	if rspec.Hooks != nil {
+
+		for _, h := range rspec.Hooks.Prestart {
+			cmd := createCommandHook(h)
+			config.Hooks.Prestart = append(config.Hooks.Prestart, configs.NewCommandHook(cmd))
+		}
+		for _, h := range rspec.Hooks.Poststart {
+			cmd := createCommandHook(h)
+			config.Hooks.Poststart = append(config.Hooks.Poststart, configs.NewCommandHook(cmd))
+		}
+		for _, h := range rspec.Hooks.Poststop {
+			cmd := createCommandHook(h)
+			config.Hooks.Poststop = append(config.Hooks.Poststop, configs.NewCommandHook(cmd))
+		}
 	}
 }
 

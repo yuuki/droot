@@ -64,14 +64,18 @@ load helpers
   runc start -h
   [ "$status" -eq 0 ]
   [[ ${lines[1]} =~ runc\ start+ ]]
-  
+
   runc run -h
   [ "$status" -eq 0 ]
   [[ ${lines[1]} =~ runc\ run+ ]]
-  
+
   runc state -h
   [ "$status" -eq 0 ]
   [[ ${lines[1]} =~ runc\ state+ ]]
+
+  runc update -h
+  [ "$status" -eq 0 ]
+  [[ ${lines[1]} =~ runc\ update+ ]]
 
 }
 

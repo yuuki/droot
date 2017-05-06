@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"unsafe"
 
 	"github.com/Sirupsen/logrus"
 	"github.com/opencontainers/runc/libcontainer/cgroups"
@@ -44,29 +45,28 @@ type network struct {
 
 // initConfig is used for transferring parameters from Exec() to Init()
 type initConfig struct {
-	Args             []string         `json:"args"`
-	Env              []string         `json:"env"`
-	Cwd              string           `json:"cwd"`
-	Capabilities     []string         `json:"capabilities"`
-	ProcessLabel     string           `json:"process_label"`
-	AppArmorProfile  string           `json:"apparmor_profile"`
-	NoNewPrivileges  bool             `json:"no_new_privileges"`
-	User             string           `json:"user"`
-	AdditionalGroups []string         `json:"additional_groups"`
-	Config           *configs.Config  `json:"config"`
-	Console          string           `json:"console"`
-	Networks         []*network       `json:"network"`
-	PassedFilesCount int              `json:"passed_files_count"`
-	ContainerId      string           `json:"containerid"`
-	Rlimits          []configs.Rlimit `json:"rlimits"`
-	ExecFifoPath     string           `json:"start_pipe_path"`
+	Args             []string              `json:"args"`
+	Env              []string              `json:"env"`
+	Cwd              string                `json:"cwd"`
+	Capabilities     *configs.Capabilities `json:"capabilities"`
+	ProcessLabel     string                `json:"process_label"`
+	AppArmorProfile  string                `json:"apparmor_profile"`
+	NoNewPrivileges  bool                  `json:"no_new_privileges"`
+	User             string                `json:"user"`
+	AdditionalGroups []string              `json:"additional_groups"`
+	Config           *configs.Config       `json:"config"`
+	Networks         []*network            `json:"network"`
+	PassedFilesCount int                   `json:"passed_files_count"`
+	ContainerId      string                `json:"containerid"`
+	Rlimits          []configs.Rlimit      `json:"rlimits"`
+	CreateConsole    bool                  `json:"create_console"`
 }
 
 type initer interface {
 	Init() error
 }
 
-func newContainerInit(t initType, pipe *os.File, stateDirFD int) (initer, error) {
+func newContainerInit(t initType, pipe *os.File, consoleSocket *os.File, stateDirFD int) (initer, error) {
 	var config *initConfig
 	if err := json.NewDecoder(pipe).Decode(&config); err != nil {
 		return nil, err
@@ -77,14 +77,17 @@ func newContainerInit(t initType, pipe *os.File, stateDirFD int) (initer, error)
 	switch t {
 	case initSetns:
 		return &linuxSetnsInit{
-			config: config,
+			pipe:          pipe,
+			consoleSocket: consoleSocket,
+			config:        config,
 		}, nil
 	case initStandard:
 		return &linuxStandardInit{
-			pipe:       pipe,
-			parentPid:  syscall.Getppid(),
-			config:     config,
-			stateDirFD: stateDirFD,
+			pipe:          pipe,
+			consoleSocket: consoleSocket,
+			parentPid:     syscall.Getppid(),
+			config:        config,
+			stateDirFD:    stateDirFD,
 		}, nil
 	}
 	return nil, fmt.Errorf("unknown init type %q", t)
@@ -116,16 +119,18 @@ func finalizeNamespace(config *initConfig) error {
 		return err
 	}
 
-	capabilities := config.Config.Capabilities
+	capabilities := &configs.Capabilities{}
 	if config.Capabilities != nil {
 		capabilities = config.Capabilities
+	} else if config.Config.Capabilities != nil {
+		capabilities = config.Config.Capabilities
 	}
-	w, err := newCapWhitelist(capabilities)
+	w, err := newContainerCapList(capabilities)
 	if err != nil {
 		return err
 	}
 	// drop capabilities in bounding set before changing user
-	if err := w.dropBoundingSet(); err != nil {
+	if err := w.ApplyBoundingSet(); err != nil {
 		return err
 	}
 	// preserve existing capabilities while we change users
@@ -138,8 +143,7 @@ func finalizeNamespace(config *initConfig) error {
 	if err := system.ClearKeepCaps(); err != nil {
 		return err
 	}
-	// drop all other capabilities
-	if err := w.drop(); err != nil {
+	if err := w.ApplyCaps(); err != nil {
 		return err
 	}
 	if config.Cwd != "" {
@@ -150,24 +154,59 @@ func finalizeNamespace(config *initConfig) error {
 	return nil
 }
 
+// setupConsole sets up the console from inside the container, and sends the
+// master pty fd to the config.Pipe (using cmsg). This is done to ensure that
+// consoles are scoped to a container properly (see runc#814 and the many
+// issues related to that). This has to be run *after* we've pivoted to the new
+// rootfs (and the users' configuration is entirely set up).
+func setupConsole(socket *os.File, config *initConfig, mount bool) error {
+	defer socket.Close()
+	// At this point, /dev/ptmx points to something that we would expect. We
+	// used to change the owner of the slave path, but since the /dev/pts mount
+	// can have gid=X set (at the users' option). So touching the owner of the
+	// slave PTY is not necessary, as the kernel will handle that for us. Note
+	// however, that setupUser (specifically fixStdioPermissions) *will* change
+	// the UID owner of the console to be the user the process will run as (so
+	// they can actually control their console).
+	console, err := newConsole()
+	if err != nil {
+		return err
+	}
+	// After we return from here, we don't need the console anymore.
+	defer console.Close()
+
+	linuxConsole, ok := console.(*linuxConsole)
+	if !ok {
+		return fmt.Errorf("failed to cast console to *linuxConsole")
+	}
+	// Mount the console inside our rootfs.
+	if mount {
+		if err := linuxConsole.mount(); err != nil {
+			return err
+		}
+	}
+	// While we can access console.master, using the API is a good idea.
+	if err := utils.SendFd(socket, linuxConsole.File()); err != nil {
+		return err
+	}
+	// Now, dup over all the things.
+	return linuxConsole.dupStdio()
+}
+
 // syncParentReady sends to the given pipe a JSON payload which indicates that
 // the init is ready to Exec the child process. It then waits for the parent to
 // indicate that it is cleared to Exec.
 func syncParentReady(pipe io.ReadWriter) error {
 	// Tell parent.
-	if err := utils.WriteJSON(pipe, syncT{procReady}); err != nil {
+	if err := writeSync(pipe, procReady); err != nil {
 		return err
 	}
+
 	// Wait for parent to give the all-clear.
-	var procSync syncT
-	if err := json.NewDecoder(pipe).Decode(&procSync); err != nil {
-		if err == io.EOF {
-			return fmt.Errorf("parent closed synchronisation channel")
-		}
-		if procSync.Type != procRun {
-			return fmt.Errorf("invalid synchronisation flag from parent")
-		}
+	if err := readSync(pipe, procRun); err != nil {
+		return err
 	}
+
 	return nil
 }
 
@@ -176,19 +215,15 @@ func syncParentReady(pipe io.ReadWriter) error {
 // indicate that it is cleared to resume.
 func syncParentHooks(pipe io.ReadWriter) error {
 	// Tell parent.
-	if err := utils.WriteJSON(pipe, syncT{procHooks}); err != nil {
+	if err := writeSync(pipe, procHooks); err != nil {
 		return err
 	}
+
 	// Wait for parent to give the all-clear.
-	var procSync syncT
-	if err := json.NewDecoder(pipe).Decode(&procSync); err != nil {
-		if err == io.EOF {
-			return fmt.Errorf("parent closed synchronisation channel")
-		}
-		if procSync.Type != procResume {
-			return fmt.Errorf("invalid synchronisation flag from parent")
-		}
+	if err := readSync(pipe, procResume); err != nil {
+		return err
 	}
+
 	return nil
 }
 
@@ -262,11 +297,17 @@ func fixStdioPermissions(u *user.ExecUser) error {
 		if err := syscall.Fstat(int(fd), &s); err != nil {
 			return err
 		}
-		// skip chown of /dev/null if it was used as one of the STDIO fds.
+		// Skip chown of /dev/null if it was used as one of the STDIO fds.
 		if s.Rdev == null.Rdev {
 			continue
 		}
-		if err := syscall.Fchown(int(fd), u.Uid, u.Gid); err != nil {
+		// We only change the uid owner (as it is possible for the mount to
+		// prefer a different gid, and there's no reason for us to change it).
+		// The reason why we don't just leave the default uid=X mount setup is
+		// that users expect to be able to actually use their console. Without
+		// this code, you couldn't effectively run as a non-root user inside a
+		// container and also have a console set up.
+		if err := syscall.Fchown(int(fd), u.Uid, int(s.Gid)); err != nil {
 			return err
 		}
 	}
@@ -334,10 +375,51 @@ func setOomScoreAdj(oomScoreAdj int, pid int) error {
 	return ioutil.WriteFile(path, []byte(strconv.Itoa(oomScoreAdj)), 0600)
 }
 
-// killCgroupProcesses freezes then iterates over all the processes inside the
-// manager's cgroups sending a SIGKILL to each process then waiting for them to
-// exit.
-func killCgroupProcesses(m cgroups.Manager) error {
+const _P_PID = 1
+
+type siginfo struct {
+	si_signo int32
+	si_errno int32
+	si_code  int32
+	// below here is a union; si_pid is the only field we use
+	si_pid int32
+	// Pad to 128 bytes as detailed in blockUntilWaitable
+	pad [96]byte
+}
+
+// isWaitable returns true if the process has exited false otherwise.
+// Its based off blockUntilWaitable in src/os/wait_waitid.go
+func isWaitable(pid int) (bool, error) {
+	si := &siginfo{}
+	_, _, e := syscall.Syscall6(syscall.SYS_WAITID, _P_PID, uintptr(pid), uintptr(unsafe.Pointer(si)), syscall.WEXITED|syscall.WNOWAIT|syscall.WNOHANG, 0, 0)
+	if e != 0 {
+		return false, os.NewSyscallError("waitid", e)
+	}
+
+	return si.si_pid != 0, nil
+}
+
+// isNoChildren returns true if err represents a syscall.ECHILD false otherwise
+func isNoChildren(err error) bool {
+	switch err := err.(type) {
+	case syscall.Errno:
+		if err == syscall.ECHILD {
+			return true
+		}
+	case *os.SyscallError:
+		if err.Err == syscall.ECHILD {
+			return true
+		}
+	}
+	return false
+}
+
+// signalAllProcesses freezes then iterates over all the processes inside the
+// manager's cgroups sending the signal s to them.
+// If s is SIGKILL then it will wait for each process to exit.
+// For all other signals it will check if the process is ready to report its
+// exit status and only if it is will a wait be performed.
+func signalAllProcesses(m cgroups.Manager, s os.Signal) error {
 	var procs []*os.Process
 	if err := m.Freeze(configs.Frozen); err != nil {
 		logrus.Warn(err)
@@ -354,16 +436,31 @@ func killCgroupProcesses(m cgroups.Manager) error {
 			continue
 		}
 		procs = append(procs, p)
-		if err := p.Kill(); err != nil {
+		if err := p.Signal(s); err != nil {
 			logrus.Warn(err)
 		}
 	}
 	if err := m.Freeze(configs.Thawed); err != nil {
 		logrus.Warn(err)
 	}
+
 	for _, p := range procs {
+		if s != syscall.SIGKILL {
+			if ok, err := isWaitable(p.Pid); err != nil {
+				if !isNoChildren(err) {
+					logrus.Warn("signalAllProcesses: ", p.Pid, err)
+				}
+				continue
+			} else if !ok {
+				// Not ready to report so don't wait
+				continue
+			}
+		}
+
 		if _, err := p.Wait(); err != nil {
-			logrus.Warn(err)
+			if !isNoChildren(err) {
+				logrus.Warn("wait: ", err)
+			}
 		}
 	}
 	return nil
