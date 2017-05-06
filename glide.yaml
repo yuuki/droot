@@ -1,11 +1,13 @@
 package: github.com/yuuki/droot
 import:
-- package: github.com/docker/docker
-  version: ~1.13.1
-  subpackages:
-  - pkg/archive
-  - pkg/fileutils
-  - pkg/mount
+# docker/docker don't manages by glide because opencontainers/runc
+# in vendor of docker/docker cause double dependency problem.
+# - package: github.com/docker/docker
+#   version: ~1.13.1
+#   subpackages:
+#   - pkg/archive
+#   - pkg/fileutils
+#   - pkg/mount
 - package: github.com/fsouza/go-dockerclient
 - package: github.com/opencontainers/runc
   version: ~1.0.0-rc2
