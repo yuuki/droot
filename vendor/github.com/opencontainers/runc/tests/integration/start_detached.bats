@@ -13,7 +13,7 @@ function teardown() {
 
 @test "runc run detached" {
   # run busybox detached
-  runc run -d --console /dev/pts/ptmx test_busybox
+  runc run -d --console-socket $CONSOLE_SOCKET test_busybox
   [ "$status" -eq 0 ]
 
   # check state
@@ -29,7 +29,7 @@ function teardown() {
   sed -i 's;"gid": 0;"gid": 100;g' config.json
 
   # run busybox detached
-  runc run -d --console /dev/pts/ptmx test_busybox
+  runc run -d --console-socket $CONSOLE_SOCKET test_busybox
   [ "$status" -eq 0 ]
 
   # check state
@@ -40,7 +40,7 @@ function teardown() {
 
 @test "runc run detached --pid-file" {
   # run busybox detached
-  runc run --pid-file pid.txt -d --console /dev/pts/ptmx test_busybox
+  runc run --pid-file pid.txt -d --console-socket $CONSOLE_SOCKET test_busybox
   [ "$status" -eq 0 ]
 
   # check state
@@ -53,5 +53,29 @@ function teardown() {
 
   run cat pid.txt
   [ "$status" -eq 0 ]
-  [[ ${lines[0]} =~ [0-9]+ ]]
+  [[ ${lines[0]} == $(__runc state test_busybox | jq '.pid') ]]
+}
+
+@test "runc run detached --pid-file with new CWD" {
+  # create pid_file directory as the CWD
+  run mkdir pid_file
+  [ "$status" -eq 0 ]
+  run cd pid_file
+  [ "$status" -eq 0 ]
+
+  # run busybox detached
+  runc run --pid-file pid.txt -d  -b $BUSYBOX_BUNDLE --console-socket $CONSOLE_SOCKET test_busybox
+  [ "$status" -eq 0 ]
+
+  # check state
+  wait_for_container 15 1 test_busybox
+
+  testcontainer test_busybox running
+
+  # check pid.txt was generated
+  [ -e pid.txt ]
+
+  run cat pid.txt
+  [ "$status" -eq 0 ]
+  [[ ${lines[0]} == $(__runc state test_busybox | jq '.pid') ]]
 }

@@ -1,12 +1,12 @@
 package commands
 
 import (
-	"errors"
 	"fmt"
 	"io/ioutil"
 	"os"
 	"path/filepath"
 
+	"github.com/pkg/errors"
 	"github.com/urfave/cli"
 
 	"github.com/yuuki/droot/archive"
@@ -39,7 +39,7 @@ func doDeploy(c *cli.Context) error {
 
 	tmpDir, err := ioutil.TempDir(os.TempDir(), "droot")
 	if err != nil {
-		return fmt.Errorf("Failed to create temporary dir: %s", err)
+		return errors.Wrapf(err, "Failed to create temporary dir")
 	}
 	defer os.RemoveAll(tmpDir)
 	if err := os.Chmod(tmpDir, 0755); err != nil {
@@ -56,7 +56,7 @@ func doDeploy(c *cli.Context) error {
 		log.Info("-->", "Syncing", "from", tmpDir, "to", rootDir)
 
 		if err := deploy.Rsync(tmpDir, rootDir); err != nil {
-			return fmt.Errorf("Failed to rsync: %s", err)
+			return err
 		}
 	case "symlink":
 		if err := deploy.DeployWithSymlink(tmpDir, rootDir); err != nil {

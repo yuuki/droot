@@ -1,13 +1,13 @@
 package mounter
 
 import (
-	"fmt"
 	"os"
 	fp "path/filepath"
 	"strings"
 
 	"github.com/docker/docker/pkg/fileutils"
 	"github.com/docker/docker/pkg/mount"
+	"github.com/pkg/errors"
 
 	"github.com/yuuki/droot/log"
 	"github.com/yuuki/droot/osutil"
@@ -25,7 +25,7 @@ func ResolveRootDir(dir string) (string, error) {
 	var err error
 
 	if !osutil.ExistsDir(dir) {
-		return dir, fmt.Errorf("No such directory %s:", dir)
+		return dir, errors.Errorf("No such directory %s:", dir)
 	}
 
 	dir, err = fp.Abs(dir)
@@ -46,11 +46,11 @@ func ResolveRootDir(dir string) (string, error) {
 func (m *Mounter) MountSysProc() error {
 	// mount -t proc none {{rootDir}}/proc
 	if err := osutil.MountIfNotMounted("none", fp.Join(m.rootDir, "/proc"), "proc", ""); err != nil {
-		return fmt.Errorf("Failed to mount /proc: %s", err)
+		return errors.Errorf("Failed to mount /proc: %s", err)
 	}
 	// mount --rbind /sys {{rootDir}}/sys
 	if err := osutil.MountIfNotMounted("/sys", fp.Join(m.rootDir, "/sys"), "none", "rbind"); err != nil {
-		return fmt.Errorf("Failed to mount /sys: %s", err)
+		return errors.Errorf("Failed to mount /sys: %s", err)
 	}
 
 	return nil

@@ -1,5 +1,5 @@
-hash: f749d28331267816a79d44a137cfcb63aa229d9a96c043d1d1d1d3daf1630d88
-updated: 2017-02-10T14:52:54.78142591+09:00
+hash: a25e2540eaa36cf784016a5756a89697c93f7dc7ab6971d8d4162cdab41d3ec4
+updated: 2017-05-07T02:33:01.022319857+09:00
 imports:
 - name: github.com/Azure/go-ansiterm
   version: fa152c58bc15761d0200cb75fe958b89a9d4888e
@@ -46,14 +46,12 @@ imports:
   version: 0dadbb0345b35ec7ef35e228dabb8de89a65bf52
 - name: github.com/fsouza/go-dockerclient
   version: c342fd4c3d69bdc9767083cc61d11756e7323b64
-- name: github.com/hashicorp/errwrap
-  version: 7554cd9344cec97297fa6649b055a8c98c2a1e55
 - name: github.com/hashicorp/go-cleanhttp
   version: ad28ea4487f05916463e2423a55166280e8254b5
 - name: github.com/Microsoft/go-winio
   version: fff283ad5116362ca252298cfc9b95828956d85d
 - name: github.com/opencontainers/runc
-  version: c91b5bea4830a57eac7882d7455d59518cdf70ec
+  version: 75f8da7c889acc4509a0cf6f0d3a8f9584778375
   subpackages:
   - libcontainer/system
   - libcontainer/user

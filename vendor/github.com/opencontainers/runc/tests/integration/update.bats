@@ -5,6 +5,7 @@ load helpers
 function teardown() {
     rm -f $BATS_TMPDIR/runc-update-integration-test.json
     teardown_running_container test_update
+    teardown_running_container test_update_rt
     teardown_busybox
 }
 
@@ -44,13 +45,14 @@ function check_cgroup_value() {
     expected=$3
 
     current=$(cat $cgroup/$source)
-    [ "$current" -eq "$expected" ]
+    [ "$current" == "$expected" ]
 }
 
+# TODO: test rt cgroup updating
 @test "update" {
     requires cgroups_kmem
     # run a few busyboxes detached
-    runc run -d --console /dev/pts/ptmx test_update
+    runc run -d --console-socket $CONSOLE_SOCKET test_update
     [ "$status" -eq 0 ]
     wait_for_container 15 1 test_update
 
@@ -59,6 +61,8 @@ function check_cgroup_value() {
         base_path=$(grep "cgroup"  /proc/self/mountinfo | gawk 'toupper($NF) ~ /\<'${g}'\>/ { print $5; exit }')
         eval CGROUP_${g}="${base_path}/runc-update-integration-test"
     done
+
+    CGROUP_SYSTEM_MEMORY=$(grep "cgroup"  /proc/self/mountinfo | gawk 'toupper($NF) ~ /\<'MEMORY'\>/ { print $5; exit }')
 
     # check that initial values were properly set
     check_cgroup_value $CGROUP_BLKIO "blkio.weight" 1000
@@ -108,17 +112,38 @@ function check_cgroup_value() {
     [ "$status" -eq 0 ]
     check_cgroup_value $CGROUP_MEMORY "memory.limit_in_bytes" 52428800
 
-
     # update memory soft limit
     runc update test_update --memory-reservation 33554432
     [ "$status" -eq 0 ]
     check_cgroup_value $CGROUP_MEMORY "memory.soft_limit_in_bytes" 33554432
 
-    # update memory swap (if available)
+    # Run swap memory tests if swap is avaialble
     if [ -f "$CGROUP_MEMORY/memory.memsw.limit_in_bytes" ]; then
+        # try to remove memory swap limit
+        runc update test_update --memory-swap -1
+        [ "$status" -eq 0 ]
+        # Get System memory swap limit
+        SYSTEM_MEMORY_SW=$(cat "${CGROUP_SYSTEM_MEMORY}/memory.memsw.limit_in_bytes")
+        check_cgroup_value $CGROUP_MEMORY "memory.memsw.limit_in_bytes" ${SYSTEM_MEMORY_SW}
+
+        # update memory swap
         runc update test_update --memory-swap 96468992
         [ "$status" -eq 0 ]
         check_cgroup_value $CGROUP_MEMORY "memory.memsw.limit_in_bytes" 96468992
+    fi;
+
+    # try to remove memory limit
+    runc update test_update --memory -1
+    [ "$status" -eq 0 ]
+
+    # Get System memory limit
+    SYSTEM_MEMORY=$(cat "${CGROUP_SYSTEM_MEMORY}/memory.limit_in_bytes")
+   	# check memory limited is gone
+    check_cgroup_value $CGROUP_MEMORY "memory.limit_in_bytes" ${SYSTEM_MEMORY}
+
+    # check swap memory limited is gone
+    if [ -f "$CGROUP_MEMORY/memory.memsw.limit_in_bytes" ]; then
+        check_cgroup_value $CGROUP_MEMORY "memory.memsw.limit_in_bytes" ${SYSTEM_MEMORY}
     fi
 
     # update kernel memory limit
@@ -210,4 +235,32 @@ EOF
     check_cgroup_value $CGROUP_MEMORY "memory.kmem.tcp.limit_in_bytes" 11534336
     check_cgroup_value $CGROUP_MEMORY "memory.limit_in_bytes" 33554432
     check_cgroup_value $CGROUP_MEMORY "memory.soft_limit_in_bytes" 25165824
+}
+
+@test "update rt period and runtime" {
+    requires cgroups_rt
+
+    # run a detached busybox
+    runc run -d --console-socket $CONSOLE_SOCKET test_update_rt
+    [ "$status" -eq 0 ]
+    wait_for_container 15 1 test_update_rt
+
+    # get the cgroup paths
+    eval CGROUP_CPU="${CGROUP_CPU_BASE_PATH}/runc-update-integration-test"
+
+    runc update  -r - test_update_rt <<EOF
+{
+  "cpu": {
+    "realtimePeriod": 800001,
+    "realtimeRuntime": 500001
+  }
+}
+EOF
+    check_cgroup_value $CGROUP_CPU "cpu.rt_period_us" 800001
+    check_cgroup_value $CGROUP_CPU "cpu.rt_runtime_us" 500001
+
+    runc update test_update_rt --cpu-rt-period 900001 --cpu-rt-runtime 600001
+
+    check_cgroup_value $CGROUP_CPU "cpu.rt_period_us" 900001
+    check_cgroup_value $CGROUP_CPU "cpu.rt_runtime_us" 600001
 }

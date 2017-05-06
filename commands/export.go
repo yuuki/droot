@@ -1,11 +1,10 @@
 package commands
 
 import (
-	"errors"
-	"fmt"
 	"io"
 	"os"
 
+	"github.com/pkg/errors"
 	"github.com/urfave/cli"
 
 	"github.com/yuuki/droot/docker"
@@ -34,11 +33,11 @@ func doExport(c *cli.Context) error {
 
 	docker, err := docker.NewClient()
 	if err != nil {
-		return fmt.Errorf("Failed to create docker client: %s", err)
+		return err
 	}
 	imageReader, err := docker.ExportImage(repository)
 	if err != nil {
-		return fmt.Errorf("Failed to export image %s: %s", repository, err)
+		return err
 	}
 	defer imageReader.Close()
 
@@ -50,12 +49,12 @@ func doExport(c *cli.Context) error {
 		defer file.Close()
 
 		if _, err := io.Copy(file, imageReader); err != nil {
-			return fmt.Errorf("Failed to write into stdout: %s", err)
+			return errors.Wrapf(err, "Failed to write to the file %s", output)
 		}
 
 	} else {
 		if _, err := io.Copy(os.Stdout, imageReader); err != nil {
-			return fmt.Errorf("Failed to write into stdout: %s", err)
+			return errors.Wrapf(err, "Failed to write into stdout")
 		}
 	}
 

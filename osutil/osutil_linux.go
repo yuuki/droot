@@ -1,7 +1,6 @@
 package osutil
 
 import (
-	"errors"
 	"os/exec"
 	"os/user"
 	"strconv"
@@ -10,6 +9,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/opencontainers/runc/libcontainer/system"
+	"github.com/pkg/errors"
 	group "github.com/yuuki/go-group"
 
 	"github.com/yuuki/droot/log"

@@ -4,9 +4,9 @@ import (
 	"io"
 
 	godocker "github.com/fsouza/go-dockerclient"
+	"github.com/pkg/errors"
 
 	"github.com/yuuki/droot/environ"
-	"github.com/yuuki/droot/errwrap"
 )
 
 type Client struct {
@@ -34,7 +34,7 @@ func (c *Client) ExportImage(imageID string) (io.ReadCloser, error) {
 		},
 	})
 	if err != nil {
-		return nil, errwrap.Wrapff(err, "Failed to create container (imageID:%s): {{err}}", imageID)
+		return nil, errors.Wrapf(err, "Failed to create container imageID:%s", imageID)
 	}
 
 	// start container because creating container does not run above `printenv > /.drootenv`.
@@ -43,11 +43,11 @@ func (c *Client) ExportImage(imageID string) (io.ReadCloser, error) {
 			ID:    container.ID,
 			Force: true,
 		})
-		return nil, errwrap.Wrapff(err, "Failed to remove container (containerID:%s): {{err}}", container.ID)
+		return nil, errors.Wrapf(err, "Failed to remove container containerID:%s", container.ID)
 	}
 
 	if _, err := c.docker.WaitContainer(container.ID); err != nil {
-		return nil, errwrap.Wrapff(err, "Failed to wait container (containerID:%s): {{err}}", container.ID)
+		return nil, errors.Wrapf(err, "Failed to wait container containerID:%s", container.ID)
 	}
 
 	pReader, pWriter := io.Pipe()
@@ -65,7 +65,7 @@ func (c *Client) ExportImage(imageID string) (io.ReadCloser, error) {
 			OutputStream: pWriter,
 		})
 		if err != nil {
-			err = errwrap.Wrapff(err, "Failed to export container %s: {{err}}", container.ID)
+			err = errors.Wrapf(err, "Failed to export container containerID:%s", container.ID)
 			pWriter.CloseWithError(err)
 		} else {
 			pWriter.Close()

@@ -48,9 +48,9 @@ In the run command above, "container1" is the name for the instance of the
 container that you are starting. The name you provide for the container instance
 must be unique on your host.
 
-An alternative for generating a customized spec config is to use "ocitools", the
-sub-command "ocitools generate" has lots of options that can be used to do any
-customizations as you want, see [ocitools](https://github.com/opencontainers/ocitools)
+An alternative for generating a customized spec config is to use "oci-runtime-tool", the
+sub-command "oci-runtime-tool generate" has lots of options that can be used to do any
+customizations as you want, see [runtime-tools](https://github.com/opencontainers/runtime-tools)
 to get more information.
 
 When starting a container through runc, runc needs root privilege. If not
@@ -65,6 +65,9 @@ container on your host.`,
 		},
 	},
 	Action: func(context *cli.Context) error {
+		if err := checkArgs(context, 0, exactArgs); err != nil {
+			return err
+		}
 		spec := specs.Spec{
 			Version: specs.Version,
 			Platform: specs.Platform{
@@ -87,12 +90,34 @@ container on your host.`,
 				},
 				Cwd:             "/",
 				NoNewPrivileges: true,
-				Capabilities: []string{
-					"CAP_AUDIT_WRITE",
-					"CAP_KILL",
-					"CAP_NET_BIND_SERVICE",
+				Capabilities: &specs.LinuxCapabilities{
+					Bounding: []string{
+						"CAP_AUDIT_WRITE",
+						"CAP_KILL",
+						"CAP_NET_BIND_SERVICE",
+					},
+					Permitted: []string{
+						"CAP_AUDIT_WRITE",
+						"CAP_KILL",
+						"CAP_NET_BIND_SERVICE",
+					},
+					Inheritable: []string{
+						"CAP_AUDIT_WRITE",
+						"CAP_KILL",
+						"CAP_NET_BIND_SERVICE",
+					},
+					Ambient: []string{
+						"CAP_AUDIT_WRITE",
+						"CAP_KILL",
+						"CAP_NET_BIND_SERVICE",
+					},
+					Effective: []string{
+						"CAP_AUDIT_WRITE",
+						"CAP_KILL",
+						"CAP_NET_BIND_SERVICE",
+					},
 				},
-				Rlimits: []specs.Rlimit{
+				Rlimits: []specs.LinuxRlimit{
 					{
 						Type: "RLIMIT_NOFILE",
 						Hard: uint64(1024),
@@ -162,15 +187,15 @@ container on your host.`,
 					"/proc/sys",
 					"/proc/sysrq-trigger",
 				},
-				Resources: &specs.Resources{
-					Devices: []specs.DeviceCgroup{
+				Resources: &specs.LinuxResources{
+					Devices: []specs.LinuxDeviceCgroup{
 						{
 							Allow:  false,
-							Access: sPtr("rwm"),
+							Access: "rwm",
 						},
 					},
 				},
-				Namespaces: []specs.Namespace{
+				Namespaces: []specs.LinuxNamespace{
 					{
 						Type: "pid",
 					},
@@ -220,11 +245,7 @@ container on your host.`,
 	},
 }
 
-func sPtr(s string) *string      { return &s }
-func rPtr(r rune) *rune          { return &r }
-func iPtr(i int64) *int64        { return &i }
-func u32Ptr(i int64) *uint32     { u := uint32(i); return &u }
-func fmPtr(i int64) *os.FileMode { fm := os.FileMode(i); return &fm }
+func sPtr(s string) *string { return &s }
 
 // loadSpec loads the specification from the provided path.
 func loadSpec(cPath string) (spec *specs.Spec, err error) {
@@ -240,17 +261,30 @@ func loadSpec(cPath string) (spec *specs.Spec, err error) {
 	if err = json.NewDecoder(cf).Decode(&spec); err != nil {
 		return nil, err
 	}
+	if err = validatePlatform(&spec.Platform); err != nil {
+		return nil, err
+	}
 	return spec, validateProcessSpec(&spec.Process)
 }
 
-func createLibContainerRlimit(rlimit specs.Rlimit) (configs.Rlimit, error) {
+func createLibContainerRlimit(rlimit specs.LinuxRlimit) (configs.Rlimit, error) {
 	rl, err := strToRlimit(rlimit.Type)
 	if err != nil {
 		return configs.Rlimit{}, err
 	}
 	return configs.Rlimit{
 		Type: rl,
-		Hard: uint64(rlimit.Hard),
-		Soft: uint64(rlimit.Soft),
+		Hard: rlimit.Hard,
+		Soft: rlimit.Soft,
 	}, nil
+}
+
+func validatePlatform(platform *specs.Platform) error {
+	if platform.OS != runtime.GOOS {
+		return fmt.Errorf("target os %s mismatch with current os %s", platform.OS, runtime.GOOS)
+	}
+	if platform.Arch != runtime.GOARCH {
+		return fmt.Errorf("target arch %s mismatch with current arch %s", platform.Arch, runtime.GOARCH)
+	}
+	return nil
 }
