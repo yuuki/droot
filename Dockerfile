@@ -1,4 +1,4 @@
-FROM golang:1.7.5
+FROM golang:1.8.1
 
 RUN go get  github.com/laher/goxc \
 	          golang.org/x/tools/cmd/stringer \
