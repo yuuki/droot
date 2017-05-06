@@ -2,9 +2,10 @@ package environ
 
 import (
 	"bufio"
-	"fmt"
 	"os"
 	"strings"
+
+	"github.com/pkg/errors"
 )
 
 const DROOT_ENV_FILE_PATH = "/.drootenv"
@@ -38,7 +39,7 @@ func MergeEnviron(dst []string, src []string) ([]string, error) {
 	for _, s := range src {
 		kv := strings.SplitN(s, "=", 2)
 		if len(kv) != 2 {
-			return nil, fmt.Errorf("Invalid env format: %s", s)
+			return nil, errors.Errorf("Invalid env format: %s", s)
 		}
 		sk := kv[0]
 
@@ -47,7 +48,7 @@ func MergeEnviron(dst []string, src []string) ([]string, error) {
 		for i, d := range dst {
 			kv = strings.SplitN(d, "=", 2)
 			if len(kv) != 2 {
-				return nil, fmt.Errorf("Invalid env format: %s", d)
+				return nil, errors.Errorf("Invalid env format: %s", d)
 			}
 			dk := kv[0]
 			if sk == dk {

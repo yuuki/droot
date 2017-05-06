@@ -1,8 +1,7 @@
 package commands
 
 import (
-	"errors"
-
+	"github.com/pkg/errors"
 	"github.com/urfave/cli"
 
 	"github.com/yuuki/droot/mounter"

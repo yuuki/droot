@@ -1,13 +1,14 @@
 package commands
 
 import (
-	"errors"
 	"fmt"
-	"golang.org/x/sys/unix"
 	"os"
 	fp "path/filepath"
 	"strings"
 
+	"golang.org/x/sys/unix"
+
+	"github.com/pkg/errors"
 	"github.com/urfave/cli"
 
 	"github.com/yuuki/droot/environ"
@@ -88,7 +89,7 @@ func doRun(c *cli.Context) error {
 	if len(env) > 0 {
 		for _, e := range env {
 			if len(strings.SplitN(e, "=", 2)) != 2 {
-				return fmt.Errorf("Invalid env format: %s", e)
+				return errors.Errorf("Invalid env format: %s", e)
 			}
 		}
 	}
@@ -97,12 +98,12 @@ func doRun(c *cli.Context) error {
 
 	if group := c.String("group"); group != "" {
 		if gid, err = osutil.LookupGroup(group); err != nil {
-			return fmt.Errorf("Failed to lookup group: %s", err)
+			return err
 		}
 	}
 	if user := c.String("user"); user != "" {
 		if uid, err = osutil.LookupUser(user); err != nil {
-			return fmt.Errorf("Failed to lookup user: %s", err)
+			return err
 		}
 	}
 
@@ -111,10 +112,10 @@ func doRun(c *cli.Context) error {
 		for _, f := range copyFiles {
 			srcFile, destFile := fp.Join("/", f), fp.Join(rootDir, f)
 			if err := osutil.Cp(srcFile, destFile); err != nil {
-				return fmt.Errorf("Failed to copy %s: %s", f, err)
+				return errors.Wrapf(err, "Failed to copy %s", f)
 			}
 			if err := os.Lchown(destFile, uid, gid); err != nil {
-				return fmt.Errorf("Failed to lchown %s: %s", f, err)
+				return errors.Wrapf(err, "Failed to lchown %s", f)
 			}
 		}
 	}
@@ -140,17 +141,17 @@ func doRun(c *cli.Context) error {
 			return err
 		}
 		if err := mnt.RoBindMount(hostDir, containerDir); err != nil {
-			return fmt.Errorf("Failed to robind mount %s: %s", val, err)
+			return errors.Wrapf(err, "Failed to robind mount %s", val)
 		}
 	}
 
 	// create symlinks
 	if err := osutil.Symlink("../run/lock", fp.Join(rootDir, "/var/lock")); err != nil {
-		return fmt.Errorf("Failed to symlink lock file: %s", err)
+		return err
 	}
 
 	if err := createDevices(rootDir, uid, gid); err != nil {
-		return fmt.Errorf("Failed to create devices: %s", err)
+		return err
 	}
 
 	if err := osutil.Chroot(rootDir); err != nil {
