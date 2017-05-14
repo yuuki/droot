@@ -33,7 +33,6 @@ Run '{{.Name}} COMMAND --help' for more information on a command.
 
 var commandArgs = map[string]string{
 	"export": commands.CommandArgExport,
-	"deploy": commands.CommandArgDeploy,
 	"run":    commands.CommandArgRun,
 	"umount": commands.CommandArgUmount,
 	"rm":     commands.CommandArgRm,
