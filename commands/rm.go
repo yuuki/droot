@@ -5,7 +5,6 @@ import (
 
 	"github.com/urfave/cli"
 
-	"github.com/yuuki/droot/deploy"
 	"github.com/yuuki/droot/log"
 	"github.com/yuuki/droot/mounter"
 	"github.com/yuuki/droot/osutil"
@@ -37,10 +36,6 @@ func doRm(c *cli.Context) error {
 	mnt := mounter.NewMounter(rootDir)
 	if err := mnt.UmountRoot(); err != nil {
 		return err
-	}
-
-	if osutil.IsSymlink(optRootDir) {
-		return deploy.CleanupSymlink(optRootDir)
 	}
 
 	log.Info("-->", "Removing", rootDir)
