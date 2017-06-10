@@ -5,7 +5,6 @@ import (
 	fp "path/filepath"
 	"strings"
 
-	"github.com/docker/docker/pkg/fileutils"
 	"github.com/docker/docker/pkg/mount"
 	"github.com/pkg/errors"
 
@@ -65,7 +64,7 @@ func (m *Mounter) BindMount(hostDir, containerDir string) error {
 		}
 	}
 
-	if err := fileutils.CreateIfNotExists(containerDir, true); err != nil { // mkdir -p
+	if err := osutil.CreateIfNotExists(containerDir, true); err != nil { // mkdir -p
 		return err
 	}
 
