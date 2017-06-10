@@ -5,6 +5,7 @@ import (
 	fp "path/filepath"
 	"strings"
 
+	"github.com/moby/moby/pkg/fileutils"
 	"github.com/moby/moby/pkg/mount"
 	"github.com/pkg/errors"
 
@@ -64,7 +65,7 @@ func (m *Mounter) BindMount(hostDir, containerDir string) error {
 		}
 	}
 
-	if err := osutil.CreateIfNotExists(containerDir, true); err != nil { // mkdir -p
+	if err := fileutils.CreateIfNotExists(containerDir, true); err != nil { // mkdir -p
 		return err
 	}
 
