@@ -5,7 +5,7 @@ import (
 	fp "path/filepath"
 	"strings"
 
-	"github.com/docker/docker/pkg/mount"
+	"github.com/moby/moby/pkg/mount"
 	"github.com/pkg/errors"
 
 	"github.com/yuuki/droot/log"
