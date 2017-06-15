@@ -49,6 +49,10 @@ func (m *Mounter) MountSysProc() error {
 		return errors.Errorf("Failed to mount /proc: %s", err)
 	}
 	// mount --rbind /sys {{rootDir}}/sys
+	if err := osutil.MountIfNotMounted("/sys", fp.Join(m.rootDir, "/sys"), "none", "rbind"); err != nil {
+		return errors.Errorf("Failed to mount /sys: %s", err)
+	}
+	// mount --rslave /sys {{rootDir}}/sys
 	if err := osutil.MountIfNotMounted("/sys", fp.Join(m.rootDir, "/sys"), "none", "rslave"); err != nil {
 		return errors.Errorf("Failed to mount /sys: %s", err)
 	}
