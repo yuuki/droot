@@ -9,21 +9,20 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/pkg/errors"
-	group "github.com/yuuki/go-group"
 
 	"github.com/yuuki/droot/log"
 )
 
 func LookupGroup(id string) (int, error) {
-	var g *group.Group
+	var g *user.Group
 
 	if _, err := strconv.Atoi(id); err == nil {
-		g, err = group.LookupId(id)
+		g, err = user.LookupGroupId(id)
 		if err != nil {
 			return -1, err
 		}
 	} else {
-		g, err = group.Lookup(id)
+		g, err = user.LookupGroup(id)
 		if err != nil {
 			return -1, err
 		}

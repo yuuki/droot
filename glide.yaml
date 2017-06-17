@@ -19,7 +19,6 @@ import:
   - mock
 - package: github.com/urfave/cli
   version: ~1.19.1
-- package: github.com/yuuki/go-group
 - package: golang.org/x/sys
   subpackages:
   - unix

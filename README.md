@@ -49,7 +49,7 @@ $ aws s3 cp s3://drootexamples/app.tar.gz - | tar -xpfz - -C /tmp/app
 ```
 
 ```bash
-$ sudo droot run --cp --bind /var/log --root /var/containers/app -- command
+$ sudo droot run --cp --user appuser --group appgroup --bind /var/log --root /var/containers/app -- command
 ```
 
 ```bash

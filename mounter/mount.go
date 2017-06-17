@@ -52,6 +52,10 @@ func (m *Mounter) MountSysProc() error {
 	if err := osutil.MountIfNotMounted("/sys", fp.Join(m.rootDir, "/sys"), "none", "rbind"); err != nil {
 		return errors.Errorf("Failed to mount /sys: %s", err)
 	}
+	// mount --make-rslave /sys {{rootDir}}/sys
+	if err := osutil.ForceMount("/sys", fp.Join(m.rootDir, "/sys"), "none", "rslave"); err != nil {
+		return errors.Errorf("Failed to mount --make-rslave /sys: %s", err)
+	}
 
 	return nil
 }
