@@ -11,7 +11,7 @@ gen:
 	mockery -all -inpkg
 
 build:
-	go build -o $(BIN) ./cmd/droot/.../
+	CGO_ENABLED=1 go build -o $(BIN) ./cmd/droot/.../
 
 fmt:
 	gofmt -s -w $$(git ls | grep -e '\.go$$' | grep -v vendor)
