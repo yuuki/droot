@@ -37,8 +37,6 @@ imports:
   - mock
 - name: github.com/urfave/cli
   version: 0bdeddeeb0f650497d603c4ad7b20cfe685682f6
-- name: github.com/yuuki/go-group
-  version: 435643712a57277c84c6c347b5688f2ac7abae76
 - name: golang.org/x/net
   version: f09c4662a0bd6bd8943ac7b4931e185df9471da4
   subpackages:
