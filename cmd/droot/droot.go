@@ -35,7 +35,6 @@ var commandArgs = map[string]string{
 	"export": commands.CommandArgExport,
 	"run":    commands.CommandArgRun,
 	"umount": commands.CommandArgUmount,
-	"rm":     commands.CommandArgRm,
 }
 
 func setDebugOutputLevel() {
