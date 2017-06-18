@@ -9,11 +9,6 @@ fi
 
 ROOT=$(dirname $0)/..
 
-# gofmt
-gofmt -s -w .
-git add ./*.go
-git commit -m "gofmt" || true # ignore no changes error
-
 # gobump
 new_version=$(gobump "$1" -w -v cmd/droot | jq -r '.[]')
 git add ./*.go
