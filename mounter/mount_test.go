@@ -2,14 +2,16 @@ package mounter
 
 import (
 	"testing"
-
-	"github.com/stretchr/testify/assert"
 )
 
 func TestResolveRootDir(t *testing.T) {
 	_, err := ResolveRootDir("/path/to/notexist")
-	assert.Error(t, err)
+	if err == nil {
+		t.Error("should be error")
+	}
 
 	_, err = ResolveRootDir("../")
-	assert.NoError(t, err)
+	if err != nil {
+		t.Errorf("should not be error: %v", err)
+	}
 }

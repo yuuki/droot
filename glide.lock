@@ -1,78 +1,23 @@
-hash: fa3926e6412316febeb59002659ccd016234890bc736a898b553299f545608d0
-updated: 2017-06-18T20:30:13.294641888+09:00
+hash: 73f8aa5b6d2fa60d1d69f954aa3f7842fac00ad11e79e0c34dabaf3a48a1cada
+updated: 2017-06-19T00:28:40.006746575+09:00
 imports:
-- name: github.com/docker/distribution
-  version: 0700fa570d7bcc1b3e46ee127c4489fd25f4daa3
-  subpackages:
-  - digestset
-  - reference
 - name: github.com/docker/docker
   version: 89658bed64c2a8fe05a978e5b87dbec409d57a0f
   subpackages:
-  - api
-  - api/types
-  - api/types/blkiodev
-  - api/types/container
-  - api/types/events
-  - api/types/filters
-  - api/types/image
-  - api/types/mount
-  - api/types/network
-  - api/types/registry
-  - api/types/strslice
-  - api/types/swarm
-  - api/types/time
-  - api/types/versions
-  - api/types/volume
-  - client
   - pkg/fileutils
-  - pkg/ioutils
-  - pkg/longpath
   - pkg/mount
-  - pkg/system
-  - pkg/tlsconfig
-- name: github.com/docker/go-connections
-  version: e15c02316c12de00874640cd76311849de2aeed5
-  subpackages:
-  - nat
-  - sockets
-  - tlsconfig
-- name: github.com/docker/go-units
-  version: 0dadbb0345b35ec7ef35e228dabb8de89a65bf52
-- name: github.com/docker/libtrust
-  version: aabc10ec26b754e797f9028f4589c5b7bd90dc20
-- name: github.com/Microsoft/go-winio
-  version: fff283ad5116362ca252298cfc9b95828956d85d
-- name: github.com/opencontainers/go-digest
-  version: aa2ec055abd10d26d539eb630a92241b781ce4bc
 - name: github.com/pkg/errors
   version: 645ef00459ed84a119197bfb8d8205042c6df63d
-- name: github.com/Sirupsen/logrus
-  version: ba1b36c82c5e05c4f912a88eab0dcd91a171688f
-- name: github.com/stretchr/testify
-  version: 69483b4bd14f5845b5a1e55bca19e954e827f1d0
-  subpackages:
-  - assert
-  - mock
 - name: github.com/urfave/cli
   version: 0bdeddeeb0f650497d603c4ad7b20cfe685682f6
 - name: golang.org/x/net
   version: c427ad74c6d7a814201695e9ffde0c5d400a7674
   subpackages:
   - context
-  - context/ctxhttp
-  - proxy
 - name: golang.org/x/sys
   version: 9a7256cb28ed514b4e1e5f68959914c4c28a92e0
   subpackages:
   - unix
-  - windows
 testImports:
-- name: github.com/davecgh/go-spew
-  version: 6d212800a42e8ab5c146b8ace3490ee17e5225f9
-  subpackages:
-  - spew
-- name: github.com/pmezard/go-difflib
-  version: d8ed2627bdf02c080bf22230dbb337003b7aba2d
-  subpackages:
-  - difflib
+- name: github.com/kylelemons/godebug
+  version: ""
