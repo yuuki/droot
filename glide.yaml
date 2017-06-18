@@ -1,4 +1,12 @@
 package: github.com/yuuki/droot
+ignore:
+- github.com/Microsoft/go-winio
+- github.com/docker/go-connections
+- github.com/docker/go-units
+- github.com/docker/distribution
+- github.com/Sirupsen/logrus
+- github.com/opencontainers/go-digest
+- github.com/docker/libtrust
 import:
 - package: github.com/docker/docker
   version: 17.05.0-ce
