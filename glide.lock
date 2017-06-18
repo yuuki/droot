@@ -1,23 +1,48 @@
-hash: 73f8aa5b6d2fa60d1d69f954aa3f7842fac00ad11e79e0c34dabaf3a48a1cada
-updated: 2017-06-19T00:28:40.006746575+09:00
+hash: 9dc429c538cc43933eb72153affdbffb94b761b253bb769a645b1a18e62af94e
+updated: 2017-06-19T01:23:08.689454082+09:00
 imports:
 - name: github.com/docker/docker
   version: 89658bed64c2a8fe05a978e5b87dbec409d57a0f
   subpackages:
+  - api
+  - api/types
+  - api/types/blkiodev
+  - api/types/container
+  - api/types/events
+  - api/types/filters
+  - api/types/image
+  - api/types/mount
+  - api/types/network
+  - api/types/registry
+  - api/types/strslice
+  - api/types/swarm
+  - api/types/time
+  - api/types/versions
+  - api/types/volume
+  - client
   - pkg/fileutils
+  - pkg/ioutils
+  - pkg/longpath
   - pkg/mount
+  - pkg/system
+  - pkg/tlsconfig
 - name: github.com/pkg/errors
   version: 645ef00459ed84a119197bfb8d8205042c6df63d
 - name: github.com/urfave/cli
   version: 0bdeddeeb0f650497d603c4ad7b20cfe685682f6
 - name: golang.org/x/net
-  version: c427ad74c6d7a814201695e9ffde0c5d400a7674
+  version: 973f3f3bbd50e92b13faa6c53ec16f49b45e851c
   subpackages:
   - context
+  - context/ctxhttp
 - name: golang.org/x/sys
-  version: 9a7256cb28ed514b4e1e5f68959914c4c28a92e0
+  version: fb4cac33e3196ff7f507ab9b2d2a44b0142f5b5a
   subpackages:
   - unix
+  - windows
 testImports:
 - name: github.com/kylelemons/godebug
-  version: ""
+  version: a616ab194758ae0a11290d87ca46ee8c440117b0
+  subpackages:
+  - diff
+  - pretty

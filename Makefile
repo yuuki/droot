@@ -2,7 +2,7 @@ BIN = droot
 
 .PHONY: dep
 dep:
-	glide install
+	glide update
 	rm -fr vendor/github.com/docker/docker/vendor/golang.org/x/net
 
 .PHONY: test
