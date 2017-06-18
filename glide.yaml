@@ -10,9 +10,6 @@ ignore:
 import:
 - package: github.com/docker/docker
   version: 17.05.0-ce
-  subpackages:
-  - pkg/fileutils
-  - pkg/mount
 - package: github.com/urfave/cli
   version: ~1.19.1
 - package: golang.org/x/sys
