@@ -4,12 +4,12 @@ import (
 	"io/ioutil"
 	"os"
 	"testing"
-
-	"github.com/stretchr/testify/assert"
 )
 
 func TestExistsFile(t *testing.T) {
-	assert.False(t, ExistsFile("/paht/to/notexist"))
+	if ExistsFile("/path/to/notexist") != false {
+		t.Error("ExistsFile(\"/path/to/notexist\") should be false")
+	}
 
 	tmpDir := os.TempDir()
 	tmp, _ := ioutil.TempFile(tmpDir, "droot_test")
@@ -18,8 +18,12 @@ func TestExistsFile(t *testing.T) {
 		os.Remove(tmp.Name())
 	}()
 
-	assert.True(t, ExistsFile(tmp.Name()))
-	assert.False(t, ExistsFile(tmpDir))
+	if ExistsFile(tmp.Name()) != true {
+		t.Errorf("ExistsFile(\"%v\") should be true", tmp.Name())
+	}
+	if ExistsFile(tmpDir) != false {
+		t.Errorf("ExistsFile(\"%v\") should be false", tmpDir)
+	}
 }
 
 func TestIsSymlink(t *testing.T) {
@@ -30,15 +34,21 @@ func TestIsSymlink(t *testing.T) {
 		os.Remove(tmp.Name())
 	}()
 
-	assert.False(t, IsSymlink(tmp.Name()))
+	if IsSymlink(tmp.Name()) != false {
+		t.Errorf("IsSymlink(\"%v\") should be false", tmp.Name())
+	}
 
 	os.Symlink(tmp.Name(), tmpDir+"/symlink")
 
-	assert.True(t, IsSymlink(tmpDir+"/symlink"))
+	if IsSymlink(tmpDir+"/symlink") != true {
+		t.Errorf("IsSymlink(\"%v\") should be false", tmpDir+"/symlink")
+	}
 }
 
 func TestExistsDir(t *testing.T) {
-	assert.False(t, ExistsDir("/paht/to/notexist"))
+	if ExistsDir("/path/to/notexist") != false {
+		t.Error("ExistsDir(\"/path/to/notexist\") should be false")
+	}
 
 	tmpDir := os.TempDir()
 	tmp, _ := ioutil.TempFile(tmpDir, "droot_test")
@@ -47,13 +57,18 @@ func TestExistsDir(t *testing.T) {
 		os.Remove(tmp.Name())
 	}()
 
-	assert.True(t, ExistsDir(tmpDir))
-	assert.False(t, ExistsDir(tmp.Name()))
+	if ExistsDir(tmpDir) != true {
+		t.Errorf("ExistsDir(\"%v\") should be true", tmpDir)
+	}
+	if ExistsDir(tmp.Name()) != false {
+		t.Errorf("ExistsDir(\"%v\") should be false", tmp.Name())
+	}
 }
 
 func TestIsDirEmpty(t *testing.T) {
-	ok := IsDirEmpty("/paht/to/notexist")
-	assert.False(t, ok)
+	if IsDirEmpty("/path/to/notexist") != false {
+		t.Error("IsDirEmpty(\"/path/to/notexist\") should be false")
+	}
 
 	tmpDir := os.TempDir()
 	os.Mkdir(tmpDir+"/empty", 0755)
@@ -64,16 +79,23 @@ func TestIsDirEmpty(t *testing.T) {
 		os.RemoveAll(tmpDir + "/noempty")
 	}()
 
-	ok = IsDirEmpty(tmpDir + "/empty")
-	assert.True(t, ok)
-
-	ok = IsDirEmpty(tmpDir + "/noempty")
-	assert.False(t, ok)
+	if IsDirEmpty(tmpDir+"/empty") != true {
+		t.Errorf("IsDirEmpty(\"%v\") should be true", tmpDir+"/empty")
+	}
+	if IsDirEmpty(tmpDir+"/noempty") != false {
+		t.Errorf("IsDirEmpty(\"%v\") should be false", tmpDir+"/noempty")
+	}
 }
 
 func TestRunCmd(t *testing.T) {
-	assert.NoError(t, RunCmd("/bin/ls"))
-	assert.Error(t, RunCmd("/bin/hoge"))
+	err := RunCmd("/bin/ls")
+	if err != nil {
+		t.Errorf("should not be error: %v", err)
+	}
+	err = RunCmd("/bin/hoge")
+	if err == nil {
+		t.Error("should be error")
+	}
 }
 
 func TestSymlink(t *testing.T) {
@@ -84,9 +106,18 @@ func TestSymlink(t *testing.T) {
 		os.Remove(tmp.Name())
 	}()
 
-	assert.NoError(t, Symlink(tmp.Name(), tmp.Name()+"/symlink"))
-	assert.NoError(t, Symlink(tmp.Name(), tmp.Name()+"/symlink"), "Ignore already exist symlink file")
+	err := Symlink(tmp.Name(), tmp.Name()+"/symlink")
+	if err != nil {
+		t.Errorf("should not be error: %v", err)
+	}
+	err = Symlink(tmp.Name(), tmp.Name()+"/symlink")
+	if err != nil {
+		t.Errorf("should not be error: %v, Ignore already exist symlink file", err)
+	}
 	os.Create(tmpDir + "/droot_dummy")
-	assert.NoError(t, Symlink(tmp.Name(), tmpDir+"/droot_dummy"), "Ignore already exist file")
+	err = Symlink(tmp.Name(), tmpDir+"/droot_dummy")
+	if err != nil {
+		t.Errorf("should not be error: %v, Ignore already exist file", err)
+	}
 	os.Remove(tmp.Name() + "/symlink")
 }

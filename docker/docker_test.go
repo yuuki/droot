@@ -10,7 +10,6 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
-	"github.com/stretchr/testify/assert"
 	"golang.org/x/net/context" // docker/docker don't use 'context' as standard package.
 )
 
@@ -41,5 +40,16 @@ func TestExportImage(t *testing.T) {
 
 	time.Sleep(10 * time.Millisecond) // wait for finishing goroutine
 
-	assert.NoError(t, err)
+	if err != nil {
+		t.Errorf("should not be error: %v", err)
+	}
+
+	b := make([]byte, 10)
+	_, err = r.Read(b)
+	if err != nil {
+		panic(err)
+	}
+	if string(b) != "image body" {
+		t.Errorf("should read image: got %v, want %v", string(b), "image body")
+	}
 }
