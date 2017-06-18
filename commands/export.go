@@ -31,7 +31,7 @@ func doExport(c *cli.Context) error {
 		return errors.New("docker repository required")
 	}
 
-	docker, err := docker.NewClient()
+	docker, err := docker.New()
 	if err != nil {
 		return err
 	}

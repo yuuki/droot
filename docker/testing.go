@@ -6,7 +6,6 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
-	// docker/docker don't use 'context' as standard package.
 	"golang.org/x/net/context" // docker/docker don't use 'context' as standard package.
 )
 

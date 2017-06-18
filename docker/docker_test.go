@@ -1,36 +1,41 @@
 package docker
 
 import (
+	"io"
+	"io/ioutil"
+	"strings"
 	"testing"
 	"time"
 
-	godocker "github.com/fsouza/go-dockerclient"
+	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/network"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/mock"
+	"golang.org/x/net/context" // docker/docker don't use 'context' as standard package.
 )
 
 func TestExportImage(t *testing.T) {
-	mockDocker := new(mockDockerclient)
-
 	containerID := "container ID"
 
-	mockDocker.On("CreateContainer", mock.Anything).Return(&godocker.Container{
-		ID: containerID,
-	}, nil)
-	mockDocker.On("StartContainer", containerID, mock.Anything).Return(nil)
-	mockDocker.On("WaitContainer", containerID).Return(0, nil)
-	mockDocker.On("ExportContainer", mock.Anything).Return(nil).Run(func(args mock.Arguments) {
-		id := args.Get(0).(godocker.ExportContainerOptions).ID
-		assert.Equal(t, id, containerID)
-	})
-	mockDocker.On("RemoveContainer", mock.Anything).Return(nil).Run(func(args mock.Arguments) {
-		id := args.Get(0).(godocker.RemoveContainerOptions).ID
-		force := args.Get(0).(godocker.RemoveContainerOptions).Force
-		assert.Equal(t, id, containerID)
-		assert.Equal(t, force, true)
-	})
+	fakeClient := &fakeDocker{
+		FakeContainerCreate: func(ctx context.Context, config *container.Config, hostConfig *container.HostConfig, networkingConfig *network.NetworkingConfig, containerName string) (container.ContainerCreateCreatedBody, error) {
+			return container.ContainerCreateCreatedBody{ID: containerID}, nil
+		},
+		FakeContainerStart: func(ctx context.Context, containerID string, options types.ContainerStartOptions) error {
+			return nil
+		},
+		FakeContainerWait: func(ctx context.Context, containerID string) (int64, error) {
+			return int64(0), nil
+		},
+		FakeContainerExport: func(ctx context.Context, containerID string) (io.ReadCloser, error) {
+			return ioutil.NopCloser(strings.NewReader("image body")), nil
+		},
+		FakeContainerRemove: func(ctx context.Context, containerID string, options types.ContainerRemoveOptions) error {
+			return nil
+		},
+	}
 
-	client := &Client{docker: mockDocker}
+	client := &Client{docker: fakeClient}
 	r, err := client.ExportImage("aaaaaaaaaaaa")
 	defer r.Close()
 
