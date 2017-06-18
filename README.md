@@ -56,10 +56,6 @@ $ sudo droot run --cp --user appuser --group appgroup --bind /var/log --root /va
 $ sudo droot umount --root /var/containers/app
 ```
 
-```bash
-$ sudo droot rm --root /var/containers/app
-```
-
 ### How to set docker endpoint
 
 Droot push supports the environment variables same as docker-machine such as DOCKER_HOST, DOCKER_TLS_VERIFY, DOCKER_CERT_PATH.
