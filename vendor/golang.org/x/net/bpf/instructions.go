@@ -57,6 +57,9 @@ func (ri RawInstruction) Disassemble() Instruction {
 			}
 			return LoadScratch{Dst: reg, N: int(ri.K)}
 		case opAddrModeAbsolute:
+			if ri.K > extOffset+0xffffffff {
+				return LoadExtension{Num: Extension(-extOffset + ri.K)}
+			}
 			return LoadAbsolute{Size: sz, Off: ri.K}
 		case opAddrModeIndirect:
 			return LoadIndirect{Size: sz, Off: ri.K}
@@ -104,6 +107,14 @@ func (ri RawInstruction) Disassemble() Instruction {
 		case opJumpAlways:
 			return Jump{Skip: ri.K}
 		case opJumpEqual:
+			if ri.Jt == 0 {
+				return JumpIf{
+					Cond:      JumpNotEqual,
+					Val:       ri.K,
+					SkipTrue:  ri.Jf,
+					SkipFalse: 0,
+				}
+			}
 			return JumpIf{
 				Cond:      JumpEqual,
 				Val:       ri.K,
@@ -111,6 +122,14 @@ func (ri RawInstruction) Disassemble() Instruction {
 				SkipFalse: ri.Jf,
 			}
 		case opJumpGT:
+			if ri.Jt == 0 {
+				return JumpIf{
+					Cond:      JumpLessOrEqual,
+					Val:       ri.K,
+					SkipTrue:  ri.Jf,
+					SkipFalse: 0,
+				}
+			}
 			return JumpIf{
 				Cond:      JumpGreaterThan,
 				Val:       ri.K,
@@ -118,6 +137,14 @@ func (ri RawInstruction) Disassemble() Instruction {
 				SkipFalse: ri.Jf,
 			}
 		case opJumpGE:
+			if ri.Jt == 0 {
+				return JumpIf{
+					Cond:      JumpLessThan,
+					Val:       ri.K,
+					SkipTrue:  ri.Jf,
+					SkipFalse: 0,
+				}
+			}
 			return JumpIf{
 				Cond:      JumpGreaterOrEqual,
 				Val:       ri.K,
@@ -235,7 +262,7 @@ func (a LoadExtension) Assemble() (RawInstruction, error) {
 	if a.Num == ExtLen {
 		return assembleLoad(RegA, 4, opAddrModePacketLen, 0)
 	}
-	return assembleLoad(RegA, 4, opAddrModeAbsolute, uint32(-0x1000+a.Num))
+	return assembleLoad(RegA, 4, opAddrModeAbsolute, uint32(extOffset+a.Num))
 }
 
 // StoreScratch stores register Src into scratch[N].
