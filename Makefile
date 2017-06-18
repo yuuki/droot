@@ -2,13 +2,12 @@ BIN = droot
 
 all: clean build test
 
+dep:
+	glide install
+	rm -fr vendor/github.com/docker/docker/vendor/golang.org/x/net
+
 test:
 	go test -v $$(go list ./... | grep -v vendor)
-
-gen:
-	go get github.com/vektra/mockery/.../
-	go generate github.com/yuuki/droot/docker
-	mockery -all -inpkg
 
 build:
 	CGO_ENABLED=1 go build -o $(BIN) ./cmd/droot/.../

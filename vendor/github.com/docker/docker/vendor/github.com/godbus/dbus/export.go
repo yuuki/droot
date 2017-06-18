@@ -132,7 +132,7 @@ func (conn *Conn) handleCall(msg *Message) {
 			subpath := make(map[string]struct{})
 			var xml bytes.Buffer
 			xml.WriteString("<node>")
-			for h := range conn.handlers {
+			for h, _ := range conn.handlers {
 				p := string(path)
 				if p != "/" {
 					p += "/"
@@ -142,7 +142,7 @@ func (conn *Conn) handleCall(msg *Message) {
 					subpath[node_name] = struct{}{}
 				}
 			}
-			for s := range subpath {
+			for s, _ := range subpath {
 				xml.WriteString("\n\t<node name=\"" + s + "\"/>")
 			}
 			xml.WriteString("\n</node>")

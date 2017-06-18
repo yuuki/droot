@@ -3,71 +3,88 @@ package docker
 import (
 	"io"
 
-	godocker "github.com/fsouza/go-dockerclient"
+	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/client"
 	"github.com/pkg/errors"
+	"golang.org/x/net/context" // docker/docker don't use 'context' as standard package.
 
 	"github.com/yuuki/droot/environ"
 )
 
-type Client struct {
-	docker dockerclient
+type dockerAPI interface {
+	ContainerCreate(ctx context.Context, config *container.Config, hostConfig *container.HostConfig, networkingConfig *network.NetworkingConfig, containerName string) (container.ContainerCreateCreatedBody, error)
+	ContainerStart(ctx context.Context, containerID string, options types.ContainerStartOptions) error
+	ContainerWait(ctx context.Context, containerID string) (int64, error)
+	ContainerExport(ctx context.Context, containerID string) (io.ReadCloser, error)
+	ContainerRemove(ctx context.Context, containerID string, options types.ContainerRemoveOptions) error
 }
 
-func NewClient() (*Client, error) {
-	client, err := newDockerClient()
+type Client struct {
+	docker dockerAPI
+}
+
+func New() (*Client, error) {
+	cli, err := client.NewEnvClient()
 	if err != nil {
 		return nil, err
 	}
-	return &Client{
-		docker: client,
-	}, nil
+	if _, err := cli.Ping(context.Background()); err != nil {
+		return nil, err
+	}
+	return &Client{docker: cli}, nil
 }
 
 // Export a docker image into the archive of filesystem.
 // Save an environ of the docker image into `/.drootenv` to preserve it.
 func (c *Client) ExportImage(imageID string) (io.ReadCloser, error) {
-	container, err := c.docker.CreateContainer(godocker.CreateContainerOptions{
-		Config: &godocker.Config{
-			Image:      imageID,
-			Entrypoint: []string{"/bin/sh"}, // Clear the exising entrypoint
-			Cmd:        []string{"-c", "printenv", ">", environ.DROOT_ENV_FILE_PATH},
-		},
-	})
+	ctx := context.Background()
+
+	container, err := c.docker.ContainerCreate(ctx, &container.Config{
+		Image:      imageID,
+		Entrypoint: []string{"/bin/sh"}, // Clear the exising entrypoint
+		Cmd:        []string{"-c", "printenv", ">", environ.DROOT_ENV_FILE_PATH},
+	}, nil, nil, "")
 	if err != nil {
 		return nil, errors.Wrapf(err, "Failed to create container imageID:%s", imageID)
 	}
 
 	// start container because creating container does not run above `printenv > /.drootenv`.
-	if err := c.docker.StartContainer(container.ID, nil); err != nil {
-		c.docker.RemoveContainer(godocker.RemoveContainerOptions{
-			ID:    container.ID,
+	if err := c.docker.ContainerStart(ctx, container.ID, types.ContainerStartOptions{}); err != nil {
+		_ = c.docker.ContainerRemove(ctx, container.ID, types.ContainerRemoveOptions{
 			Force: true,
 		})
 		return nil, errors.Wrapf(err, "Failed to remove container containerID:%s", container.ID)
 	}
 
-	if _, err := c.docker.WaitContainer(container.ID); err != nil {
+	code, err := c.docker.ContainerWait(ctx, container.ID)
+	if err != nil {
 		return nil, errors.Wrapf(err, "Failed to wait container containerID:%s", container.ID)
+	}
+	if code != int64(0) {
+		return nil, errors.Errorf("ContainerWait status code is not 0, but %d containerID:%s", code, container.ID)
 	}
 
 	pReader, pWriter := io.Pipe()
 
 	go func() {
 		defer func() {
-			c.docker.RemoveContainer(godocker.RemoveContainerOptions{
-				ID:    container.ID,
+			_ = c.docker.ContainerRemove(ctx, container.ID, types.ContainerRemoveOptions{
 				Force: true,
 			})
 		}()
 
-		err := c.docker.ExportContainer(godocker.ExportContainerOptions{
-			ID:           container.ID,
-			OutputStream: pWriter,
-		})
+		body, err := c.docker.ContainerExport(ctx, container.ID)
 		if err != nil {
 			err = errors.Wrapf(err, "Failed to export container containerID:%s", container.ID)
 			pWriter.CloseWithError(err)
 		} else {
+			_, err := io.Copy(pWriter, body)
+			if err != nil {
+				err = errors.Wrapf(err, "Failed to copy from reader of exporting container containerID:%s", container.ID)
+				pWriter.CloseWithError(err)
+			}
 			pWriter.Close()
 		}
 	}()
