@@ -5,10 +5,6 @@ import:
   subpackages:
   - pkg/fileutils
   - pkg/mount
-- package: github.com/stretchr/testify
-  version: ~1.1.4
-  subpackages:
-  - mock
 - package: github.com/urfave/cli
   version: ~1.19.1
 - package: golang.org/x/sys
