@@ -8,8 +8,10 @@ import (
 	"github.com/pkg/errors"
 )
 
+// DROOT_ENV_FILE_PATH is the file path of list of environment variables for `droot run`.
 const DROOT_ENV_FILE_PATH = "/.drootenv"
 
+// GetEnvironFromEnvFile gets string slice of environment variables from the `filename`.
 func GetEnvironFromEnvFile(filename string) ([]string, error) {
 	f, err := os.Open(filename)
 	if err != nil {
@@ -33,7 +35,7 @@ func GetEnvironFromEnvFile(filename string) ([]string, error) {
 	return env, nil
 }
 
-// Merge env string array. `dst` and `src` must be KEY=VALUE format.
+// MergeEnviron merges the two of string slice including environment variables. `dst` and `src` must be KEY=VALUE format.
 // If the items of `dst` and `src` has the same KEY, those of `src` overrides those of `dst`.
 func MergeEnviron(dst []string, src []string) ([]string, error) {
 	for _, s := range src {

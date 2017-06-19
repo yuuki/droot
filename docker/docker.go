@@ -13,6 +13,7 @@ import (
 	"github.com/yuuki/droot/environ"
 )
 
+// dockerAPI is an interface for stub testing.
 type dockerAPI interface {
 	ContainerCreate(ctx context.Context, config *container.Config, hostConfig *container.HostConfig, networkingConfig *network.NetworkingConfig, containerName string) (container.ContainerCreateCreatedBody, error)
 	ContainerStart(ctx context.Context, containerID string, options types.ContainerStartOptions) error
@@ -21,10 +22,12 @@ type dockerAPI interface {
 	ContainerRemove(ctx context.Context, containerID string, options types.ContainerRemoveOptions) error
 }
 
+// Client represents a Docker API client.
 type Client struct {
 	docker dockerAPI
 }
 
+// New creates the Client instance.
 func New() (*Client, error) {
 	cli, err := client.NewEnvClient()
 	if err != nil {
@@ -36,7 +39,7 @@ func New() (*Client, error) {
 	return &Client{docker: cli}, nil
 }
 
-// Export a docker image into the archive of filesystem.
+// ExportImage exports a docker image into the archive of filesystem.
 // Save an environ of the docker image into `/.drootenv` to preserve it.
 func (c *Client) ExportImage(imageID string) (io.ReadCloser, error) {
 	ctx := context.Background()
