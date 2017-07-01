@@ -1,7 +1,7 @@
 droot  [![Latest Version](http://img.shields.io/github/release/yuuki/droot.svg?style=flat-square)](https://github.com/yuuki/droot/releases) [![Travis Build Status](https://travis-ci.org/yuuki/droot.svg?branch=master)](https://travis-ci.org/yuuki/droot) [![Go Report Card](https://goreportcard.com/badge/github.com/yuuki/droot)](https://goreportcard.com/report/github.com/yuuki/droot) [![License](http://img.shields.io/:license-mit-blue.svg)](http://doge.mit-license.org)
 =====
 
-Droot is a super-easy container to build, ship, run with chroot instead of docker run. It aims to simply escape dependency hell.
+Droot is A simple chroot-based application container engine to build, ship, run with chroot instead of docker run. Droot aims to simply escape dependency hell.
 
 ## Overview
 
@@ -13,11 +13,11 @@ Droot provides a simpler container runtime without annoying Linux Namespaces. Dr
 - Ship: Upload the archives to a storage (like Amazon S3), and Download archives from it.
 - Run: chroot(2), Linux capabilities(7), and a bind mount.
 
-![droot concept](http://cdn-ak.f.st-hatena.com/images/fotolife/y/y_uuki/20151129/20151129193210.png?1448793174)
+![droot architecture](documentation/images/architecture.png)
 
 ## Requirements
 
-- Docker (`droot push` only depends on it)
+- Docker (`droot export` only depends on it)
 - Linux (`droot run` and `droot umount` only supports it)
 
 ## Installation
