@@ -56,6 +56,15 @@ $ sudo droot run --cp --user appuser --group appgroup --bind /var/log --root /va
 $ sudo droot umount --root /var/containers/app
 ```
 
+### Integration with capze
+
+https://github.com/yuuki/capze
+
+```bash
+$ aws s3 cp s3://drootexamples/app.tar.gz - | tar xzf - -C /tmp/app
+$ capze --keep 5 /tmp/app /var/containers/app
+```
+
 ### How to set docker endpoint
 
 Droot push supports the environment variables same as docker-machine such as DOCKER_HOST, DOCKER_TLS_VERIFY, DOCKER_CERT_PATH.
