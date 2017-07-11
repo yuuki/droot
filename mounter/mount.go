@@ -44,8 +44,8 @@ func ResolveRootDir(dir string) (string, error) {
 }
 
 func (m *Mounter) MountSysProc() error {
-	// mount -t proc none {{rootDir}}/proc
-	if err := osutil.MountIfNotMounted("none", fp.Join(m.rootDir, "/proc"), "proc", ""); err != nil {
+	// mount -t proc proc {{rootDir}}/proc
+	if err := osutil.MountIfNotMounted("/proc", fp.Join(m.rootDir, "/proc"), "proc", ""); err != nil {
 		return errors.Errorf("Failed to mount /proc: %s", err)
 	}
 	// mount --rbind /sys {{rootDir}}/sys
