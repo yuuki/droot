@@ -34,13 +34,13 @@ func ResolveRootDir(dir string) (string, error) {
 	}
 
 	if osutil.IsSymlink(dir) {
-		dir, err = os.Readlink(dir)
+		dir, err = fp.EvalSymlinks(dir)
 		if err != nil {
 			return dir, err
 		}
 	}
 
-	return fp.Clean(dir), nil
+	return dir, nil
 }
 
 func (m *Mounter) MountSysProc() error {
