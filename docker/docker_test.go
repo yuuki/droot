@@ -17,6 +17,13 @@ func TestExportImage(t *testing.T) {
 	containerID := "container ID"
 
 	fakeClient := &fakeDocker{
+		FakeImageInspectWithRaw: func(ctx context.Context, imageID string) (types.ImageInspect, []byte, error) {
+			return types.ImageInspect{
+				ContainerConfig: &container.Config{
+					Env: []string{"PATH=/usr/bin:/sbin:/bin"},
+				},
+			}, []byte{}, nil
+		},
 		FakeContainerCreate: func(ctx context.Context, config *container.Config, hostConfig *container.HostConfig, networkingConfig *network.NetworkingConfig, containerName string) (container.ContainerCreateCreatedBody, error) {
 			return container.ContainerCreateCreatedBody{ID: containerID}, nil
 		},
