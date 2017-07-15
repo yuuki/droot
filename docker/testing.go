@@ -11,11 +11,16 @@ import (
 
 type fakeDocker struct {
 	dockerAPI
-	FakeContainerCreate func(ctx context.Context, config *container.Config, hostConfig *container.HostConfig, networkingConfig *network.NetworkingConfig, containerName string) (container.ContainerCreateCreatedBody, error)
-	FakeContainerStart  func(ctx context.Context, containerID string, options types.ContainerStartOptions) error
-	FakeContainerWait   func(ctx context.Context, containerID string) (int64, error)
-	FakeContainerExport func(ctx context.Context, containerID string) (io.ReadCloser, error)
-	FakeContainerRemove func(ctx context.Context, containerID string, options types.ContainerRemoveOptions) error
+	FakeImageInspectWithRaw func(ctx context.Context, imageID string) (types.ImageInspect, []byte, error)
+	FakeContainerCreate     func(ctx context.Context, config *container.Config, hostConfig *container.HostConfig, networkingConfig *network.NetworkingConfig, containerName string) (container.ContainerCreateCreatedBody, error)
+	FakeContainerStart      func(ctx context.Context, containerID string, options types.ContainerStartOptions) error
+	FakeContainerWait       func(ctx context.Context, containerID string) (int64, error)
+	FakeContainerExport     func(ctx context.Context, containerID string) (io.ReadCloser, error)
+	FakeContainerRemove     func(ctx context.Context, containerID string, options types.ContainerRemoveOptions) error
+}
+
+func (d *fakeDocker) ImageInspectWithRaw(ctx context.Context, imageID string) (types.ImageInspect, []byte, error) {
+	return d.FakeImageInspectWithRaw(ctx, imageID)
 }
 
 func (d *fakeDocker) ContainerRemove(ctx context.Context, containerID string, options types.ContainerRemoveOptions) error {

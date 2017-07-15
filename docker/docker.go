@@ -1,20 +1,22 @@
 package docker
 
 import (
+	"fmt"
 	"io"
+	"strings"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 	"github.com/pkg/errors"
-	"golang.org/x/net/context" // docker/docker don't use 'context' as standard package.
-
 	"github.com/yuuki/droot/environ"
+	"golang.org/x/net/context" // docker/docker don't use 'context' as standard package.
 )
 
 // dockerAPI is an interface for stub testing.
 type dockerAPI interface {
+	ImageInspectWithRaw(ctx context.Context, imageID string) (types.ImageInspect, []byte, error)
 	ContainerCreate(ctx context.Context, config *container.Config, hostConfig *container.HostConfig, networkingConfig *network.NetworkingConfig, containerName string) (container.ContainerCreateCreatedBody, error)
 	ContainerStart(ctx context.Context, containerID string, options types.ContainerStartOptions) error
 	ContainerWait(ctx context.Context, containerID string) (int64, error)
@@ -44,10 +46,17 @@ func New() (*Client, error) {
 func (c *Client) ExportImage(imageID string) (io.ReadCloser, error) {
 	ctx := context.Background()
 
+	image, _, err := c.docker.ImageInspectWithRaw(ctx, imageID)
+	if err != nil {
+		return nil, errors.Wrapf(err, "Failed to inspect image imageID:%s", imageID)
+	}
+
+	//Put drootenv file into the filesystem.
+	cmd := fmt.Sprintf("echo \"%s\" > %s", strings.Join(image.ContainerConfig.Env, "\n"), environ.DROOT_ENV_FILE_PATH)
 	container, err := c.docker.ContainerCreate(ctx, &container.Config{
 		Image:      imageID,
-		Entrypoint: []string{"/bin/sh"}, // Clear the exising entrypoint
-		Cmd:        []string{"-c", "printenv", ">", environ.DROOT_ENV_FILE_PATH},
+		Entrypoint: []string{""}, // Clear the exising entrypoint
+		Cmd:        []string{"/bin/sh", "-c", cmd},
 	}, nil, nil, "")
 	if err != nil {
 		return nil, errors.Wrapf(err, "Failed to create container imageID:%s", imageID)
