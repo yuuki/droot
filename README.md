@@ -33,8 +33,7 @@ $ brew install droot
 
 ### Build from source
 ```bash
- $ go get github.com/yuuki/droot
- $ go install github.com/yuuki/droot/cmd
+ $ go get github.com/yuuki/droot/cmd/droot
 ```
 
 ## Usage
