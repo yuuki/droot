@@ -55,6 +55,7 @@ func (c *Client) ExportImage(imageID string) (io.ReadCloser, error) {
 	cmd := fmt.Sprintf("echo \"%s\" > %s", strings.Join(image.ContainerConfig.Env, "\n"), environ.DROOT_ENV_FILE_PATH)
 	container, err := c.docker.ContainerCreate(ctx, &container.Config{
 		Image:      imageID,
+		User:       "root",       // Avoid permission denied error
 		Entrypoint: []string{""}, // Clear the exising entrypoint
 		Cmd:        []string{"/bin/sh", "-c", cmd},
 	}, nil, nil, "")
