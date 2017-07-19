@@ -67,7 +67,7 @@ $ capze --keep 5 /tmp/app /var/containers/app
 
 ### How to set docker endpoint
 
-Droot push supports the environment variables same as docker-machine such as DOCKER_HOST, DOCKER_TLS_VERIFY, DOCKER_CERT_PATH.
+Droot supports the environment variables same as docker-machine such as DOCKER_HOST, DOCKER_TLS_VERIFY, DOCKER_CERT_PATH.
 ex.
 ```
 DOCKER_TLS_VERIFY=1
