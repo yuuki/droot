@@ -5,9 +5,7 @@ Droot is A simple chroot-based application container engine to build, ship, run 
 
 ## Overview
 
-[Docker](https://www.docker.com) has a powerful concept about an application deployment process, that is Build, Ship, Run. But there are many cases that docker runtime is too complicated and beyond our current capabilities, especially on production.
-
-Droot provides a simpler container runtime without annoying Linux Namespaces. Droot depends on traditional Linux functions such as chroot(2), Linux capabilities(7) and a bind mount. `droot` helps you to chroot a container image built by `docker` and to import/export container images on Amazon S3.
+[Docker](https://www.docker.com) has a powerful concept about an application deployment process, that is Build, Ship, Run. But there are many cases that docker runtime is too complicated and beyond our current capabilities, especially on production. Then Droot provides a simpler container runtime without complicated stacks including linux namespaces and union filesystems like AUFS. It depends on simple Linux functions such as chroot(2), Linux capabilities(7) and a bind mount, and helps you to chroot a container image built by `docker` and to import/export container images on Amazon S3.
 
 - Build: Build archives by `docker build` and `docker export`
 - Ship: Upload the archives to a storage (like Amazon S3), and Download archives from it.
