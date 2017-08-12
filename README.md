@@ -71,6 +71,11 @@ DOCKER_HOST=tcp://192.168.x.x:2376
 DOCKER_CERT_PATH=/home/yuuki/.docker/machine/machines/dev
 ```
 
+## Presentations (Japanese)
+
+- [Dockerとchrootを組み合わせたシンプルなコンテナデプロイツール](http://blog.yuuk.io/entry/droot)
+- [Droot Internals](https://speakerdeck.com/yuukit/droot-internals)
+
 ## Development
 
 Droot uses a package using cgo, so it is necessary to build in Linux for a Linux binary.
