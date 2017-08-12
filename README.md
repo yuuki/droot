@@ -44,10 +44,9 @@ $ droot export dockerfiles/app | gzip -cq | aws s3 cp - s3://drootexamples/app.t
 ```
 
 ```bash
+$ mkdir -p /tmp/app /var/containers/app
 $ aws s3 cp s3://drootexamples/app.tar.gz - | tar -xpfz - -C /tmp/app
-```
-
-```bash
+$ mv -T /tmp/app /var/containers/app
 $ sudo droot run --cp --user appuser --group appgroup --bind /var/log --root /var/containers/app -- command
 ```
 
