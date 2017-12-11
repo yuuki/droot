@@ -20,7 +20,7 @@ import (
 var CommandArgRun = "--root ROOT_DIR [--user USER] [--group GROUP] [--bind SRC-PATH[:DEST-PATH]] [--robind SRC-PATH[:DEST-PATH]] [--no-dropcaps] -- COMMAND"
 var CommandRun = cli.Command{
 	Name:   "run",
-	Usage:  "Run an extracted docker image from s3",
+	Usage:  "Run command in container",
 	Action: fatalOnError(doRun),
 	Flags: []cli.Flag{
 		cli.StringFlag{Name: "root, r", Usage: "Root directory path for chrooting"},
