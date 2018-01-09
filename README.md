@@ -42,6 +42,7 @@ $ droot export dockerfiles/app | gzip -cq | aws s3 cp - s3://drootexamples/app.t
 ```
 
 ```bash
+$ sudo droot umount --root /var/containers/app # it is safe to umount before run if you use `--bind` option
 $ mkdir -p /tmp/app /var/containers/app
 $ aws s3 cp s3://drootexamples/app.tar.gz - | tar -xpzf - -C /tmp/app
 $ mv -T /tmp/app /var/containers/app
