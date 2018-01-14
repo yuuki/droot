@@ -145,6 +145,11 @@ func doRun(c *cli.Context) error {
 		}
 	}
 
+	// bind /dev/shm
+	if err := mnt.BindMount("/dev/shm", fp.Join(rootDir, "/dev/shm")); err != nil {
+		return err
+	}
+
 	// create symlinks
 	if err := osutil.Symlink("../run/lock", fp.Join(rootDir, "/var/lock")); err != nil {
 		return err
