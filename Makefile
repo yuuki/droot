@@ -1,10 +1,5 @@
 BIN = droot
 
-.PHONY: dep
-dep:
-	glide update
-	rm -fr vendor/github.com/docker/docker/vendor/golang.org/x/net
-
 .PHONY: test
 test: vet
 	go test -v $$(go list ./... | grep -v vendor)
