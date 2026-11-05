@@ -1,62 +1,123 @@
 package commands
 
 import (
+	"bufio"
+	"context"
+	"errors"
 	"io"
 	"os"
+	"path/filepath"
 
-	"github.com/pkg/errors"
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v3"
 
 	"github.com/yuuki/droot/docker"
+	"github.com/yuuki/droot/osutil"
 )
 
-var CommandArgExport = "-o OUTPUT DOCKER_REPOSITORY[:TAG]"
-var CommandExport = cli.Command{
-	Name:   "export",
-	Usage:  "Export a container's filesystem as a tar archive",
-	Action: fatalOnError(doExport),
-	Flags: []cli.Flag{
-		cli.StringFlag{Name: "o, output", Usage: "Write to a file, instead of STDOUT"},
-	},
+func exportCommand() *cli.Command {
+	return &cli.Command{
+		Name:      "export",
+		Usage:     "Export the file system of a Docker image as a tar archive",
+		ArgsUsage: "IMAGE[:TAG]",
+		Description: "Creates a temporary container from IMAGE (without starting it), streams its\n" +
+			"file system as a tar archive and removes the container. The image's\n" +
+			"environment variables are saved as /.drootenv in the archive so that\n" +
+			"'droot run' can restore them.\n\n" +
+			"The Docker daemon is selected like the docker CLI does, from DOCKER_HOST,\n" +
+			"DOCKER_TLS_VERIFY, DOCKER_CERT_PATH, DOCKER_CONTEXT or the current docker context.",
+		Flags: []cli.Flag{
+			&cli.StringFlag{
+				Name:    "output",
+				Aliases: []string{"o"},
+				Usage:   "write the archive to `FILE` instead of STDOUT (written atomically)",
+			},
+			&cli.StringFlag{
+				Name:  "platform",
+				Usage: "export the `PLATFORM` variant of a multi-platform image, e.g. linux/amd64",
+			},
+		},
+		Action: doExport,
+	}
 }
 
-func doExport(c *cli.Context) error {
-	if len(c.Args()) < 1 {
-		cli.ShowCommandHelp(c, "export")
-		return errors.New("docker repository required")
+func doExport(ctx context.Context, cmd *cli.Command) error {
+	setup(cmd)
+	if cmd.NArg() != 1 || cmd.Args().First() == "" {
+		return usageError(cmd, "exactly one image is required")
 	}
-	repository := c.Args().Get(0)
-	if repository == "" {
-		cli.ShowCommandHelp(c, "export")
-		return errors.New("docker repository required")
+	image := cmd.Args().First()
+	output := cmd.String("output")
+	toStdout := output == "" || output == "-"
+
+	if toStdout && osutil.IsTerminal(os.Stdout) {
+		return usageError(cmd, "refusing to write a tar archive to a terminal; use -o FILE or redirect stdout")
 	}
 
-	docker, err := docker.New()
+	client, err := docker.NewClientFromEnv()
 	if err != nil {
 		return err
 	}
-	imageReader, err := docker.ExportImage(repository)
-	if err != nil {
+	if err := client.Ping(ctx); err != nil {
 		return err
 	}
-	defer imageReader.Close()
+	opts := docker.ExportOptions{Platform: cmd.String("platform")}
+	export := func(w io.Writer) error {
+		return docker.ExportImage(ctx, client, image, w, opts)
+	}
 
-	if output := c.String("output"); output != "" {
-		file, err := os.Create(output)
+	if toStdout {
+		return writeBuffered(os.Stdout, export)
+	}
+	return writeFile(output, export)
+}
+
+func writeBuffered(w io.Writer, write func(io.Writer) error) error {
+	bw := bufio.NewWriterSize(w, 1<<20)
+	if err := write(bw); err != nil {
+		return err
+	}
+	return bw.Flush()
+}
+
+// writeFile writes to path atomically: the data goes to a temporary file in
+// the same directory, which is renamed to path only on success, so that a
+// failed or interrupted export never leaves a truncated archive behind.
+// Non-regular files such as /dev/stdout or named pipes are written directly.
+func writeFile(path string, write func(io.Writer) error) (err error) {
+	if fi, statErr := os.Stat(path); statErr == nil && !fi.Mode().IsRegular() {
+		if fi.IsDir() {
+			return errors.New(path + " is a directory")
+		}
+		f, err := os.OpenFile(path, os.O_WRONLY, 0)
 		if err != nil {
 			return err
 		}
-		defer file.Close()
-
-		if _, err := io.Copy(file, imageReader); err != nil {
-			return errors.Wrapf(err, "Failed to write to the file %s", output)
-		}
-
-	} else {
-		if _, err := io.Copy(os.Stdout, imageReader); err != nil {
-			return errors.Wrapf(err, "Failed to write into stdout")
-		}
+		defer f.Close()
+		return writeBuffered(f, write)
 	}
 
-	return nil
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tmp.Close()
+			_ = os.Remove(tmp.Name())
+		}
+	}()
+
+	if err := writeBuffered(tmp, write); err != nil {
+		return err
+	}
+	if err := tmp.Chmod(0o644); err != nil {
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), path)
 }

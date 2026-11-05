@@ -1,127 +1,148 @@
+// Package mounter manages the mounts droot sets up under a container root.
 package mounter
 
 import (
+	"bufio"
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
 	"os"
-	fp "path/filepath"
+	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
-
-	"github.com/docker/docker/pkg/fileutils"
-	"github.com/docker/docker/pkg/mount"
-	"github.com/pkg/errors"
-
-	"github.com/yuuki/droot/log"
-	"github.com/yuuki/droot/osutil"
 )
 
+// Mounter mounts and unmounts file systems under a container root directory.
 type Mounter struct {
 	rootDir string
 }
 
+// NewMounter returns a Mounter for rootDir, which must have been resolved with
+// ResolveRootDir.
 func NewMounter(rootDir string) *Mounter {
 	return &Mounter{rootDir: rootDir}
 }
 
+// RootDir returns the container root directory.
+func (m *Mounter) RootDir() string { return m.rootDir }
+
+// ResolveRootDir returns the absolute path of dir with all symlinks resolved,
+// which is how mount points appear in /proc/self/mountinfo. It refuses "/".
 func ResolveRootDir(dir string) (string, error) {
-	var err error
-
-	if !osutil.ExistsDir(dir) {
-		return dir, errors.Errorf("No such directory %s:", dir)
-	}
-
-	dir, err = fp.Abs(dir)
+	abs, err := filepath.Abs(dir)
 	if err != nil {
-		return dir, err
+		return "", err
 	}
-
-	if osutil.IsSymlink(dir) {
-		dir, err = fp.EvalSymlinks(dir)
-		if err != nil {
-			return dir, err
-		}
-	}
-
-	return dir, nil
-}
-
-func (m *Mounter) MountSysProc() error {
-	// mount -t proc proc {{rootDir}}/proc
-	if err := osutil.MountIfNotMounted("proc", fp.Join(m.rootDir, "/proc"), "proc", ""); err != nil {
-		return errors.Errorf("Failed to mount /proc: %s", err)
-	}
-	// mount --rbind /sys {{rootDir}}/sys
-	if err := osutil.MountIfNotMounted("/sys", fp.Join(m.rootDir, "/sys"), "none", "rbind"); err != nil {
-		return errors.Errorf("Failed to mount /sys: %s", err)
-	}
-	// mount --make-rslave /sys {{rootDir}}/sys
-	if err := osutil.ForceMount("", fp.Join(m.rootDir, "/sys"), "none", "rslave"); err != nil {
-		return errors.Errorf("Failed to mount --make-rslave /sys: %s", err)
-	}
-
-	return nil
-}
-
-func (m *Mounter) BindMount(hostDir, containerDir string) error {
-	containerDir = fp.Join(m.rootDir, containerDir)
-
-	if ok := osutil.IsDirEmpty(hostDir); ok {
-		if _, err := os.Create(fp.Join(hostDir, ".droot.keep")); err != nil {
-			return err
-		}
-	}
-
-	if err := fileutils.CreateIfNotExists(containerDir, true); err != nil { // mkdir -p
-		return err
-	}
-
-	if err := osutil.MountIfNotMounted(hostDir, containerDir, "none", "bind,rw"); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (m *Mounter) RoBindMount(hostDir, containerDir string) error {
-	if err := m.BindMount(hostDir, containerDir); err != nil {
-		return err
-	}
-
-	containerDir = fp.Join(m.rootDir, containerDir)
-
-	if err := osutil.ForceMount(hostDir, containerDir, "none", "remount,ro,bind"); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (m *Mounter) GetMountsRoot() ([]*mount.Info, error) {
-	mounts, err := mount.GetMounts()
+	resolved, err := filepath.EvalSymlinks(abs)
 	if err != nil {
-		return nil, err
-	}
-
-	targets := make([]*mount.Info, 0)
-	for _, mo := range mounts {
-		if strings.HasPrefix(mo.Mountpoint, m.rootDir) {
-			targets = append(targets, mo)
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", fmt.Errorf("no such directory: %s", dir)
 		}
+		return "", err
 	}
-
-	return targets, nil
+	fi, err := os.Stat(resolved)
+	if err != nil {
+		return "", err
+	}
+	if !fi.IsDir() {
+		return "", fmt.Errorf("not a directory: %s", dir)
+	}
+	if resolved == "/" {
+		return "", errors.New("refusing to use / as the container root directory")
+	}
+	return resolved, nil
 }
 
-func (m *Mounter) UmountRoot() error {
-	mounts, err := m.GetMountsRoot()
-	if err != nil {
-		return err
-	}
+// MountInfo is an entry of /proc/<pid>/mountinfo (see proc(5)).
+type MountInfo struct {
+	ID         int
+	Parent     int
+	Root       string
+	Mountpoint string
+	Options    string
+	FSType     string
+	Source     string
+}
 
-	for _, mo := range mounts {
-		if err := mount.Unmount(mo.Mountpoint); err != nil {
-			return err
+// ParseMountInfo parses the content of /proc/<pid>/mountinfo.
+func ParseMountInfo(r io.Reader) ([]MountInfo, error) {
+	var mounts []MountInfo
+	s := bufio.NewScanner(r)
+	s.Buffer(make([]byte, 0, 64*1024), 1<<20)
+	for s.Scan() {
+		line := s.Text()
+		if line == "" {
+			continue
 		}
-		log.Debug("umount:", mo.Mountpoint)
+		// 36 35 98:0 /mnt1 /mnt2 rw,noatime master:1 - ext3 /dev/root rw,errors=continue
+		pre, post, ok := strings.Cut(line, " - ")
+		if !ok {
+			return nil, fmt.Errorf("malformed mountinfo line: %q", line)
+		}
+		f := strings.Fields(pre)
+		g := strings.Fields(post)
+		if len(f) < 6 || len(g) < 2 {
+			return nil, fmt.Errorf("malformed mountinfo line: %q", line)
+		}
+		id, err1 := strconv.Atoi(f[0])
+		parent, err2 := strconv.Atoi(f[1])
+		if err1 != nil || err2 != nil {
+			return nil, fmt.Errorf("malformed mountinfo line: %q", line)
+		}
+		mounts = append(mounts, MountInfo{
+			ID:         id,
+			Parent:     parent,
+			Root:       unescape(f[3]),
+			Mountpoint: unescape(f[4]),
+			Options:    f[5],
+			FSType:     unescape(g[0]),
+			Source:     unescape(g[1]),
+		})
 	}
+	return mounts, s.Err()
+}
 
-	return nil
+// unescape decodes the octal escapes (\040 for a space, \011, \012, \134)
+// used by the kernel in mountinfo fields.
+func unescape(s string) string {
+	if !strings.Contains(s, `\`) {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' && i+3 < len(s) && isOctal(s[i+1]) && isOctal(s[i+2]) && isOctal(s[i+3]) {
+			n, _ := strconv.ParseUint(s[i+1:i+4], 8, 8)
+			b.WriteByte(byte(n))
+			i += 3
+			continue
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
+}
+
+func isOctal(c byte) bool { return c >= '0' && c <= '7' }
+
+// isUnder reports whether path is root itself or inside it. Unlike a plain
+// prefix match, /var/containers/app2 is not under /var/containers/app.
+func isUnder(root, path string) bool {
+	return path == root || strings.HasPrefix(path, root+"/")
+}
+
+// mountpointsUnder returns the mount points at or below root in the order
+// they must be unmounted: deepest first, and later mounts before earlier ones
+// on the same mount point.
+func mountpointsUnder(mounts []MountInfo, root string) []string {
+	var mps []string
+	for i := len(mounts) - 1; i >= 0; i-- {
+		if isUnder(root, mounts[i].Mountpoint) {
+			mps = append(mps, mounts[i].Mountpoint)
+		}
+	}
+	slices.SortStableFunc(mps, func(a, b string) int {
+		return strings.Count(b, "/") - strings.Count(a, "/")
+	})
+	return mps
 }
