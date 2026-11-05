@@ -156,7 +156,6 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
 - `droot umount --root /a/app` also unmounted `/a/app2/...`, mishandled mount
   points containing spaces, and missed mounts when the root path contained a
   symbolic link.
-- `--env` values containing commas are not split (urfave/cli v2+ default).
 - The test suite did not compile (`kylelemons/godebug` missing from `go.mod`)
   and CI used an end-of-life Go version.
 
