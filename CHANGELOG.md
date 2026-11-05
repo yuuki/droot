@@ -45,11 +45,20 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
   verifying the certificate* when only `DOCKER_CERT_PATH` was set, even with
   a `ca.pem`, which let a man in the middle serve a fake daemon and inject
   files into archives later run as root.
-- Release assets are built with GoReleaser and keep the names and layout of
-  0.7.7 (`droot_linux_amd64.tar.gz`, `droot_darwin_amd64.zip`, bare
-  `droot_linux_amd64`, ...), now also for arm64; a `checksums.txt` is added.
-- The CLI moved to urfave/cli v3: help output changed, and usage errors print
-  a short hint instead of the full help.
+- The CLI moved to urfave/cli v3: help output changed, and usage errors
+  (unknown commands, flags or help topics) print a short hint, with a
+  suggestion, instead of the full help, and exit with status 1.
+- The options of `droot run` must come before COMMAND: `droot run CMD --root
+  R`, which droot 0.7 accepted by moving the flags ahead, is now an error
+  (everything after COMMAND belongs to COMMAND).
+- Extra positional arguments of `droot export` and `droot umount` are errors
+  instead of being ignored.
+- `-D`/`--debug` is no longer detected anywhere on the command line: droot
+  0.7 also enabled its debug output when COMMAND had a `-D` argument. It may
+  now be given before or after the subcommand.
+- When both are given, `--debug` takes precedence over `DROOT_DEBUG` (in 0.7,
+  `DROOT_DEBUG=0` disabled `-D`).
+- `droot export -o -` writes to STDOUT; droot 0.7 created a file named `-`.
 
 ### Fixed
 
@@ -175,7 +184,9 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
 - `--debug` can be given after the subcommand.
 - Helpful error messages: missing images, a command whose ELF/script
   interpreter is missing in the container, writing an archive to a terminal.
-- linux/arm64 and darwin/arm64 binaries.
+- linux/arm64 and darwin/arm64 binaries and a `checksums.txt` in releases.
+  The assets keep the names and layout of 0.7.7 (`droot_linux_amd64.tar.gz`,
+  `droot_darwin_amd64.zip`, bare `droot_linux_amd64`, ...).
 - Documentation: architecture, security considerations, development guide,
   known issues and ideas.
 - CI on GitHub Actions (lint, unit tests as user and root on the minimum and
