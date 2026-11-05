@@ -69,9 +69,9 @@ func TestSetupDev(t *testing.T) {
 			t.Errorf("%s -> %q, %v; want -> %s", l.path, got, err, l.target)
 		}
 	}
-	for path, magic := range map[string]int64{"/dev/pts": unix.DEVPTS_SUPER_MAGIC, "/dev/shm": unix.TMPFS_MAGIC} {
+	for path, magic := range map[string]uint32{"/dev/pts": unix.DEVPTS_SUPER_MAGIC, "/dev/shm": unix.TMPFS_MAGIC} {
 		var st unix.Statfs_t
-		if err := unix.Statfs(filepath.Join(rootDir, path), &st); err != nil || int64(st.Type) != magic {
+		if err := unix.Statfs(filepath.Join(rootDir, path), &st); err != nil || uint32(st.Type) != magic {
 			t.Errorf("%s: file system %#x, %v; want %#x", path, st.Type, err, magic)
 		}
 	}

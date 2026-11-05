@@ -48,6 +48,18 @@ jobs:
       - name: Vet for macOS
         run: GOOS=darwin go vet ./...
 
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+      # The seed corpora (f.Add and testdata/fuzz) also run with the unit
+      # tests; this explores beyond them for a little while.
+      - name: Fuzz every target
+        run: make fuzz FUZZTIME=30s
+
   coverage:
     runs-on: ubuntu-latest
     steps:

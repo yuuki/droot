@@ -27,6 +27,17 @@ test-root: ## Run unit tests as root, including the ones that mount file systems
 integration-test: build ## Run end-to-end tests against the local Docker daemon (needs root)
 	$(SUDO) ./script/integration-test.sh ./$(BIN)
 
+FUZZTIME ?= 30s
+
+.PHONY: fuzz
+fuzz: ## Run every fuzz target for FUZZTIME (default 30s)
+	@set -e; for pkg in $$(go list ./...); do \
+		for f in $$(go test -list '^Fuzz' $$pkg | grep '^Fuzz' || true); do \
+			echo "== $$pkg $$f"; \
+			go test -run='^$$' -fuzz="^$$f\$$" -fuzztime=$(FUZZTIME) -fuzzminimizetime=5s $$pkg; \
+		done; \
+	done
+
 .PHONY: cover
 cover: ## Write a coverage report to coverage.out
 	go test -coverprofile=coverage.out ./...

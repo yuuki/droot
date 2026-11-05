@@ -329,11 +329,11 @@ func (rw *rewriter) rewrite(r io.Reader, w io.Writer) error {
 	zr := &zeroTail{r: r}
 	tr := tar.NewReader(zr)
 	tw := tar.NewWriter(w)
-	// Content of the dropped regular files, for hard links pointing at them.
-	dropped := map[string][]byte{}
-	// Entries dropped by rw.dropped, for hard links pointing at them.
-	excluded := map[string]bool{}
-	var droppedBytes int64
+	st := &rewriteState{
+		dropped:    map[string][]byte{},
+		droppedHdr: map[string]*tar.Header{},
+		excluded:   map[string]bool{},
+	}
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
@@ -345,51 +345,16 @@ func (rw *rewriter) rewrite(r io.Reader, w io.Writer) error {
 		if err != nil {
 			return fmt.Errorf("read exported archive: %w", err)
 		}
-		if isReplaced(hdr.Name) {
-			if hdr.Typeflag == tar.TypeReg {
-				droppedBytes += hdr.Size
-				if droppedBytes > maxDroppedBytes {
-					return fmt.Errorf("the image's own %s is too large", path.Clean("/"+hdr.Name))
-				}
-				b, err := io.ReadAll(tr)
-				if err != nil {
-					return fmt.Errorf("read archive entry %s: %w", hdr.Name, err)
-				}
-				dropped[path.Clean("/"+hdr.Name)] = b
-			}
-			continue
+		if err := rw.entry(hdr, tr, tw, st); err != nil {
+			return err
 		}
-		if rw.dropped(hdr) {
-			excluded[path.Clean("/"+hdr.Name)] = true
-			continue
+		// Consume the rest of the entry's data, so that only its padding
+		// and the end-of-archive marker count as trailing zeros: data
+		// ending with zeros must not hide a truncation.
+		if _, err := io.Copy(io.Discard, tr); err != nil { //nolint:gosec // G110: an uncompressed stream, not decompressed
+			return fmt.Errorf("read archive entry %s: %w", hdr.Name, err)
 		}
-		if hdr.Typeflag == tar.TypeLink && excluded[path.Clean("/"+hdr.Linkname)] {
-			log.Warnf("dropping %s too: it is a hard link to the excluded %s", path.Clean("/"+hdr.Name), path.Clean("/"+hdr.Linkname))
-			excluded[path.Clean("/"+hdr.Name)] = true
-			continue
-		}
-		rw.normalize(hdr)
-		if content, ok := dropped[path.Clean("/"+hdr.Linkname)]; ok && hdr.Typeflag == tar.TypeLink {
-			// The target of this hard link was dropped: keep the file
-			// as a regular file with the original content.
-			reg := *hdr
-			reg.Typeflag = tar.TypeReg
-			reg.Linkname = ""
-			reg.Size = int64(len(content))
-			if err := tw.WriteHeader(&reg); err != nil {
-				return fmt.Errorf("write archive entry %s: %w", hdr.Name, err)
-			}
-			if _, err := tw.Write(content); err != nil {
-				return fmt.Errorf("write archive entry %s: %w", hdr.Name, err)
-			}
-			continue
-		}
-		if err := tw.WriteHeader(hdr); err != nil {
-			return fmt.Errorf("write archive entry %s: %w", hdr.Name, err)
-		}
-		if _, err := io.Copy(tw, tr); err != nil { //nolint:gosec // G110: an uncompressed stream copied as is, not decompressed
-			return fmt.Errorf("write archive entry %s: %w", hdr.Name, err)
-		}
+		zr.zeros = 0
 	}
 
 	modTime := rw.modTime
@@ -423,6 +388,94 @@ func (rw *rewriter) rewrite(r io.Reader, w io.Writer) error {
 	}
 	if err := tw.Close(); err != nil {
 		return fmt.Errorf("finish archive: %w", err)
+	}
+	return nil
+}
+
+// rewriteState is what rewrite remembers about the entries it dropped.
+type rewriteState struct {
+	// Content of the dropped regular files, and headers of the other
+	// dropped entries, for hard links pointing at them.
+	dropped      map[string][]byte
+	droppedHdr   map[string]*tar.Header
+	droppedBytes int64
+	// Entries dropped by rw.dropped, for hard links pointing at them.
+	excluded map[string]bool
+}
+
+// entry copies one entry of the archive, or drops it.
+func (rw *rewriter) entry(hdr *tar.Header, tr *tar.Reader, tw *tar.Writer, st *rewriteState) error {
+	name := path.Clean("/" + hdr.Name)
+	if isReplaced(hdr.Name) {
+		switch hdr.Typeflag {
+		case tar.TypeReg:
+			st.droppedBytes += hdr.Size
+			if st.droppedBytes > maxDroppedBytes {
+				return fmt.Errorf("the image's own %s is too large", name)
+			}
+			b, err := io.ReadAll(tr)
+			if err != nil {
+				return fmt.Errorf("read archive entry %s: %w", hdr.Name, err)
+			}
+			st.dropped[name] = b
+			delete(st.droppedHdr, name)
+		case tar.TypeDir:
+			delete(st.dropped, name)
+			delete(st.droppedHdr, name)
+		default: // symlink, hard link, FIFO, device
+			st.droppedHdr[name] = hdr
+			delete(st.dropped, name)
+		}
+		return nil
+	}
+	if rw.dropped(hdr) {
+		st.excluded[name] = true
+		return nil
+	}
+	target := path.Clean("/" + hdr.Linkname)
+	if hdr.Typeflag == tar.TypeLink && st.excluded[target] {
+		log.Warnf("dropping %s too: it is a hard link to the excluded %s", name, target)
+		st.excluded[name] = true
+		return nil
+	}
+	rw.normalize(hdr)
+	if hdr.Typeflag == tar.TypeLink {
+		if content, ok := st.dropped[target]; ok {
+			// The target of this hard link was dropped: keep the file
+			// as a regular file with the original content.
+			reg := *hdr
+			reg.Name = strings.TrimSuffix(reg.Name, "/")
+			reg.Typeflag = tar.TypeReg
+			reg.Linkname = ""
+			reg.Size = int64(len(content))
+			reg.Format = tar.FormatUnknown // the writer picks one that fits
+			if err := tw.WriteHeader(&reg); err != nil {
+				return fmt.Errorf("write archive entry %s: %w", hdr.Name, err)
+			}
+			if _, err := tw.Write(content); err != nil {
+				return fmt.Errorf("write archive entry %s: %w", hdr.Name, err)
+			}
+			return nil
+		}
+		if orig, ok := st.droppedHdr[target]; ok {
+			// Another name of a dropped symlink, FIFO or device: write
+			// a copy of it under this name.
+			cp := *orig
+			cp.Name = strings.TrimSuffix(hdr.Name, "/")
+			// The name may need another format than the original's.
+			cp.Format = tar.FormatUnknown
+			rw.normalize(&cp)
+			if err := tw.WriteHeader(&cp); err != nil {
+				return fmt.Errorf("write archive entry %s: %w", hdr.Name, err)
+			}
+			return nil
+		}
+	}
+	if err := tw.WriteHeader(hdr); err != nil {
+		return fmt.Errorf("write archive entry %s: %w", hdr.Name, err)
+	}
+	if _, err := io.Copy(tw, tr); err != nil {
+		return fmt.Errorf("write archive entry %s: %w", hdr.Name, err)
 	}
 	return nil
 }

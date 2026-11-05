@@ -102,7 +102,7 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
   second Ctrl-C terminates droot immediately.
 - `droot export` accepted a stream cut between two tar entries, or an empty
   `204` answer, as a complete archive. It now requires `200 OK` and the
-  end-of-archive marker. Redirects are no longer followed (they could resend
+  end-of-archive marker, which file data ending with zeros can no longer fake. Redirects are no longer followed (they could resend
   requests and the TLS client certificate elsewhere).
 - Docker Engine API version handling: a daemon not advertising its version
   got 1.24, which current Docker rejects (now 1.41); `DOCKER_API_VERSION`
@@ -116,7 +116,12 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
 - Images that already contained a `/.drootenv` hard-linked from another
   file, or a `/.drootenv` directory, produced archives that `tar` failed to
   extract. Entries below such a directory are dropped too, and hard links
-  to dropped files become regular files with the original content.
+  to dropped files become regular files with the original content (or
+  copies of a dropped symlink, FIFO or device).
+- `/proc/self/mountinfo` was split on any white space: mount points
+  containing characters the kernel does not escape (`\v`, `\f`, `\r`,
+  non-breaking spaces, ...) and mounts with an empty source were misread by
+  `droot umount`. Found by fuzzing.
 - The environment saved in `/.drootenv` is read from the image's
   configuration instead of the temporary container's, to which Podman adds
   `container=podman` (and reorders the variables).

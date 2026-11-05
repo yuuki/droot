@@ -20,6 +20,7 @@ $ make build              # static ./droot (CGO_ENABLED=0), version from git des
 $ make test               # unit tests with the race detector; root-only tests are skipped
 $ make test-root          # unit tests as root, including real mounts and mknod (sudo)
 $ make integration-test   # build and run script/integration-test.sh against Docker (sudo)
+$ make fuzz               # run every fuzz target for FUZZTIME (default 30s)
 $ make lint               # golangci-lint (configuration in .golangci.yml)
 $ make fmt                # gofmt + goimports
 $ make vet                # go vet for Linux and macOS
@@ -39,6 +40,7 @@ separately when `GOTOOLCHAIN=local` is enforced (e.g. a distribution's Go).
 |---|---|---|
 | Unit | `*_test.go` | nothing; Docker is faked (`internal/docker/export_test.go`) or served by `httptest` (`internal/docker/client_test.go`) |
 | Privileged unit | `internal/mounter/mount_linux_test.go`, `internal/osutil/sys_linux_test.go` | root on Linux; skipped otherwise |
+| Fuzz | `fuzz_test.go` of `environ` (`/.drootenv` parsing), `mounter` (`/proc/self/mountinfo` parsing), `osutil` (path resolution of `osutil.Root`, Linux) and `docker` (rewriting of the exported archive) | nothing; `make fuzz` explores for `FUZZTIME` (30s) per target, their seeds and `testdata/fuzz` run with the unit tests |
 | End-to-end | `script/integration-test.sh` | root, Docker (or Podman: `DOCKER=podman DOCKER_HOST=unix:///run/podman/podman.sock`), network access to pull `alpine` and `busybox` |
 
 The privileged mount tests create their scratch directory with
@@ -47,7 +49,7 @@ so that a failing unmount can never make the cleanup delete files through a
 bind mount.
 
 CI (`.github/workflows/ci.yml`) runs on every push and pull request:
-golangci-lint; the unit tests with the minimum and the latest supported Go
+golangci-lint; `make fuzz`; the unit tests with the minimum and the latest supported Go
 versions (unprivileged and as root); a coverage report (as root, shown in the
 job summary and uploaded as the `coverage` artifact); the end-to-end tests on
 amd64 and arm64 runners against Docker, and on amd64 against Podman's

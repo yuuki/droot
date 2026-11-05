@@ -10,11 +10,6 @@ import (
 	"time"
 )
 
-// rewriteArchive rewrites r with the default options and the given files.
-func rewriteArchive(r io.Reader, w io.Writer, files []extraFile) error {
-	return (&rewriter{files: files, modTime: time.Now().Truncate(time.Second)}).rewrite(r, w)
-}
-
 func TestExcluded(t *testing.T) {
 	patterns := []string{"/usr/share/doc", "*.pyc", "var/cache/apk/*", "/etc/ssl/certs/[a-c]*"}
 	for name, want := range map[string]bool{

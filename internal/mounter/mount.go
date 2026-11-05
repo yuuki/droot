@@ -145,12 +145,17 @@ func ParseMountInfo(r io.Reader) ([]MountInfo, error) {
 			continue
 		}
 		// 36 35 98:0 /mnt1 /mnt2 rw,noatime master:1 - ext3 /dev/root rw,errors=continue
+		//
+		// Fields are separated by single spaces: the kernel escapes
+		// space, tab, newline and backslash in paths, but not other
+		// white space (\v, \f, \r, NBSP, ...), and a field may be empty
+		// (the source of `mount -t tmpfs "" /mnt`).
 		pre, post, ok := strings.Cut(line, " - ")
 		if !ok {
 			return nil, fmt.Errorf("malformed mountinfo line: %q", line)
 		}
-		f := strings.Fields(pre)
-		g := strings.Fields(post)
+		f := strings.Split(pre, " ")
+		g := strings.Split(post, " ")
 		if len(f) < 6 || len(g) < 2 {
 			return nil, fmt.Errorf("malformed mountinfo line: %q", line)
 		}

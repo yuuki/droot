@@ -304,7 +304,7 @@ func (m *Mounter) ProtectKernelFS() error {
 
 // kernelFSRoot opens the mount on path in the container, which must be of
 // the file system with the given magic number.
-func (m *Mounter) kernelFSRoot(path string, magic int64) (*os.File, error) {
+func (m *Mounter) kernelFSRoot(path string, magic uint32) (*os.File, error) {
 	f, err := m.root.OpenNoFollow(path)
 	if err != nil {
 		return nil, err
@@ -314,7 +314,7 @@ func (m *Mounter) kernelFSRoot(path string, magic int64) (*os.File, error) {
 		_ = f.Close()
 		return nil, &fs.PathError{Op: "statfs", Path: f.Name(), Err: err}
 	}
-	if int64(st.Type) != magic {
+	if uint32(st.Type) != magic { // Type is int32 or int64 depending on the architecture
 		_ = f.Close()
 		return nil, fmt.Errorf("%s is not the expected file system (type %#x)", f.Name(), st.Type)
 	}
