@@ -27,6 +27,12 @@ $ make cross              # build for every released platform
 $ make snapshot           # build release archives into dist/ without publishing
 ```
 
+`make lint`, `make fmt` and `make snapshot` run pinned versions of
+golangci-lint and GoReleaser with `go run`. These tools may require a newer
+Go than droot itself (GoReleaser v2.20.0 needs Go 1.27.3): keep the default
+`GOTOOLCHAIN=auto` so that the go command downloads it, or install the tools
+separately when `GOTOOLCHAIN=local` is enforced (e.g. a distribution's Go).
+
 ## Tests
 
 | Level | Where | Needs |
