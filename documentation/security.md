@@ -54,6 +54,8 @@ running on the host with a different root directory.
   `/proc/self/fd/N`, ...). Symlinks in an image cannot make droot mount on or
   write to host paths, even if a process of a running container swaps
   directories for symlinks while droot works.
+- The mounts droot makes are slave mounts: nothing mounted inside the
+  container propagates back to the host's directories.
 - Device nodes are only created on the container's own file system and are
   owned by root; a bind mount of the host's `/dev` is left untouched.
 - Mount targets are never the root directory itself and are never resolved

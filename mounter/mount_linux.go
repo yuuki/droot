@@ -118,16 +118,21 @@ func mount(source, target, fstype string, flags uintptr, data string) error {
 
 // mountOn mounts on the target unless something is already mounted there
 // and returns a descriptor of the (new or existing) mount.
+//
+// The mount is made a slave mount: a bind mount of a directory living on a
+// shared mount (the default for / on systemd hosts) would otherwise join the
+// host's peer group, and the mounts made under it in the container (e.g. a
+// read-only bind inside a read-write one) would propagate back to the host's
+// directory — without the read-only flag, which does not propagate.
 func mountOn(t *osutil.MountTarget, source, fstype string, flags uintptr) (*os.File, error) {
 	mounted, err := isMountRoot(t.ParentFd(), int(t.File.Fd()))
 	if err != nil {
 		return nil, err
 	}
-	if mounted {
-		return t.Reopen()
-	}
-	if err := mount(source, osutil.FdPath(int(t.File.Fd())), fstype, flags, ""); err != nil {
-		return nil, fmt.Errorf("mount %s on %s: %w", source, t.File.Name(), err)
+	if !mounted {
+		if err := mount(source, osutil.FdPath(int(t.File.Fd())), fstype, flags, ""); err != nil {
+			return nil, fmt.Errorf("mount %s on %s: %w", source, t.File.Name(), err)
+		}
 	}
 	f, err := t.Reopen()
 	if err != nil {
@@ -136,6 +141,14 @@ func mountOn(t *osutil.MountTarget, source, fstype string, flags uintptr) (*os.F
 	if ok, err := isMountRoot(t.ParentFd(), int(f.Fd())); err != nil || !ok {
 		_ = f.Close()
 		return nil, fmt.Errorf("mount on %s did not take effect (raced?)", t.File.Name())
+	}
+	propagation := uintptr(unix.MS_SLAVE)
+	if flags&unix.MS_REC != 0 {
+		propagation |= unix.MS_REC
+	}
+	if err := mount("", osutil.FdPath(int(f.Fd())), "", propagation, ""); err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("make %s a slave mount: %w", t.File.Name(), err)
 	}
 	return f, nil
 }
@@ -193,16 +206,11 @@ func (m *Mounter) MountSysProc() error {
 		return err
 	}
 	defer sys.Close()
-	s, err := mountOn(sys, "/sys", "", unix.MS_BIND|unix.MS_REC)
+	s, err := mountOn(sys, "/sys", "", unix.MS_BIND|unix.MS_REC) // made an rslave mount
 	if err != nil {
 		return err
 	}
-	defer s.Close()
-	// Do not propagate mount events from the container back to the host.
-	if err := mount("", osutil.FdPath(int(s.Fd())), "", unix.MS_SLAVE|unix.MS_REC, ""); err != nil {
-		return fmt.Errorf("make %s an rslave mount: %w", s.Name(), err)
-	}
-	return nil
+	return s.Close()
 }
 
 // BindMount bind mounts hostPath (a directory or a file) on containerPath

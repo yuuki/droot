@@ -69,6 +69,11 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
   container, `droot run` chmodded the host's `/dev/null`, `/dev/zero`, ...
   and chowned them to `--user`, which could then break the host with
   `chmod 000 /dev/null`.
+- Bind mounts of directories living on a shared mount (the default for `/` on
+  systemd hosts) joined the host's peer group, so a mount made under them in
+  the container — such as `--robind SECRET:/app/secrets` inside
+  `--bind H:/app` — propagated back to `H/secrets` on the host, read-write.
+  The mounts droot makes are now slave mounts.
 - A bind mount target resolving to the root itself (e.g. an image symlink
   `/data -> /` with `--bind H:/data`) mounted the host directory over the
   whole container, and targets resolving through `/proc` or `/sys` created

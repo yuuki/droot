@@ -218,6 +218,57 @@ func TestBindMountRefusesDangerousTargets(t *testing.T) {
 	}
 }
 
+func TestBindMountsDoNotPropagateToTheHost(t *testing.T) {
+	dir := privilegedDir(t)
+	shared := filepath.Join(dir, "shared")
+	root := filepath.Join(dir, "app")
+	secret := filepath.Join(dir, "secret")
+	for _, d := range []string{shared, root, secret} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The source lives on a shared mount, like / on systemd hosts.
+	if err := unix.Mount("tmpfs", shared, "tmpfs", 0, "size=1m"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = unix.Unmount(shared, unix.MNT_DETACH) })
+	if err := unix.Mount("", shared, "", unix.MS_SHARED, ""); err != nil {
+		t.Fatal(err)
+	}
+	hostApp := filepath.Join(shared, "app")
+	if err := os.Mkdir(hostApp, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	r, err := osutil.OpenRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	m := NewMounter(r)
+	t.Cleanup(func() { _, _ = m.UmountAll() })
+	if err := m.BindMount(hostApp, "/app", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.BindMount(secret, "/app/secrets", true); err != nil {
+		t.Fatal(err)
+	}
+
+	if ok, _ := isMountpoint(filepath.Join(hostApp, "secrets")); ok {
+		t.Fatal("the nested read-only mount propagated back to the host's source directory")
+	}
+	mounts, err := readMountInfo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mi := range mounts {
+		if mi.Mountpoint == filepath.Join(root, "app") && strings.Contains(mi.Optional, "shared:") {
+			t.Fatalf("the bind mount joined the host's peer group: %q", mi.Optional)
+		}
+	}
+}
+
 func TestRemountReadonlyKeepsFlags(t *testing.T) {
 	dir := privilegedDir(t)
 	src := filepath.Join(dir, "src")

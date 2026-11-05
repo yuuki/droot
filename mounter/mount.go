@@ -66,6 +66,7 @@ type MountInfo struct {
 	Root       string
 	Mountpoint string
 	Options    string
+	Optional   string // optional fields such as "shared:1 master:2"
 	FSType     string
 	Source     string
 }
@@ -101,6 +102,7 @@ func ParseMountInfo(r io.Reader) ([]MountInfo, error) {
 			Root:       unescape(f[3]),
 			Mountpoint: unescape(f[4]),
 			Options:    f[5],
+			Optional:   strings.Join(f[6:], " "),
 			FSType:     unescape(g[0]),
 			Source:     unescape(g[1]),
 		})
