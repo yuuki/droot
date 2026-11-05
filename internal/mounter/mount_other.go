@@ -13,6 +13,9 @@ import (
 // ErrOtherMount is returned by the check of OnMountOf.
 var ErrOtherMount = errors.New("is on another mount than the container root")
 
+// NotKernelFS is only supported on Linux.
+func NotKernelFS(int) error { return unsupported() }
+
 // OnMountOf is only supported on Linux.
 func OnMountOf(int) osutil.DirCheck { return func(int) error { return unsupported() } }
 
@@ -36,7 +39,7 @@ func (m *Mounter) MountFS(string, string, FSOptions, osutil.DirCheck) error { re
 func (m *Mounter) Rollback() error { return unsupported() }
 
 // Release is only supported on Linux.
-func (m *Mounter) Release() {}
+func (m *Mounter) Release() int { return 0 }
 
 // BindRootOnItself is only supported on Linux.
 func BindRootOnItself(string) error { return unsupported() }

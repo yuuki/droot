@@ -220,19 +220,27 @@ func TestCompletionScripts(t *testing.T) {
 		return
 	}
 	script := `source "$1"
+cd "$2"
 t() { COMP_WORDS=("$@"); COMP_CWORD=$((${#COMP_WORDS[@]}-1)); COMPREPLY=(); _app; echo "${COMPREPLY[*]}"; }
 t app ''
 t app mixed --n
 t app exec -n x --
 t app exec -n x ls --n
+t app exec ls -n ''
 t app completion ''
 t app help m
 `
-	out, err := exec.Command("bash", "-c", script, "bash", filepath.Join(dir, "completion.bash")).CombinedOutput()
+	// After COMMAND, "-n" belongs to COMMAND: its argument is completed as
+	// a file, not as the value of droot's -n.
+	cwd := t.TempDir()
+	if err := os.WriteFile(filepath.Join(cwd, "only-file"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("bash", "-c", script, "bash", filepath.Join(dir, "completion.bash"), cwd).CombinedOutput()
 	if err != nil {
 		t.Fatalf("bash: %v\n%s", err, out)
 	}
-	want := "mixed exec completion help\n--name\n--name --item --flag --fl --debug --help\n\nbash zsh fish\nmixed\n"
+	want := "mixed exec completion help\n--name\n--name --item --flag --fl --debug --help\n\nonly-file\nbash zsh fish\nmixed\n"
 	if string(out) != want {
 		t.Errorf("bash completion:\ngot  %q\nwant %q", out, want)
 	}

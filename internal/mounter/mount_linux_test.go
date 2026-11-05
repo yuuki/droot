@@ -654,3 +654,186 @@ func TestRollback(t *testing.T) {
 		t.Fatalf("a second rollback has nothing to do: %v", err)
 	}
 }
+
+func TestProtectKernelFSDetails(t *testing.T) {
+	for _, fallback := range []bool{false, true} {
+		t.Run(map[bool]string{false: "mount_setattr", true: "fallback"}[fallback], func(t *testing.T) {
+			if fallback {
+				orig := mountSetattr
+				mountSetattr = func(int, string, uint, *unix.MountAttr) error { return unix.ENOSYS }
+				t.Cleanup(func() { mountSetattr = orig })
+			}
+			dir := privilegedDir(t)
+			r, err := osutil.OpenRoot(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer r.Close()
+			m := NewMounter(r)
+			defer func() {
+				if _, err := m.UmountAll(); err != nil {
+					t.Error(err)
+				}
+			}()
+			if err := m.MountSysProc(); err != nil {
+				t.Fatal(err)
+			}
+			// A mount below a masked directory, like efivarfs below
+			// /sys/firmware: the masks of the first run hide it from the
+			// second one.
+			var hidden string
+			if entries, err := os.ReadDir(filepath.Join(dir, "sys", "firmware")); err == nil {
+				for _, e := range entries {
+					if e.IsDir() {
+						hidden = filepath.Join(dir, "sys", "firmware", e.Name())
+						break
+					}
+				}
+			}
+			if hidden != "" {
+				if err := unix.Mount("tmpfs", hidden, "tmpfs", 0, "size=4k"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// A writable /dev/null mask, as left by a run killed between
+			// the bind and the remount.
+			keys := filepath.Join(dir, "proc", "keys")
+			if _, err := os.Stat(keys); err == nil {
+				if err := unix.Mount("/dev/null", keys, "", unix.MS_BIND, ""); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for range 2 {
+				if err := m.ProtectKernelFS(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := os.Stat(keys); err == nil && !isReadOnly(t, keys) {
+				t.Error("an existing writable mask of /proc/keys must be made read-only")
+			}
+			if hidden != "" && !isReadOnly(t, filepath.Join(dir, "sys")) {
+				t.Error("/sys must be read-only")
+			}
+
+			// /sys is private: mounts made on the host later do not
+			// appear in it.
+			mounts, err := readMountInfo()
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, mi := range mounts {
+				if isUnder(filepath.Join(dir, "sys"), mi.Mountpoint) && (strings.Contains(mi.Optional, "master:") || strings.Contains(mi.Optional, "shared:")) {
+					t.Errorf("%s propagates mounts: %q", mi.Mountpoint, mi.Optional)
+				}
+			}
+			// debugfs and the like are masked when mounted.
+			for _, p := range []string{"kernel/debug", "kernel/tracing", "kernel/security"} {
+				if entries, err := os.ReadDir(filepath.Join(dir, "sys", p)); err == nil && len(entries) != 0 {
+					t.Errorf("/sys/%s must be masked, got %d entries", p, len(entries))
+				}
+			}
+		})
+	}
+}
+
+// TestBindMountReplaceAndRollback checks that refreshing the bind of a file
+// replaced on the host survives the rollback of a failed run, and that an
+// up-to-date bind is not refreshed at all.
+func TestBindMountReplaceAndRollback(t *testing.T) {
+	dir := privilegedDir(t)
+	host := filepath.Join(dir, "hosts")
+	if err := os.WriteFile(host, []byte("old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(dir, "root")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r, err := osutil.OpenRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	target := filepath.Join(root, "etc", "hosts")
+	t.Cleanup(func() {
+		for range 3 {
+			_ = unix.Unmount(target, unix.MNT_DETACH)
+		}
+	})
+	opts := BindOptions{ReadOnly: true, Replace: true}
+	first := NewMounter(r)
+	if err := first.BindMount(host, "/etc/hosts", opts); err != nil {
+		t.Fatal(err)
+	}
+	first.Release()
+	mountIDOf := func() int {
+		t.Helper()
+		f, err := os.Open(target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		id, err := mountID(int(f.Fd()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	before := mountIDOf()
+
+	// Unchanged host file: the mount is kept as is.
+	m := NewMounter(r)
+	if err := m.BindMount(host, "/etc/hosts", opts); err != nil {
+		t.Fatal(err)
+	}
+	if mountIDOf() != before {
+		t.Error("an up-to-date bind must not be replaced")
+	}
+
+	// Replaced host file: refreshed, and kept after a rollback.
+	tmp := host + ".new"
+	if err := os.WriteFile(tmp, []byte("new\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(tmp, host); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.BindMount(host, "/etc/hosts", opts); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(target); err != nil || string(b) != "new\n" {
+		t.Fatalf("after the rollback: %q, %v; want the refreshed bind", b, err)
+	}
+}
+
+func TestNotKernelFSGuardsCopies(t *testing.T) {
+	dir := privilegedDir(t)
+	r, err := osutil.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	m := NewMounter(r)
+	defer func() { _, _ = m.UmountAll() }()
+	if err := m.MountSysProc(); err != nil {
+		t.Fatal(err)
+	}
+	// An image whose /etc points into the kernel's file systems.
+	if err := os.Symlink("/proc/sys/kernel", filepath.Join(dir, "etc")); err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(t.TempDir(), "hosts")
+	if err := os.WriteFile(src, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err = r.CopyFileIn(src, "/etc/hosts", NotKernelFS)
+	if err == nil || !strings.Contains(err.Error(), "refusing") {
+		t.Fatalf("copying through /proc must be refused, got %v", err)
+	}
+	if err := r.SymlinkIfMissing("x", "/etc/link", NotKernelFS); err == nil || !strings.Contains(err.Error(), "refusing") {
+		t.Fatalf("a symlink through /proc must be refused, got %v", err)
+	}
+}

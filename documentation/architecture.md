@@ -165,8 +165,11 @@ setuid bits are preserved.
    `execve(2)` uses the calling thread's attributes, and the namespaces of
    `--unshare` are the thread's. Without the lock, the Go scheduler may run
    the `exec` on another thread than the one that dropped the capabilities.
-   Before mounting, droot also takes an exclusive `flock(2)` on the root
-   directory (released at the exec: the descriptor is close-on-exec), and
+   Before mounting, droot also takes an exclusive `flock(2)` on
+   `/run/droot/DEV-INODE.lock`, named after the root directory (a lock on
+   the directory itself could be held forever by any process able to open
+   it, including the container's), released at the exec (the descriptor is
+   close-on-exec), and
    with `--unshare` moves the thread to a new mount namespace whose mounts
    are slaves of the host's. Every mount droot makes is remembered by
    descriptor: if anything fails before the exec, they are detached again,

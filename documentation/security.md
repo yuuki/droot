@@ -69,11 +69,13 @@ running on the host with a different root directory.
   through kernel pseudo file systems (procfs, sysfs, cgroupfs, tracefs, ...),
   where creating a directory changes the host's kernel state.
 - Like Docker, sensitive files of `/proc` and `/sys` (`/proc/kcore`,
-  `/proc/keys`, `/proc/timer_list`, `/sys/firmware`, ...) are masked with a
-  read-only bind mount of `/dev/null` or an empty read-only tmpfs,
+  `/proc/keys`, `/proc/timer_list`, `/sys/firmware`, and the debugfs,
+  tracefs and securityfs mounted below the host's `/sys`, ...) are masked
+  with a read-only bind mount of `/dev/null` or an empty read-only tmpfs,
   `/proc/sys`, `/proc/sysrq-trigger`, `/proc/irq`, `/proc/bus` and
-  `/proc/fs` are read-only, and so is `/sys` with every mount below it
-  (unless `--no-mask`). These mounts only hold because `CAP_SYS_ADMIN` is
+  `/proc/fs` are read-only, and so is `/sys` with every mount below it; the
+  bind mount of `/sys` is private, so mounts made on the host later (a cgroup
+  hierarchy, fusectl, ...) do not appear in it (unless `--no-mask`). These mounts only hold because `CAP_SYS_ADMIN` is
   dropped: `--cap-add SYS_ADMIN` or `--no-dropcaps` let root undo them.
 - `CAP_DAC_READ_SEARCH` is dropped: with `open_by_handle_at(2)` it allows
   reading any file of the host and escaping the chroot (the "shocker" exploit).

@@ -138,6 +138,13 @@ func (m *Mounter) mountOn(t *osutil.MountTarget, source, fstype string, flags ui
 	if err != nil {
 		return nil, err
 	}
+	if mounted && replace && sameFile(int(target.Fd()), source) {
+		replace = false // already the current source: nothing to refresh
+	}
+	// A replaced mount is not tracked for Rollback: the previous one is
+	// gone, and a failed run must not leave a container still running
+	// from a previous run without it.
+	replaced := mounted && replace
 	for i := 0; mounted && replace; i++ {
 		if i == maxUmountRounds {
 			return nil, fmt.Errorf("mounts keep appearing on %s", t.File.Name())
@@ -175,7 +182,7 @@ func (m *Mounter) mountOn(t *osutil.MountTarget, source, fstype string, flags ui
 		_ = f.Close()
 		return nil, fmt.Errorf("mount on %s did not take effect (raced?)", t.File.Name())
 	}
-	if !mounted {
+	if !mounted && !replaced {
 		m.track(f)
 	}
 	propagation := uintptr(unix.MS_SLAVE)
@@ -187,6 +194,15 @@ func (m *Mounter) mountOn(t *osutil.MountTarget, source, fstype string, flags ui
 		return nil, fmt.Errorf("make %s a slave mount: %w", t.File.Name(), err)
 	}
 	return f, nil
+}
+
+// sameFile reports whether the file open as fd is the file at path.
+func sameFile(fd int, path string) bool {
+	var a, b unix.Stat_t
+	if unix.Fstat(fd, &a) != nil || unix.Stat(path, &b) != nil {
+		return false
+	}
+	return a.Dev == b.Dev && a.Ino == b.Ino
 }
 
 // kernelFS are the pseudo file systems found under /proc and /sys. Mount
@@ -211,8 +227,9 @@ var kernelFS = map[uint32]string{
 	0x65735543:               "fusectl",
 }
 
-// notKernelFS is an osutil.DirCheck refusing directories of kernelFS.
-func notKernelFS(fd int) error {
+// NotKernelFS is an osutil.DirCheck refusing directories of the kernel's
+// pseudo file systems (procfs, sysfs, cgroupfs, ...).
+func NotKernelFS(fd int) error {
 	var st unix.Statfs_t
 	if err := unix.Statfs(osutil.FdPath(fd), &st); err != nil {
 		return err
@@ -226,7 +243,7 @@ func notKernelFS(fd int) error {
 // MountSysProc mounts procfs on /proc and recursively bind mounts the host's
 // /sys on /sys as a slave mount. Existing mounts are reused.
 func (m *Mounter) MountSysProc() error {
-	proc, err := m.root.OpenMountTarget("/proc", true, notKernelFS)
+	proc, err := m.root.OpenMountTarget("/proc", true, NotKernelFS)
 	if err != nil {
 		return err
 	}
@@ -237,7 +254,7 @@ func (m *Mounter) MountSysProc() error {
 	}
 	_ = p.Close()
 
-	sys, err := m.root.OpenMountTarget("/sys", true, notKernelFS)
+	sys, err := m.root.OpenMountTarget("/sys", true, NotKernelFS)
 	if err != nil {
 		return err
 	}
@@ -256,16 +273,19 @@ var maskedPaths = []string{
 	"/proc/acpi", "/proc/asound", "/proc/interrupts", "/proc/kcore", "/proc/keys",
 	"/proc/latency_stats", "/proc/sched_debug", "/proc/scsi", "/proc/timer_list",
 	"/proc/timer_stats", "/sys/devices/virtual/powercap", "/sys/firmware",
+	// Mounted below the host's /sys, unlike in Docker's fresh sysfs.
+	"/sys/kernel/debug", "/sys/kernel/security", "/sys/kernel/tracing",
 }
 
 // readonlyPaths of /proc are made read-only, like Docker does. /sys is
 // read-only as a whole.
 var readonlyPaths = []string{"/proc/bus", "/proc/fs", "/proc/irq", "/proc/sys", "/proc/sysrq-trigger"}
 
-// ProtectKernelFS masks the sensitive paths of /proc and /sys, makes the
-// writable parts of /proc that change the kernel's configuration read-only,
-// and makes /sys read-only, recursively. It must be called after
-// MountSysProc. It is idempotent.
+// ProtectKernelFS makes /sys read-only, recursively, and a private mount
+// (so that no mount made on the host later appears in it, writable), masks
+// the sensitive paths of /proc and /sys, and makes the writable parts of
+// /proc that change the kernel's configuration read-only. It must be
+// called after MountSysProc. It is idempotent.
 //
 // The masks only hold as long as COMMAND cannot unmount them, i.e. without
 // CAP_SYS_ADMIN, which droot drops by default.
@@ -280,6 +300,15 @@ func (m *Mounter) ProtectKernelFS() error {
 		return err
 	}
 	defer sys.Close()
+
+	// Before masking, which hides some mounts below /sys from the
+	// fallback of remountReadonlyRecursive.
+	if err := mount("", osutil.FdPath(int(sys.Fd())), "", unix.MS_PRIVATE|unix.MS_REC, ""); err != nil {
+		return fmt.Errorf("make /sys a private mount: %w", err)
+	}
+	if err := m.remountReadonlyRecursive(sys); err != nil {
+		return err
+	}
 
 	base := func(p string) (*os.File, string) {
 		if rel, ok := strings.CutPrefix(p, "/proc/"); ok {
@@ -299,7 +328,7 @@ func (m *Mounter) ProtectKernelFS() error {
 			return fmt.Errorf("make %s read-only: %w", p, err)
 		}
 	}
-	return m.remountReadonlyRecursive(sys)
+	return nil
 }
 
 // kernelFSRoot opens the mount on path in the container, which must be of
@@ -365,15 +394,40 @@ func (m *Mounter) maskPath(base *os.File, rel, display string) error {
 	}
 	defer unix.Close(parent)
 	defer unix.Close(fd)
-	if mounted, err := isMountRoot(parent, fd); err != nil || mounted {
-		return err // masked by a previous run
-	}
 	var st unix.Stat_t
 	if err := unix.Fstat(fd, &st); err != nil {
 		return err
 	}
+	isDir := st.Mode&unix.S_IFMT == unix.S_IFDIR
+	mounted, err := isMountRoot(parent, fd)
+	if err != nil {
+		return err
+	}
+	if mounted {
+		// Masked by a previous run? Something else may be mounted
+		// there, e.g. debugfs on /sys/kernel/debug: then mask it.
+		var sfs unix.Statfs_t
+		if err := unix.Fstatfs(fd, &sfs); err != nil {
+			return err
+		}
+		readonly := uint64(sfs.Flags)&unix.ST_RDONLY != 0
+		switch {
+		case isDir && uint32(sfs.Type) == unix.TMPFS_MAGIC && readonly:
+			return nil
+		case !isDir && st.Mode&unix.S_IFMT == unix.S_IFCHR && st.Rdev == unix.Mkdev(1, 3):
+			// /dev/null, possibly left writable by a run killed
+			// between the bind and the remount.
+			dup, err := unix.FcntlInt(uintptr(fd), unix.F_DUPFD_CLOEXEC, 0)
+			if err != nil {
+				return err
+			}
+			f := os.NewFile(uintptr(dup), display)
+			defer f.Close()
+			return remountReadonly(f)
+		}
+	}
 	ro := uintptr(unix.MS_RDONLY | unix.MS_NOSUID | unix.MS_NODEV | unix.MS_NOEXEC)
-	if st.Mode&unix.S_IFMT == unix.S_IFDIR {
+	if isDir {
 		if err := mount("tmpfs", osutil.FdPath(fd), "tmpfs", ro, "size=4k,mode=0555"); err != nil {
 			return err
 		}
@@ -475,12 +529,15 @@ func (m *Mounter) Rollback() error {
 	return errors.Join(errs...)
 }
 
-// Release forgets the mounts made so far: they are kept.
-func (m *Mounter) Release() {
+// Release forgets the mounts made so far, which are kept, and returns how
+// many there were.
+func (m *Mounter) Release() int {
+	n := len(m.made)
 	for _, f := range m.made {
 		_ = f.Close()
 	}
 	m.made = nil
+	return n
 }
 
 // BindMount bind mounts hostPath (a directory or a file) on containerPath
@@ -494,14 +551,16 @@ func (m *Mounter) BindMount(hostPath, containerPath string, opts BindOptions) er
 
 	if fi.IsDir() && osutil.IsDirEmpty(hostPath) {
 		// Best effort: the source may be read-only.
-		if f, err := os.OpenFile(filepath.Join(hostPath, keepFile), os.O_CREATE|os.O_RDONLY, 0o644); err != nil {
+		// O_EXCL|O_NOFOLLOW: a symlink planted there by a container
+		// must not make droot create a file elsewhere on the host.
+		if f, err := os.OpenFile(filepath.Join(hostPath, keepFile), os.O_CREATE|os.O_EXCL|os.O_RDONLY|unix.O_NOFOLLOW, 0o644); err != nil {
 			log.Debugf("cannot create %s in %s: %v", keepFile, hostPath, err)
 		} else {
 			_ = f.Close()
 		}
 	}
 
-	t, err := m.root.OpenMountTarget(containerPath, fi.IsDir(), notKernelFS)
+	t, err := m.root.OpenMountTarget(containerPath, fi.IsDir(), NotKernelFS)
 	if err != nil {
 		return err
 	}
@@ -535,7 +594,7 @@ func (m *Mounter) MountFS(fstype, containerPath string, opts FSOptions, check os
 				return err
 			}
 		}
-		return notKernelFS(fd)
+		return NotKernelFS(fd)
 	}
 	t, err := m.root.OpenMountTarget(containerPath, true, both)
 	if err != nil {
@@ -594,16 +653,21 @@ func (m *Mounter) remountReadonlyRecursive(mnt *os.File) error {
 	}
 	for _, mi := range descendants(mounts, top) {
 		f, err := m.root.OpenNoFollow(strings.TrimPrefix(mi.Mountpoint, m.rootDir))
+		if errors.Is(err, unix.ENOENT) {
+			// Hidden by another mount (e.g. a mask of a previous run):
+			// COMMAND cannot reach it either.
+			log.Debugf("not making %s read-only: hidden by another mount", mi.Mountpoint)
+			continue
+		}
 		if err != nil {
 			return fmt.Errorf("make %s read-only: %w", mi.Mountpoint, err)
 		}
-		id, err := mountID(int(f.Fd()))
-		if err == nil && id != mi.ID {
-			err = fmt.Errorf("mount %d is not reachable there (found mount %d)", mi.ID, id)
+		if id, err := mountID(int(f.Fd())); err == nil && id != mi.ID {
+			log.Debugf("not making %s read-only: hidden by mount %d", mi.Mountpoint, id)
+			_ = f.Close()
+			continue
 		}
-		if err == nil {
-			err = remountReadonly(f)
-		}
+		err = remountReadonly(f)
 		_ = f.Close()
 		if err != nil {
 			return fmt.Errorf("make %s read-only: %w", mi.Mountpoint, err)

@@ -182,6 +182,8 @@ func TestUsageErrors(t *testing.T) {
 		{"status"},                         // no --root
 		{"status", "--root", "/tmp", "x"},  // stray argument
 		{"run", "--root", "/tmp", "--hostname", "", "true"},
+		{"run", "--root", "/tmp", "--user", "", "true"},
+		{"run", "--root", "/tmp", "--group=", "true"},
 	} {
 		app := NewApp("test")
 		app.Stdout = io.Discard
@@ -520,5 +522,24 @@ func TestBoundingSet(t *testing.T) {
 	}
 	if len(keepCaps) != 6 {
 		t.Error("boundingSet must not modify keepCaps")
+	}
+}
+
+func TestPrintable(t *testing.T) {
+	for in, want := range map[string]string{
+		"/usr/bin/app --port 80": "/usr/bin/app --port 80",
+		"日本語 ok":                 "日本語 ok",
+		"\x1b]0;pwned\x07":       `\x1b]0;pwned\x07`,
+		"a\tb\nc":                `a\x09b\x0ac`,
+		"bad\xff":                `bad\xff`,
+		" ":                      `\xa0`,
+	} {
+		if got := printable(in); got != want {
+			t.Errorf("printable(%q) = %q, want %q", in, got, want)
+		}
+	}
+	// A right-to-left override, which would reorder what follows.
+	if got, want := printable(string(rune(0x202e))+"evil"), "\\u202eevil"; got != want {
+		t.Errorf("printable(RLO) = %q, want %q", got, want)
 	}
 }

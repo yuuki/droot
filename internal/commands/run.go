@@ -228,6 +228,13 @@ func doRun(ctx context.Context, cmd *cli.Invocation) (err error) {
 	if cmd.String("root") == "" {
 		return cmd.UsageError("--root is required")
 	}
+	// An empty --user, e.g. from an unset variable in a unit file, must not
+	// silently run COMMAND as root instead of the image's USER.
+	for _, name := range []string{"user", "group"} {
+		if cmd.IsSet(name) && cmd.String(name) == "" {
+			return cmd.UsageError("--%s must not be empty", name)
+		}
+	}
 	if cmd.IsSet("hostname") && (cmd.String("hostname") == "" || len(cmd.String("hostname")) > 64) {
 		return cmd.UsageError("--hostname must have 1 to 64 characters")
 	}
@@ -335,7 +342,7 @@ func doRun(ctx context.Context, cmd *cli.Invocation) (err error) {
 	// Serialize the setup of concurrent runs on the same root (they would
 	// race on the --cp copies and on the creation of mount points and
 	// devices). The lock is released at the exec.
-	unlock, err := osutil.LockDir(ctx, rootDir, func() {
+	unlock, err := osutil.LockRoot(ctx, rootDir, func() {
 		log.Infof("waiting for another droot working on %s", rootDir)
 	})
 	if err != nil {
@@ -354,10 +361,12 @@ func doRun(ctx context.Context, cmd *cli.Invocation) (err error) {
 		}
 		// The descriptor of the root refers to a mount of the host's
 		// namespace, where this thread can no longer mount.
-		_ = root.Close()
-		if root, err = osutil.OpenRoot(rootDir); err != nil {
+		reopened, err := osutil.OpenRoot(rootDir)
+		if err != nil {
 			return err
 		}
+		_ = root.Close()
+		root = reopened
 	}
 	if cmd.Bool("unshare-ipc") {
 		if err := osutil.UnshareIPCNamespace(); err != nil {
@@ -427,12 +436,17 @@ func doRun(ctx context.Context, cmd *cli.Invocation) (err error) {
 
 	mnt := mounter.NewMounter(root)
 	// If anything fails before COMMAND is executed, remove the mounts made
-	// so far (mounts of a previous run that were reused are kept).
+	// so far (mounts of a previous run that were reused are kept). Once
+	// droot has switched to an unprivileged user, it no longer can.
+	released := 0
 	defer func() {
-		if err != nil {
-			if rbErr := mnt.Rollback(); rbErr != nil {
-				log.Warnf("could not remove the mounts made before the failure (use 'droot umount'): %v", rbErr)
-			}
+		if err == nil {
+			return
+		}
+		if released > 0 {
+			log.Warnf("%d mount(s) made for COMMAND are left in place: remove them with 'droot umount --root %s'", released, rootDir)
+		} else if rbErr := mnt.Rollback(); rbErr != nil {
+			log.Warnf("could not remove the mounts made before the failure (use 'droot umount'): %v", rbErr)
 		}
 	}()
 	if err := ctx.Err(); err != nil {
@@ -499,6 +513,7 @@ func doRun(ctx context.Context, cmd *cli.Invocation) (err error) {
 	}
 
 	return execInRoot(ctx, rootDir, argv, env, cred, execOptions{
+		beforeSwitch:    func() { released = mnt.Release() },
 		workdir:         workdir,
 		dropCaps:        !cmd.Bool("no-dropcaps"),
 		keepCaps:        keep,
@@ -568,7 +583,8 @@ func isBindOptions(s string) bool {
 
 func copyHostFiles(root *osutil.Root, files []string) error {
 	for _, f := range files {
-		if err := root.CopyFileIn(f, f); err != nil {
+		// Never write through a symlink of the image into /proc or /sys.
+		if err := root.CopyFileIn(f, f, mounter.NotKernelFS); err != nil {
 			return fmt.Errorf("copy %s into the container: %w", f, err)
 		}
 		log.Debugf("copied %s into %s", f, root.Path())
@@ -584,7 +600,7 @@ func linkVarLock(root *osutil.Root) {
 		return
 	}
 	_ = varDir.Close()
-	if err := root.SymlinkIfMissing("../run/lock", "/var/lock"); err != nil {
+	if err := root.SymlinkIfMissing("../run/lock", "/var/lock", mounter.NotKernelFS); err != nil {
 		log.Debugf("cannot create /var/lock: %v", err)
 	}
 }
@@ -669,6 +685,9 @@ func defaultEnv(env []string, cred *identity.Credential) []string {
 }
 
 type execOptions struct {
+	// beforeSwitch is called right before switching to an unprivileged
+	// user, after which droot cannot unmount anything.
+	beforeSwitch    func()
 	workdir         string
 	dropCaps        bool
 	keepCaps        map[uintptr]bool
@@ -689,11 +708,20 @@ func execInRoot(ctx context.Context, rootDir string, argv, env []string, cred *i
 	if err := os.Chdir(opts.workdir); err != nil {
 		return fmt.Errorf("working directory: %w", err)
 	}
-	// Fail on a missing COMMAND while droot is still privileged, so that
-	// the mounts it made can be removed. It is looked up again below with
-	// the credentials of COMMAND.
+	// Fail on a COMMAND that is missing, or that the user cannot execute,
+	// while droot is still privileged, so that the mounts it made can be
+	// removed. It is looked up again below with the credentials of
+	// COMMAND.
 	pathEnv, _ := environ.Lookup(env, "PATH")
-	if _, err := osutil.LookPath(argv[0], pathEnv, osutil.IsExecutable); err != nil {
+	canExec := osutil.IsExecutable
+	if cred.UID != 0 {
+		groups := cred.Groups
+		if groups == nil {
+			groups, _ = os.Getgroups()
+		}
+		canExec = func(p string) error { return osutil.CanExecute(p, cred.UID, cred.GID, groups) }
+	}
+	if _, err := osutil.LookPath(argv[0], pathEnv, canExec); err != nil {
 		return err
 	}
 	// Before dropping CAP_SYS_RESOURCE, which raising a hard limit needs.
@@ -708,6 +736,9 @@ func execInRoot(ctx context.Context, rootDir string, argv, env []string, cred *i
 		if err := osutil.ClearInheritableCapabilities(); err != nil {
 			return fmt.Errorf("drop capabilities: %w", err)
 		}
+	}
+	if cred.UID != 0 && opts.beforeSwitch != nil {
+		opts.beforeSwitch()
 	}
 	if err := osutil.SetCredentials(cred.UID, cred.GID, cred.Groups); err != nil {
 		return err

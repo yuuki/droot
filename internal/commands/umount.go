@@ -38,7 +38,7 @@ func doUmount(ctx context.Context, cmd *cli.Invocation) error {
 		return err
 	}
 	// Wait for a droot run that is setting the root up.
-	unlock, err := osutil.LockDir(ctx, rootDir, func() {
+	unlock, err := osutil.LockRoot(ctx, rootDir, func() {
 		log.Infof("waiting for another droot working on %s", rootDir)
 	})
 	if err != nil {

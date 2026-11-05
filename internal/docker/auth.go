@@ -8,9 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -99,9 +101,10 @@ func RegistryAuth(ctx context.Context, ref string) (string, error) {
 	}
 	var auth *authConfig
 	helper := cfg.CredsStore
-	for k, h := range cfg.CredHelpers {
+	for _, k := range slices.Sorted(maps.Keys(cfg.CredHelpers)) {
 		if normalizeServer(k) == host {
-			helper = h
+			helper = cfg.CredHelpers[k]
+			break
 		}
 	}
 	if helper != "" {
@@ -109,7 +112,10 @@ func RegistryAuth(ctx context.Context, ref string) (string, error) {
 			return "", err
 		}
 	} else {
-		for k, a := range cfg.Auths {
+		// Sorted, so that the choice is deterministic when several keys
+		// name the same registry.
+		for _, k := range slices.Sorted(maps.Keys(cfg.Auths)) {
+			a := cfg.Auths[k]
 			if normalizeServer(k) != host {
 				continue
 			}

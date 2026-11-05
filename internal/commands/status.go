@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"text/tabwriter"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/yuuki/droot/internal/cli"
 	"github.com/yuuki/droot/internal/mounter"
@@ -68,20 +70,42 @@ func doStatus(_ context.Context, cmd *cli.Invocation) error {
 	if len(mounts) > 0 {
 		fmt.Fprintln(w, "  MOUNT POINT\tTYPE\tSOURCE\tOPTIONS")
 		for _, m := range mounts {
-			fmt.Fprintf(w, "  %s\t%s\t%s\t%s\n", strings.TrimPrefix(m.Mountpoint, rootDir), m.FSType, m.Source, m.Options)
+			fmt.Fprintf(w, "  %s\t%s\t%s\t%s\n", printable(strings.TrimPrefix(m.Mountpoint, rootDir)), printable(m.FSType), printable(m.Source), printable(m.Options))
 		}
 	}
 	fmt.Fprintf(w, "\nProcesses in %s: %d\n", rootDir, len(procs))
 	if len(procs) > 0 {
 		fmt.Fprintln(w, "  PID\tUID\tCOMMAND")
 		for _, p := range procs {
-			fmt.Fprintf(w, "  %d\t%d\t%s\n", p.pid, p.uid, p.cmdline)
+			fmt.Fprintf(w, "  %d\t%d\t%s\n", p.pid, p.uid, printable(p.cmdline))
 		}
 	}
 	if denied && os.Geteuid() != 0 {
 		fmt.Fprintln(w, "\n(some processes could not be inspected: run as root to see every process)")
 	}
 	return w.Flush()
+}
+
+// printable escapes the characters of s that are not printable, so that
+// names chosen in the container (command lines, mount points) cannot send
+// escape sequences to the terminal.
+func printable(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		switch {
+		case r == utf8.RuneError && size <= 1: // invalid UTF-8
+			fmt.Fprintf(&b, `\x%02x`, s[i])
+		case unicode.IsPrint(r):
+			b.WriteString(s[i : i+size])
+		case r < 0x100:
+			fmt.Fprintf(&b, `\x%02x`, r)
+		default:
+			fmt.Fprintf(&b, `\u%04x`, r)
+		}
+		i += size
+	}
+	return b.String()
 }
 
 type process struct {

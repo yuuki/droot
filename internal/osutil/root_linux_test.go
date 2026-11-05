@@ -201,7 +201,7 @@ func TestCopyFileIn(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := root.CopyFileIn(src, "/etc/hosts"); err != nil {
+	if err := root.CopyFileIn(src, "/etc/hosts", nil); err != nil {
 		t.Fatal(err)
 	}
 	if b, _ := os.ReadFile(victim); string(b) != "do not touch" {
@@ -223,7 +223,7 @@ func TestCopyFileIn(t *testing.T) {
 		if err := os.Chown(src, 1234, 5678); err != nil {
 			t.Fatal(err)
 		}
-		if err := root.CopyFileIn(src, "/owned"); err != nil {
+		if err := root.CopyFileIn(src, "/owned", nil); err != nil {
 			t.Fatal(err)
 		}
 		var st unix.Stat_t
@@ -235,13 +235,13 @@ func TestCopyFileIn(t *testing.T) {
 		}
 	}
 
-	if err := root.CopyFileIn(src, "/etc/new/passwd"); err != nil {
+	if err := root.CopyFileIn(src, "/etc/new/passwd", nil); err != nil {
 		t.Fatal(err)
 	}
 	if matches, _ := filepath.Glob(filepath.Join(rootDir, "etc", "new", ".droot-*")); len(matches) != 0 {
 		t.Errorf("temporary files left behind: %v", matches)
 	}
-	if err := root.CopyFileIn(t.TempDir(), "/x"); err == nil {
+	if err := root.CopyFileIn(t.TempDir(), "/x", nil); err == nil {
 		t.Error("copying a directory should fail")
 	}
 }
@@ -252,14 +252,14 @@ func TestSymlinkIfMissing(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 2 {
-		if err := root.SymlinkIfMissing("../run/lock", "/var/lock"); err != nil {
+		if err := root.SymlinkIfMissing("../run/lock", "/var/lock", nil); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if target, err := os.Readlink(filepath.Join(rootDir, "var", "lock")); err != nil || target != "../run/lock" {
 		t.Fatalf("got %q, %v", target, err)
 	}
-	if err := root.SymlinkIfMissing("x", "/missing/lock"); err == nil {
+	if err := root.SymlinkIfMissing("x", "/missing/lock", nil); err == nil {
 		t.Error("a missing parent should fail")
 	}
 }
@@ -337,11 +337,11 @@ func TestRootRace(t *testing.T) {
 	isRoot := os.Geteuid() == 0
 	deadline := time.Now().Add(2 * time.Second)
 	for i := 0; time.Now().Before(deadline); i++ {
-		_ = root.CopyFileIn(src, "/dev/copied")
+		_ = root.CopyFileIn(src, "/dev/copied", nil)
 		if mt, err := root.OpenMountTarget("/dev/target", false, nil); err == nil {
 			mt.Close()
 		}
-		_ = root.SymlinkIfMissing("x", "/dev/link")
+		_ = root.SymlinkIfMissing("x", "/dev/link", nil)
 		if isRoot {
 			_ = root.MknodChar("/dev/null", 1, 3, 0o666, nil)
 		}

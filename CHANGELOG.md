@@ -235,7 +235,8 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
 - When `droot run` fails before executing COMMAND (a missing bind source, a
   missing command, Ctrl-C, ...), it removes the mounts it made.
 - Concurrent `droot run` and `droot umount` on the same root wait for each
-  other's setup (`flock(2)` on the root directory).
+  other's setup (`flock(2)` on a file of `/run/droot`, which only root can
+  access, so that a container cannot block droot).
 - `droot run --bind-net-files` bind mounts the host's `/etc/resolv.conf` and
   `/etc/hosts` read-only, as a live alternative to the copies of `--cp`.
 - A warning when `--user NAME` maps to uid 0 in the image.

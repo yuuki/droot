@@ -221,6 +221,16 @@ if "$DROOT" run --root "$WORK/app" --user root -- no-such-command 2>/dev/null; t
   fail "running a missing command should fail"
 fi
 assert_eq "a missing COMMAND removes the mounts made for it" "$(mounts_under "$WORK/app")" "0"
+printf '#!/bin/sh\necho secret\n' > "$WORK/app/root-only" && chmod 700 "$WORK/app/root-only"
+if "$DROOT" run --root "$WORK/app" --user 1500 -- /root-only 2>/dev/null; then
+  fail "a COMMAND the user cannot execute should fail"
+fi
+assert_eq "a COMMAND the user cannot execute removes the mounts made for it" "$(mounts_under "$WORK/app")" "0"
+rm -f "$WORK/app/root-only"
+if "$DROOT" run --root "$WORK/app" --user "" -- id 2>/dev/null; then
+  fail "an empty --user must not run COMMAND (as root)"
+fi
+echo "ok - an empty --user is refused"
 assert_eq "--unshare: mounts in a private namespace" \
   "$("$DROOT" run --root "$WORK/app" --user root --unshare --tmpfs /tmp -- sh -c 'stat -f -c %T /proc /tmp'; mounts_under "$WORK/app")" \
   "$(printf 'proc\ntmpfs\n0')"

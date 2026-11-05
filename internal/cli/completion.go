@@ -135,12 +135,6 @@ func (a *App) bashCompletion() string {
 			}
 		}
 		p("    %s)\n", c.Name)
-		// Complete the value of the previous flag.
-		for _, f := range flags {
-			if f.Kind != Bool {
-				p("        case $prev in %s) %s_value %q; return ;; esac\n", strings.Join(dashedNames(f), "|"), fn, f.Complete)
-			}
-		}
 		if c.StopAtFirstArg {
 			// Find where the positional arguments start.
 			p("        local j=$((cmdi + 1)) start=\n")
@@ -163,6 +157,13 @@ func (a *App) bashCompletion() string {
 			}
 			p("            return\n")
 			p("        fi\n")
+		}
+		// Complete the value of the previous flag (only before COMMAND for
+		// StopAtFirstArg commands, handled above).
+		for _, f := range flags {
+			if f.Kind != Bool {
+				p("        case $prev in %s) %s_value %q; return ;; esac\n", strings.Join(dashedNames(f), "|"), fn, f.Complete)
+			}
 		}
 		p("        if [[ $cur == -* ]]; then\n")
 		p("            COMPREPLY=($(compgen -W %q -- \"$cur\"))\n", strings.Join(all, " "))

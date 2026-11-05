@@ -245,10 +245,13 @@ Notes:
 - The supplementary groups are those listing the user in `ROOT_DIR/etc/group`.
 - Mounts left by a previous run are reused as they are: run `droot umount`
   first to change the options of a `--tmpfs` or a `--bind`.
-- If the setup fails, or `COMMAND` cannot be found, the mounts made by the
-  failed run are removed again; those of previous runs stay.
+- If the setup fails, or `COMMAND` cannot be found or executed by the user,
+  the mounts made by the failed run are removed again; those of previous runs
+  stay. Only a failure of `execve(2)` itself after switching to the user
+  (e.g. a missing ELF interpreter) leaves them, with a warning.
 - Concurrent `droot run` and `droot umount` on the same `ROOT_DIR` take turns
-  (`flock(2)` on the directory) until `COMMAND` is executed.
+  until `COMMAND` is executed (`flock(2)` on a file of `/run/droot`, which
+  only root can access).
 - `COMMAND` is looked up in the `PATH` of the container environment (falling
   back to `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`), not in
   the `PATH` of the shell that started droot.

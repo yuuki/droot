@@ -543,15 +543,21 @@ func (r *Root) EnsureSymlink(target, path string, check DirCheck) error {
 }
 
 // SymlinkIfMissing creates the symbolic link path -> target unless something
-// already exists at path. The parent directory must exist.
-func (r *Root) SymlinkIfMissing(target, path string) error {
-	res, err := r.lookup(path, lookupOptions{})
+// already exists at path. The parent directory must exist. See DirCheck for
+// check; it is also applied to the directory the link is created in.
+func (r *Root) SymlinkIfMissing(target, path string, check DirCheck) error {
+	res, err := r.lookup(path, lookupOptions{check: check})
 	if err != nil {
 		return err
 	}
 	defer unix.Close(res.dir)
 	if res.name == "" {
 		return nil
+	}
+	if check != nil {
+		if err := check(res.dir); err != nil {
+			return &fs.PathError{Op: "symlink", Path: r.displayPath(path), Err: err}
+		}
 	}
 	if err := unix.Symlinkat(target, res.dir, res.name); err != nil && !errors.Is(err, unix.EEXIST) {
 		return &fs.PathError{Op: "symlink", Path: r.displayPath(path), Err: err}
@@ -561,10 +567,11 @@ func (r *Root) SymlinkIfMissing(target, path string) error {
 
 // CopyFileIn copies the host's regular file src (following symlinks on the
 // host) to path inside the root, preserving its permission bits, ownership
-// and modification time, like `cp -p`. Symlinks in path are followed inside
+// and modification time, like `cp -p`. See DirCheck for check; it is also
+// applied to the directory the file is written in. Symlinks in path are followed inside
 // the root, and the destination is replaced atomically with rename(2), so a
 // symlink swapped in at the last moment is replaced rather than followed.
-func (r *Root) CopyFileIn(src, path string) (err error) {
+func (r *Root) CopyFileIn(src, path string, check DirCheck) (err error) {
 	in, err := os.Open(src)
 	if err != nil {
 		return err
@@ -578,13 +585,18 @@ func (r *Root) CopyFileIn(src, path string) (err error) {
 		return fmt.Errorf("%s is not a regular file", src)
 	}
 
-	res, err := r.lookup(path, lookupOptions{mkdir: true, followLast: true})
+	res, err := r.lookup(path, lookupOptions{mkdir: true, followLast: true, check: check})
 	if err != nil {
 		return err
 	}
 	defer unix.Close(res.dir)
 	if res.name == "" {
 		return &fs.PathError{Op: "copy", Path: r.displayPath(path), Err: unix.EISDIR}
+	}
+	if check != nil {
+		if err := check(res.dir); err != nil {
+			return &fs.PathError{Op: "copy", Path: r.displayPath(path), Err: err}
+		}
 	}
 
 	var rnd [8]byte
