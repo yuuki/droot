@@ -7,8 +7,9 @@
 #
 #   make build && sudo ./script/integration-test.sh [path/to/droot]
 #
-# The work directory is not deleted (it may contain mount points if something
-# goes wrong); its path is printed at the end.
+# On exit, the test images are removed, and so is the work directory unless
+# KEEP_WORKDIR is set or mount points remain below it (deleting it would then
+# delete files through the bind mounts).
 set -euo pipefail
 
 DROOT=$(realpath "${1:-./droot}")
@@ -29,6 +30,14 @@ cleanup() {
   for d in "$WORK"/*/; do
     "$DROOT" umount --root "$d" >/dev/null 2>&1 || true
   done
+  docker rmi -f "$IMAGE" "$SCRATCH_IMAGE" >/dev/null 2>&1 || true
+  if [[ -n "${KEEP_WORKDIR:-}" ]]; then
+    echo "work directory kept: $WORK"
+  elif [[ $(mounts_under "$WORK") -eq 0 ]]; then
+    rm -rf -- "${WORK:?}"
+  else
+    echo "mount points remain below $WORK: not deleting it" >&2
+  fi
 }
 trap cleanup EXIT
 
@@ -133,4 +142,4 @@ if unshare -m --propagation private true 2>/dev/null; then
   echo "ok - umount --root / is refused"
 fi
 
-echo "All integration tests passed (work directory: $WORK)"
+echo "All integration tests passed"
