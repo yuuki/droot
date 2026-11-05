@@ -393,3 +393,46 @@ func TestWriteFileLikeCreate(t *testing.T) {
 		t.Fatalf("a long file name must work: %v", err)
 	}
 }
+
+func TestErrorMessages(t *testing.T) {
+	tests := []struct {
+		argv []string
+		want string
+	}{
+		{[]string{"help", "nosuch"}, "no help topic for 'nosuch' (see 'droot --help')"},
+		{[]string{"help", "rnu"}, "did you mean 'run'?"},
+		{[]string{"rnu"}, "'rnu' is not a droot command; did you mean 'run'?"},
+		{[]string{"exprot", "img"}, "did you mean 'export'?"},
+		{[]string{"run", "--rot", "/x", "--", "true"}, "unknown flag --rot; did you mean --root?"},
+		{[]string{"run", "-rot=/x", "--", "true"}, "unknown flag -rot; did you mean --root?"},
+		{[]string{"run", "--bogus", "--", "true"}, "unknown flag --bogus (see 'droot run --help')"},
+		{[]string{"umount", "--rooot", "/x"}, "did you mean --root?"},
+	}
+	for _, tt := range tests {
+		app := NewApp("test")
+		app.Writer, app.ErrWriter = io.Discard, io.Discard
+		err := run(context.Background(), app, append([]string{"droot"}, tt.argv...))
+		if err == nil || !strings.Contains(err.Error(), tt.want) {
+			t.Errorf("droot %q: got %v, want %q", tt.argv, err, tt.want)
+		}
+	}
+
+	// Known help topics still work.
+	var out strings.Builder
+	app := NewApp("test")
+	app.Writer, app.ErrWriter = &out, io.Discard
+	if err := run(context.Background(), app, []string{"droot", "help", "export"}); err != nil || !strings.Contains(out.String(), "droot export") {
+		t.Errorf("help export: %v, %q", err, out.String())
+	}
+}
+
+func TestEditDistance(t *testing.T) {
+	for _, tt := range []struct {
+		a, b string
+		want int
+	}{{"run", "run", 0}, {"rnu", "run", 1}, {"rot", "root", 1}, {"exprot", "export", 1}, {"abc", "xyz", 3}} {
+		if got := editDistance(tt.a, tt.b); got != tt.want {
+			t.Errorf("editDistance(%q, %q) = %d, want %d", tt.a, tt.b, got, tt.want)
+		}
+	}
+}
