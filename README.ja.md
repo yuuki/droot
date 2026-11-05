@@ -148,6 +148,8 @@ droot export [-o FILE] [--platform PLATFORM] IMAGE
 | `oci:DIR[:NAME]` | [OCI イメージレイアウト](https://github.com/opencontainers/image-spec/blob/main/image-layout.md)（`skopeo`、`buildah`、`docker buildx build --output type=oci,tar=false` などが書き出すもの） |
 | `oci-archive:FILE[:NAME]` | OCI イメージレイアウトの tar アーカイブ（Docker 25 以降の `docker save`、`podman save --format oci-archive` など） |
 
+名前がこれらと同じ形で始まるデーモンのイメージ（`oci:latest` など）は、`docker.io/library/oci:latest` のように完全な名前で指定してください。
+
 | オプション | 説明 |
 |---|---|
 | `-o`, `--output FILE` | アーカイブを標準出力ではなく `FILE` に書き出します（`-` は標準出力を意味します）。ファイルはアトミックに置き換えられるため、エクスポートが中断されても途中で切れたアーカイブが残ることはありません。通常の `> FILE` によるリダイレクトと同様に、新しいファイルは umask に従い、既存のファイルはモードと所有者を保持し、シンボリックリンクはたどられます。 |

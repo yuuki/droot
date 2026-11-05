@@ -174,6 +174,9 @@ file system and removes the container. Or it is one of these images, read
 | `oci:DIR[:NAME]` | An [OCI image layout](https://github.com/opencontainers/image-spec/blob/main/image-layout.md), as written by `skopeo`, `buildah`, `docker buildx build --output type=oci,tar=false`, ... |
 | `oci-archive:FILE[:NAME]` | A tar archive of an OCI image layout (`docker save` of Docker 25 and later, `podman save --format oci-archive`, ...). |
 
+An image of a daemon whose name starts like one of these (`oci:latest`)
+needs its full name: `docker.io/library/oci:latest`.
+
 | Option | Description |
 |---|---|
 | `-o`, `--output FILE` | Write the archive to `FILE` instead of STDOUT (`-` means STDOUT). The file is replaced atomically, so an interrupted export never leaves a truncated archive behind; like a plain `> FILE` redirection, a new file follows the umask, an existing file keeps its mode and owner, and symlinks are followed. |

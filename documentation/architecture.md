@@ -110,7 +110,11 @@ For `docker://`, `docker-archive:`, `oci:` and `oci-archive:` images, the
    headers and builds the tree of the merged file system: whiteouts
    (`.wh.NAME`, `.wh..wh..opq`) delete what the layers below have, a file
    replaces a directory and its content, and each hard link is tied to the
-   file it names at that moment. The second pass writes the surviving
+   file it names at that moment. Paths are resolved in the tree as a
+   container engine resolves them when it extracts a layer in a chroot: a
+   file `lib/x` below a symlink `lib -> usr/lib` of a lower layer is
+   `/usr/lib/x`. Entries that are not files (PAX global headers, ...) are
+   left out, and names longer than Linux accepts are refused. The second pass writes the surviving
    entries in the order of the layers, a directory before its content (with
    the metadata of the layer that last created it), and a hard link whose
    file was later deleted or replaced as a copy of that file (kept in a

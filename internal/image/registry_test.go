@@ -315,3 +315,39 @@ func TestIsLoopback(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckRedirect(t *testing.T) {
+	req := func(method, rawURL string, auth bool) *http.Request {
+		r, _ := http.NewRequest(method, rawURL, nil)
+		if auth {
+			r.Header.Set("Authorization", "Basic secret")
+		}
+		return r
+	}
+	for _, tt := range []struct {
+		from, to string
+		method   string
+		ok       bool
+		auth     bool // Authorization kept
+	}{
+		{"https://reg.example/v2/a/blobs/x", "https://reg.example/v2/a/blobs/y", "GET", true, true},
+		{"https://reg.example/v2/a/blobs/x", "https://cdn.example/blob?sig=1", "GET", true, false},
+		{"https://reg.example/v2/a/blobs/x", "https://reg.example:8443/x", "GET", true, false},
+		{"https://reg.example/v2/a/blobs/x", "http://reg.example/x", "GET", false, false},
+		{"https://reg.example/v2/a/blobs/x", "http://127.0.0.1:5000/x", "GET", false, false},
+		{"http://127.0.0.1:5000/v2/a", "http://127.0.0.1:5001/v2/a", "GET", true, false},
+		{"http://localhost:5000/v2/a", "http://localhost:5000/v2/b", "GET", true, true},
+		{"https://auth.example/token", "https://evil.example/token", "POST", false, false},
+		{"https://auth.example/token", "https://auth.example/token2", "POST", true, true},
+	} {
+		r := req(tt.method, tt.to, true)
+		err := checkRedirect(r, []*http.Request{req(tt.method, tt.from, true)})
+		if (err == nil) != tt.ok {
+			t.Errorf("%s -> %s: %v", tt.from, tt.to, err)
+			continue
+		}
+		if err == nil && (r.Header.Get("Authorization") != "") != tt.auth {
+			t.Errorf("%s -> %s: Authorization kept: %v", tt.from, tt.to, !tt.auth)
+		}
+	}
+}

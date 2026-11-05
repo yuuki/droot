@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 )
 
 // files gives access to the files of a directory or of a tar archive.
@@ -24,11 +25,24 @@ type files interface {
 // dirFiles are the files of a directory.
 type dirFiles string
 
+// open opens a regular file of the directory (without blocking on a FIFO).
 func (d dirFiles) open(name string) (io.ReadCloser, error) {
 	if !fs.ValidPath(name) {
 		return nil, fmt.Errorf("invalid path %q", name)
 	}
-	return os.Open(filepath.Join(string(d), filepath.FromSlash(name)))
+	f, err := os.OpenFile(filepath.Join(string(d), filepath.FromSlash(name)), os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	fi, err := f.Stat()
+	if err == nil && !fi.Mode().IsRegular() {
+		err = fmt.Errorf("%s is not a regular file", name)
+	}
+	if err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	return f, nil
 }
 
 // tarFiles are the files of an uncompressed tar archive, read in place.
@@ -174,6 +188,9 @@ func (s layoutStore) blob(_ context.Context, d Descriptor) (io.ReadCloser, error
 	p, err := blobPath(d.Digest)
 	if err != nil {
 		return nil, err
+	}
+	if d.Size <= 0 {
+		return nil, fmt.Errorf("the descriptor of %s has no size", d.Digest)
 	}
 	rc, err := s.fsys.open(p)
 	if err != nil {

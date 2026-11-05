@@ -154,7 +154,7 @@ func openRegistry(ctx context.Context, spec string, sel selector, opts Options) 
 	}
 	r := &registry{
 		ref:      ref,
-		client:   &http.Client{Transport: transport},
+		client:   &http.Client{Transport: transport, CheckRedirect: checkRedirect},
 		getCreds: opts.Credentials,
 		scheme:   "https",
 		files:    map[string]string{},
@@ -173,6 +173,26 @@ func openRegistry(ctx context.Context, spec string, sel selector, opts Options) 
 		return nil, fmt.Errorf("%s: %w", ref, err)
 	}
 	return img, nil
+}
+
+// checkRedirect is the redirect policy of the registry client: plain HTTP
+// only from and to this machine, no credentials
+// for another origin (blobs are often redirected to a CDN, which needs
+// none), and no form with a refresh token sent to another origin.
+func checkRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return errors.New("stopped after 10 redirects")
+	}
+	if req.URL.Scheme != "https" && (!isLoopback(via[0].URL.Host) || !isLoopback(req.URL.Host)) {
+		return fmt.Errorf("refusing a redirect from %s to plain HTTP (%s)", via[0].URL.Host, req.URL.Redacted())
+	}
+	if req.URL.Scheme != via[0].URL.Scheme || req.URL.Host != via[0].URL.Host {
+		if req.Method != http.MethodGet {
+			return fmt.Errorf("refusing to send a %s request to another origin (%s)", req.Method, req.URL.Redacted())
+		}
+		req.Header.Del("Authorization")
+	}
+	return nil
 }
 
 func (r *registry) url(p string) string {
@@ -471,6 +491,9 @@ func (r *registry) manifest(ctx context.Context, d Descriptor) ([]byte, string, 
 func (r *registry) blob(ctx context.Context, d Descriptor) (io.ReadCloser, error) {
 	if err := validDigest(d.Digest); err != nil {
 		return nil, err
+	}
+	if d.Size <= 0 {
+		return nil, fmt.Errorf("the descriptor of %s has no size", d.Digest)
 	}
 	r.mu.Lock()
 	file, ok := r.files[d.Digest]

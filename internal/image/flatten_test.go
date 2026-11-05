@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os/exec"
 	"path"
@@ -128,12 +129,29 @@ func TestFlatten(t *testing.T) {
 			want: "/b 0 old-a\n/c 0 old-a\n/y 0 old-x\n/x 0 new-x\n",
 		},
 		{
-			name: "nothing is kept below a symlink",
+			name: "paths through symlinks lead where they point to, as in a chroot",
 			layers: [][]tEntry{
-				{dir("etc"), symlink("a", "/etc"), file("f", "1")},
-				{file("a/passwd", "evil"), hardlink("g", "f"), symlink("f", "x"), file("f/y", "2")},
+				{dir("etc"), symlink("a", "/etc"), dir("usr"), dir("usr/lib"), symlink("lib", "usr/lib"), file("usr/lib/old", "1")},
+				{file("a/passwd", "p"), file("lib/libfoo", "so"), whiteout("lib/old"), hardlink("h", "lib/libfoo"), file("lib/../x", "x")},
 			},
-			want: "/etc 5\n/a 2 -> /etc\n/g 0 1\n/f 2 -> x\n",
+			want: "/etc 5\n/a 2 -> /etc\n/usr 5\n/usr/lib 5\n/lib 2 -> usr/lib\n/etc/passwd 0 p\n/usr/lib/libfoo 0 so\n/h 0 so\n/x 0 x\n",
+		},
+		{
+			name: "a directory replaces a symlink",
+			layers: [][]tEntry{
+				{dir("etc"), symlink("a", "../etc")},
+				{file("a/passwd", "p")},
+				{dir("a")},
+			},
+			want: "/etc 5\n/etc/passwd 0 p\n/a 5\n",
+		},
+		{
+			name: "opaque directories and whiteouts through symlinks",
+			layers: [][]tEntry{
+				{dir("d"), file("d/x", "1"), file("d/y", "1"), symlink("s", "d"), dir("e"), file("e/z", "1"), symlink("t", "/e")},
+				{whiteout("s/x"), dir("t"), opaque("t")},
+			},
+			want: "/d 5\n/d/y 0 1\n/s 2 -> d\n/e 5\n/t 5\n",
 		},
 		{
 			name: "a hard link replaced in a later layer",
@@ -158,6 +176,61 @@ func TestFlatten(t *testing.T) {
 				t.Errorf("got:\n%s\nwant:\n%s", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestFlattenPathErrors(t *testing.T) {
+	deep := strings.Repeat("d/", maxPathLen/2) + "f"
+	for name, tt := range map[string]struct {
+		layers [][]tEntry
+		want   string
+	}{
+		"through a file":             {[][]tEntry{{file("f", "1"), file("f/x", "1")}}, "not a directory"},
+		"through a dangling symlink": {[][]tEntry{{symlink("s", "nowhere"), file("s/x", "1")}}, "not a directory"},
+		"through a symlink loop":     {[][]tEntry{{symlink("a", "b"), symlink("b", "a"), file("a/x", "1")}}, "too many levels"},
+		"too long":                   {[][]tEntry{{file(deep, "1")}}, "longer than 4096"},
+		"too long a component":       {[][]tEntry{{file(strings.Repeat("x", 256), "1")}}, "longer than 255"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var layers [][]byte
+			for _, l := range tt.layers {
+				layers = append(layers, layerTar(t, l...))
+			}
+			if _, _, err := flatten(t, memImage(t, layers...)); err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("got %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestFlattenSkipsNonFiles(t *testing.T) {
+	// A PAX global header: a tar extractor would apply its records to
+	// every following entry.
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	_ = tw.WriteHeader(&tar.Header{Typeflag: tar.TypeXGlobalHeader, Name: "etc", PAXRecords: map[string]string{"uid": "1000", "comment": "x"}})
+	_ = tw.WriteHeader(&tar.Header{Typeflag: tar.TypeReg, Name: "etc/passwd", Size: 1, Mode: 0o644, ModTime: testTime})
+	_, _ = tw.Write([]byte("p"))
+	_ = tw.Close()
+	img := memImage(t, layerTar(t, dir("etc")), buf.Bytes())
+	var out bytes.Buffer
+	if err := img.Flatten(context.Background(), &out); err != nil {
+		t.Fatal(err)
+	}
+	tr := tar.NewReader(&out)
+	var names []string
+	for {
+		hdr, err := tr.Next()
+		if err != nil {
+			break
+		}
+		if hdr.Typeflag == tar.TypeXGlobalHeader || hdr.Uid != 0 {
+			t.Errorf("%s: %c uid %d", hdr.Name, hdr.Typeflag, hdr.Uid)
+		}
+		names = append(names, hdr.Name)
+	}
+	if strings.Join(names, " ") != "etc/ etc/passwd" {
+		t.Errorf("got %q", names)
 	}
 }
 
@@ -251,6 +324,61 @@ func (m *model) deleteBelow(p string) {
 	}
 }
 
+// resolveDir resolves the symlinks of the directory p in the model, as in a
+// chroot: an independent implementation of flattener.resolveDir. Followed
+// symlinks must lead to directories; p must be one if it exists.
+func (m *model) resolveDir(p string, hops *int) (string, bool, error) {
+	isDir := func(name string) bool {
+		e, ok := m.entries[name]
+		return name == "/" || ok && (e.typ == tar.TypeDir || e.typ == 0)
+	}
+	cur := "/"
+	for _, c := range strings.Split(strings.Trim(p, "/"), "/") {
+		if c == "" || c == "." {
+			continue
+		}
+		if c == ".." {
+			cur = path.Dir(cur)
+			continue
+		}
+		if _, ok := m.entries[cur]; ok && !isDir(cur) {
+			return "", false, errNotDir
+		}
+		next := path.Join(cur, c)
+		if e, ok := m.entries[next]; ok && e.typ == tar.TypeSymlink {
+			if *hops++; *hops > maxSymlinks {
+				return "", false, errors.New("loop")
+			}
+			target := e.link
+			if !path.IsAbs(target) {
+				target = path.Join(cur, target)
+			}
+			tp, exists, err := m.resolveDir(target, hops)
+			if err != nil {
+				return "", false, err
+			}
+			if !exists {
+				return "", false, errNotDir
+			}
+			cur = tp
+			continue
+		}
+		cur = next
+	}
+	_, exists := m.entries[cur]
+	if exists && !isDir(cur) {
+		return "", false, errNotDir
+	}
+	return cur, exists || cur == "/", nil
+}
+
+// resolveParent resolves the parent directory of p.
+func (m *model) resolveParent(p string) (string, error) {
+	hops := 0
+	d, _, err := m.resolveDir(path.Dir(p), &hops)
+	return path.Join(d, path.Base(p)), err
+}
+
 func (m *model) apply(entries []tEntry) bool {
 	var whiteouts, opaques []string
 	type op struct {
@@ -271,13 +399,16 @@ func (m *model) apply(entries []tEntry) bool {
 		}
 	}
 	for _, d := range opaques {
-		if e, ok := m.entries[d]; !ok || e.typ == tar.TypeDir || e.typ == 0 {
-			m.deleteBelow(d)
+		hops := 0
+		if r, exists, err := m.resolveDir(d, &hops); err == nil && exists {
+			m.deleteBelow(r)
 		}
 	}
 	for _, p := range whiteouts {
-		delete(m.entries, p)
-		m.deleteBelow(p)
+		if r, err := m.resolveParent(p); err == nil {
+			delete(m.entries, r)
+			m.deleteBelow(r)
+		}
 	}
 	for _, o := range ops {
 		e := o.e
@@ -292,18 +423,26 @@ func (m *model) apply(entries []tEntry) bool {
 				oe.mode = 0o755
 			}
 		}
+		name, err := m.resolveParent(o.name)
+		if err != nil {
+			return false
+		}
 		if typ == tar.TypeLink {
-			target, ok := m.entries[path.Clean("/"+e.link)]
+			t, err := m.resolveParent(path.Clean("/" + e.link))
+			if err != nil {
+				return false
+			}
+			target, ok := m.entries[t]
 			if !ok || target.typ == tar.TypeDir || target.typ == 0 {
 				return false
 			}
 			oe = target
 		}
 		if typ != tar.TypeDir {
-			m.deleteBelow(o.name)
+			m.deleteBelow(name)
 		}
-		m.entries[o.name] = oe
-		for d := path.Dir(o.name); d != "/"; d = path.Dir(d) {
+		m.entries[name] = oe
+		for d := path.Dir(name); d != "/"; d = path.Dir(d) {
 			if _, ok := m.entries[d]; !ok {
 				m.entries[d] = outEntry{} // implicit directory
 			}
@@ -343,7 +482,7 @@ func genLayers(data []byte) [][]tEntry {
 			case 2:
 				l = append(l, tEntry{name: p, typ: tar.TypeDir, mode: []int64{0o755, 0o700, 0o750}[next()%3]})
 			case 3:
-				l = append(l, symlink(p, genPath()))
+				l = append(l, symlink(p, []string{"", "/", "../"}[next()%3]+genPath()))
 			case 4:
 				l = append(l, hardlink(p, genPath()))
 			case 5:
@@ -370,15 +509,6 @@ func checkAgainstModel(t *testing.T, layers [][]tEntry) {
 		tars = append(tars, layerTar(t, l...))
 	}
 	out, _, err := flatten(t, memImage(t, tars...))
-	// Nothing is kept below a non-directory.
-	for name := range m.entries {
-		for d := path.Dir(name); d != "/"; d = path.Dir(d) {
-			if e, ok := m.entries[d]; ok && e.typ != tar.TypeDir && e.typ != 0 {
-				delete(m.entries, name)
-				break
-			}
-		}
-	}
 	if !ok {
 		if err == nil {
 			t.Fatalf("Flatten accepted an invalid hard link: %v", layers)

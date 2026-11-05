@@ -6,7 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 var (
@@ -267,5 +269,39 @@ func TestPlatformScore(t *testing.T) {
 	})
 	if err != nil || d.Digest != "v6" {
 		t.Errorf("got %v %v, want v6", d.Digest, err)
+	}
+}
+
+func TestOpenLayoutRefusesSpecialBlobs(t *testing.T) {
+	ti := buildImage(t, []Platform{amd64}, layerTar(t, file("a", "1")))
+	dir := t.TempDir()
+	ti.writeLayout(t, dir)
+	var m manifest
+	if err := json.Unmarshal(ti.blobs[ti.root.Digest], &m); err != nil {
+		t.Fatal(err)
+	}
+	layer := filepath.Join(dir, "blobs", "sha256", strings.TrimPrefix(m.Layers[0].Digest, "sha256:"))
+	if err := os.Remove(layer); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(layer, 0o644); err != nil {
+		t.Skip(err)
+	}
+	img, err := open(t, "oci:"+dir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := flatten(t, img)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "not a regular file") {
+			t.Errorf("got %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("a FIFO blob blocks the export")
 	}
 }

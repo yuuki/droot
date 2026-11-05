@@ -66,11 +66,24 @@ type ref struct{ layer, index int }
 
 // entry is what the first pass remembers of an entry of a layer.
 type entry struct {
-	name string // absolute and clean
+	raw  string // the name in the layer, absolute and clean
+	name string // the path in the merged file system, symlinks resolved
 	typ  byte
-	link string // hard links: the absolute and clean target
-	skip bool   // the root directory and whiteouts
+	link string // Linkname, as in the layer
+	size int64
+	skip bool // the root directory, whiteouts, entries that are not files
 }
+
+// Limits of the names in layers, those of Linux (PATH_MAX, NAME_MAX), which
+// a container engine could not create either; they also bound the work of
+// Flatten.
+const (
+	maxPathLen = 4096
+	maxNameLen = 255
+	// maxSymlinks is the number of symlinks followed in a path, as by
+	// Linux (MAXSYMLINKS).
+	maxSymlinks = 40
+)
 
 // node is a path of the merged file system.
 type node struct {
@@ -78,6 +91,10 @@ type node struct {
 	rec      ref
 	has      bool // rec is set; otherwise an implicit directory
 	dir      bool // rec is a directory
+	// sym is set for symlinks (and hard links to them), with their
+	// target.
+	sym  bool
+	link string
 	// mtime is the time of the entry that created an implicit
 	// directory.
 	mtime time.Time
@@ -85,11 +102,19 @@ type node struct {
 
 func newNode() *node { return &node{children: map[string]*node{}} }
 
-func (n *node) lookup(name string) *node {
-	if name == "/" {
-		return n
+// isDir reports whether n is a directory, implicit or not.
+func (n *node) isDir() bool { return !n.has || n.dir }
+
+func components(name string) []string {
+	name = strings.Trim(name, "/")
+	if name == "" {
+		return nil
 	}
-	for _, c := range strings.Split(strings.TrimPrefix(name, "/"), "/") {
+	return strings.Split(name, "/")
+}
+
+func (n *node) lookup(name string) *node {
+	for _, c := range components(name) {
 		if n = n.children[c]; n == nil {
 			return nil
 		}
@@ -151,6 +176,32 @@ func parseEntry(name string) (clean string, whiteout string, opaque, meta bool) 
 	return clean, "", false, false
 }
 
+// fileType returns the type of a file entry, or false for the entries that
+// are not files: PAX global headers (whose records a tar extractor would
+// apply to every following entry), GNU volume headers, ...
+func fileType(t byte) (byte, bool) {
+	switch t {
+	case tar.TypeReg, tar.TypeLink, tar.TypeSymlink, tar.TypeChar, tar.TypeBlock, tar.TypeDir, tar.TypeFifo:
+		return t, true
+	case tar.TypeCont, tar.TypeGNUSparse: // (archive/tar reads TypeRegA as TypeReg)
+		return tar.TypeReg, true
+	}
+	return 0, false
+}
+
+// checkName refuses the names Linux refuses.
+func checkName(name string) error {
+	if len(name) > maxPathLen {
+		return fmt.Errorf("a name of %d bytes, longer than %d", len(name), maxPathLen)
+	}
+	for _, c := range components(name) {
+		if len(c) > maxNameLen {
+			return fmt.Errorf("%s...: a name component of %d bytes, longer than %d", name[:64], len(c), maxNameLen)
+		}
+	}
+	return nil
+}
+
 // scan reads the headers of layer i and applies it to the tree.
 func (f *flattener) scan(ctx context.Context, i int, l *Layer) error {
 	if f.dirs == nil {
@@ -176,9 +227,19 @@ func (f *flattener) scan(ctx context.Context, i int, l *Layer) error {
 		if err != nil {
 			return fmt.Errorf("read: %w", err)
 		}
+		if err := checkName(hdr.Name); err != nil {
+			return err
+		}
+		if err := checkName(hdr.Linkname); err != nil {
+			return err
+		}
 		name, wh, opaque, meta := parseEntry(hdr.Name)
-		e := entry{name: name, typ: hdr.Typeflag}
+		typ, isFile := fileType(hdr.Typeflag)
+		e := entry{raw: name, name: name, typ: typ, link: hdr.Linkname, size: hdr.Size}
 		switch {
+		case !isFile:
+			log.Debugf("leaving out %s, of type %q", hdr.Name, hdr.Typeflag)
+			e.skip = true
 		case meta:
 			e.skip = true
 		case opaque:
@@ -187,9 +248,7 @@ func (f *flattener) scan(ctx context.Context, i int, l *Layer) error {
 		case wh != "":
 			e.skip = true
 			whiteouts = append(whiteouts, wh)
-		case hdr.Typeflag == tar.TypeLink:
-			e.link = path.Clean("/" + hdr.Linkname)
-		case hdr.Typeflag == tar.TypeDir:
+		case typ == tar.TypeDir:
 			h := *hdr
 			f.dirs[ref{i, len(entries)}] = &h
 		}
@@ -200,46 +259,159 @@ func (f *flattener) scan(ctx context.Context, i int, l *Layer) error {
 	if _, err := io.Copy(io.Discard, rc); err != nil {
 		return err
 	}
-	f.entries = append(f.entries, entries)
 
-	// Whiteouts only delete the files of the layers below.
+	// Whiteouts only delete the files of the layers below. Like the other
+	// paths, theirs are resolved in the merged file system: a symlink to a
+	// directory in a lower layer leads to that directory.
 	for _, d := range opaques {
-		if n := f.tree.lookup(d); n != nil && (n.dir || !n.has) {
+		if _, n, err := f.resolveDir(d); err == nil && n != nil && n.isDir() {
 			n.children = map[string]*node{}
 		}
 	}
 	for _, p := range whiteouts {
-		if n := f.tree.lookup(path.Dir(p)); n != nil {
+		if _, n, err := f.resolveDir(path.Dir(p)); err == nil && n != nil && n.isDir() {
 			delete(n.children, path.Base(p))
 		}
 	}
-	for j, e := range entries {
+	for j := range entries {
+		e := &entries[j]
 		if e.skip {
 			continue
 		}
 		r := ref{i, j}
-		if e.typ == tar.TypeLink {
-			t := f.tree.lookup(e.link)
-			if t == nil || !t.has {
-				return fmt.Errorf("%s is a hard link to %s, which does not exist", e.name, e.link)
-			}
-			if t.dir {
-				return fmt.Errorf("%s is a hard link to the directory %s", e.name, e.link)
-			}
-			target := t.rec
-			if s, ok := f.inode[target]; ok {
-				target = s
-			}
-			f.inode[r] = target
+		parent, _, err := f.resolveDir(path.Dir(e.raw))
+		if err != nil {
+			return fmt.Errorf("%s: %w", e.raw, err)
 		}
-		f.insert(e.name, r, e.typ == tar.TypeDir, mtimes[j])
+		e.name = path.Join(parent, path.Base(e.raw))
+		if len(e.name) > 2*maxPathLen {
+			return fmt.Errorf("%s: the path through symlinks is too long", e.raw)
+		}
+		var target *node
+		if e.typ == tar.TypeLink {
+			if target, err = f.hardLinkTarget(e); err != nil {
+				return err
+			}
+			t := target.rec
+			if s, ok := f.inode[t]; ok {
+				t = s
+			}
+			f.inode[r] = t
+		}
+		n := f.insert(e.name, r, e.typ == tar.TypeDir, mtimes[j])
+		switch {
+		case e.typ == tar.TypeSymlink:
+			n.sym, n.link = true, e.link
+		case target != nil:
+			n.sym, n.link = target.sym, target.link
+		}
 	}
+	f.entries = append(f.entries, entries)
 	return nil
 }
 
-func (f *flattener) insert(name string, r ref, dir bool, mtime time.Time) {
+// hardLinkTarget returns the node of the file the hard link e names.
+func (f *flattener) hardLinkTarget(e *entry) (*node, error) {
+	target := path.Clean("/" + e.link)
+	parent, p, err := f.resolveDir(path.Dir(target))
+	if err != nil {
+		return nil, fmt.Errorf("%s is a hard link to %s: %w", e.raw, target, err)
+	}
+	var t *node
+	if p != nil {
+		t = p.children[path.Base(target)]
+	}
+	if t == nil || !t.has {
+		return nil, fmt.Errorf("%s is a hard link to %s, which does not exist", e.raw, path.Join(parent, path.Base(target)))
+	}
+	if t.dir {
+		return nil, fmt.Errorf("%s is a hard link to the directory %s", e.raw, target)
+	}
+	return t, nil
+}
+
+// errNotDir is a path through something else than a directory.
+var errNotDir = errors.New("not a directory")
+
+// resolveDir returns the directory name, absolute, in the merged file
+// system as it is, with its symlinks resolved as a container engine resolves
+// them when it extracts a layer in a chroot, and its node (nil if it does
+// not exist: missing directories would be created). The symlinks on the way
+// must lead to directories, and name must be one if it exists.
+func (f *flattener) resolveDir(name string) (string, *node, error) {
+	hops := 0
+	return f.resolveFrom(name, &hops)
+}
+
+func (f *flattener) resolveFrom(name string, hops *int) (string, *node, error) {
+	todo := components(name)
+	var cur []string
+	var nodes []*node // nodes[k] is the node of cur[:k+1], nil if missing
+	last := func() *node {
+		if len(nodes) == 0 {
+			return f.tree
+		}
+		return nodes[len(nodes)-1]
+	}
+	for len(todo) > 0 {
+		c := todo[0]
+		todo = todo[1:]
+		switch c {
+		case ".":
+			continue
+		case "..":
+			if len(cur) > 0 {
+				cur, nodes = cur[:len(cur)-1], nodes[:len(nodes)-1]
+			}
+			continue
+		}
+		p := last()
+		if p != nil && !p.isDir() {
+			return "", nil, fmt.Errorf("/%s: %w", strings.Join(cur, "/"), errNotDir)
+		}
+		var child *node
+		if p != nil {
+			child = p.children[c]
+		}
+		if child != nil && child.sym {
+			*hops++
+			if *hops > maxSymlinks {
+				return "", nil, errors.New("too many levels of symbolic links")
+			}
+			target := child.link
+			if !path.IsAbs(target) {
+				target = "/" + strings.Join(cur, "/") + "/" + target
+			}
+			tp, tn, err := f.resolveFrom(target, hops)
+			if err != nil {
+				return "", nil, err
+			}
+			if tn == nil {
+				return "", nil, fmt.Errorf("/%s: a symlink to %s, which is not a directory", strings.Join(append(cur, c), "/"), tp)
+			}
+			cur = components(tp)
+			nodes = nodes[:0]
+			n := f.tree
+			for _, k := range cur {
+				n = n.children[k]
+				nodes = append(nodes, n)
+			}
+			continue
+		}
+		cur = append(cur, c)
+		nodes = append(nodes, child)
+	}
+	if n := last(); n != nil && !n.isDir() {
+		return "", nil, fmt.Errorf("/%s: %w", strings.Join(cur, "/"), errNotDir)
+	}
+	return "/" + strings.Join(cur, "/"), last(), nil
+}
+
+// insert puts the entry r on the path name, whose parent directories are
+// resolved, and returns its node.
+func (f *flattener) insert(name string, r ref, dir bool, mtime time.Time) *node {
 	n := f.tree
-	for _, c := range strings.Split(strings.TrimPrefix(name, "/"), "/") {
+	for _, c := range components(name) {
 		child := n.children[c]
 		if child == nil {
 			child = newNode()
@@ -248,11 +420,14 @@ func (f *flattener) insert(name string, r ref, dir bool, mtime time.Time) {
 		}
 		n = child
 	}
-	if !dir {
-		// A file replaces a directory and its content.
+	if !dir || !n.isDir() {
+		// A file replaces a directory and its content; a directory
+		// replaces a file.
 		n.children = map[string]*node{}
 	}
 	n.rec, n.has, n.dir = r, true, dir
+	n.sym, n.link = false, ""
+	return n
 }
 
 // survivors computes the entries of the merged file system, and the files
@@ -308,10 +483,15 @@ func (f *flattener) write(ctx context.Context, i int, l *Layer, tw *tar.Writer) 
 		if err != nil {
 			return fmt.Errorf("read: %w", err)
 		}
-		if j >= len(entries) || path.Clean("/"+hdr.Name) != entries[j].name {
+		// What is written must be what the first pass saw (the digests
+		// are only checked again at the end of the layer).
+		if j >= len(entries) || !entries[j].same(hdr) {
 			return errors.New("the layer changed while it was read")
 		}
 		e, r := entries[j], ref{i, j}
+		if !e.skip {
+			hdr.Typeflag = e.typ
+		}
 		if f.spool[r] {
 			if err := f.keep(r, hdr, tr); err != nil {
 				return err
@@ -343,6 +523,12 @@ func (f *flattener) write(ctx context.Context, i int, l *Layer, tw *tar.Writer) 
 		return err
 	}
 	return nil
+}
+
+// same reports whether hdr is the entry e of the first pass.
+func (e *entry) same(hdr *tar.Header) bool {
+	typ, _ := fileType(hdr.Typeflag)
+	return path.Clean("/"+hdr.Name) == e.raw && typ == e.typ && hdr.Linkname == e.link && hdr.Size == e.size
 }
 
 // keep copies an entry that hard links need after it is deleted.

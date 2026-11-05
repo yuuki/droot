@@ -145,8 +145,8 @@ func flatten(t testing.TB, img *Image) (map[string]outEntry, []string, error) {
 			t.Fatalf("%s is in the stream twice", name)
 		}
 		if p := path.Dir(name); p != "/" {
-			if _, ok := out[p]; !ok {
-				t.Fatalf("%s before its directory %s", name, p)
+			if parent, ok := out[p]; !ok || parent.typ != tar.TypeDir {
+				t.Fatalf("%s before its directory %s, or below a non-directory", name, p)
 			}
 		}
 		body, _ := io.ReadAll(tr)

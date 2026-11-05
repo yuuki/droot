@@ -228,10 +228,7 @@ func (s *sizeLimit) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// limitSize wraps r with sizeLimit if the size of d is known.
+// limitSize wraps r with sizeLimit, for the size of d.
 func limitSize(r io.ReadCloser, d Descriptor) io.ReadCloser {
-	if d.Size <= 0 {
-		return r
-	}
 	return &sizeLimit{ReadCloser: r, n: d.Size, name: d.Digest}
 }

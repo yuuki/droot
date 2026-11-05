@@ -152,18 +152,35 @@ func ExportImage(ctx context.Context, api API, image string, w io.Writer, opts E
 	return nil
 }
 
-// WriteArchive writes the file system fs, a tar stream, to w as ExportImage
-// does for the file system of a container: with the configuration cfg of
-// the image in /.droot/config.json and /.drootenv, and the options opts
-// (but Platform). created is the creation time of the image (RFC 3339),
-// for --reproducible.
-func WriteArchive(ctx context.Context, fs io.Reader, w io.Writer, cfg imageconfig.Config, created string, opts ExportOptions) error {
+// errStopped stops the producer of WriteArchive when the archive cannot be
+// written.
+var errStopped = errors.New("export stopped")
+
+// WriteArchive writes the file system that produce writes as a tar stream
+// to w, as ExportImage does for the file system of a container: with the
+// configuration cfg of the image in /.droot/config.json and /.drootenv, and
+// the options opts (but Platform). created is the creation time of the
+// image (RFC 3339), for --reproducible. The options are checked before
+// produce is called.
+func WriteArchive(ctx context.Context, produce func(io.Writer) error, w io.Writer, cfg imageconfig.Config, created string, opts ExportOptions) error {
 	cfg.Version = imageconfig.Version
 	rw, err := newRewriter(cfg, created, opts)
 	if err != nil {
 		return err
 	}
-	if err := rw.rewrite(fs, w); err != nil {
+	pr, pw := io.Pipe()
+	done := make(chan error, 1)
+	go func() {
+		err := produce(pw)
+		pw.CloseWithError(err)
+		done <- err
+	}()
+	err = rw.rewrite(pr, w)
+	pr.CloseWithError(errStopped)
+	if perr := <-done; perr != nil && !errors.Is(perr, errStopped) {
+		return perr
+	}
+	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
 		}
@@ -435,6 +452,11 @@ type rewriteState struct {
 
 // entry copies one entry of the archive, or drops it.
 func (rw *rewriter) entry(hdr *tar.Header, tr *tar.Reader, tw *tar.Writer, st *rewriteState) error {
+	if hdr.Typeflag == tar.TypeXGlobalHeader {
+		// Its records would apply to every following entry, droot's
+		// files included.
+		return nil
+	}
 	name := path.Clean("/" + hdr.Name)
 	if isReplaced(hdr.Name) {
 		switch hdr.Typeflag {

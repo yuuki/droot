@@ -205,32 +205,17 @@ func doExport(ctx context.Context, cmd *cli.Invocation) error {
 	return nil
 }
 
-// errStopped stops the flattening of the layers when the archive cannot be
-// written.
-var errStopped = errors.New("export stopped")
-
 // exportFlattened writes the file system of img, read without daemon, like
 // docker.ExportImage.
 func exportFlattened(ctx context.Context, img *image.Image, w io.Writer, opts docker.ExportOptions) error {
-	pr, pw := io.Pipe()
-	done := make(chan error, 1)
-	go func() {
-		err := img.Flatten(ctx, pw)
-		pw.CloseWithError(err)
-		done <- err
-	}()
 	c := img.Config.Config
 	cfg := imageconfig.Config{
 		Image: img.Name, ImageID: img.ID,
 		Env: c.Env, WorkingDir: c.WorkingDir, User: c.User,
 		Entrypoint: c.Entrypoint, Cmd: c.Cmd, StopSignal: c.StopSignal,
 	}
-	err := docker.WriteArchive(ctx, pr, w, cfg, img.Config.Created, opts)
-	pr.CloseWithError(errStopped)
-	if ferr := <-done; ferr != nil && !errors.Is(ferr, errStopped) {
-		return ferr
-	}
-	return err
+	produce := func(w io.Writer) error { return img.Flatten(ctx, w) }
+	return docker.WriteArchive(ctx, produce, w, cfg, img.Config.Created, opts)
 }
 
 // registryCredentials returns the credentials of the docker CLI for a
