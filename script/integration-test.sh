@@ -93,8 +93,9 @@ assert_eq "device nodes" \
   "$("$DROOT" run --root "$WORK/app" --user app -- sh -c 'stat -c "%n %t:%T %a %u" /dev/null /dev/zero /dev/random /dev/urandom' | tr '\n' ' ')" \
   "/dev/null 1:3 666 0 /dev/zero 1:5 666 0 /dev/random 1:8 666 0 /dev/urandom 1:9 666 0 "
 mkdir -p "$WORK/hostdev"
+touch "$WORK/hostdev/marker" # not empty, so that no .droot.keep is created
 "$DROOT" run --root "$WORK/app" --bind "$WORK/hostdev:/dev" -- true 2>/dev/null
-assert_eq "a bind mounted /dev is left alone" "$(ls -A "$WORK/hostdev")" ""
+assert_eq "a bind mounted /dev is left alone" "$(ls -A "$WORK/hostdev")" "marker"
 "$DROOT" umount --root "$WORK/app"
 assert_eq "read-only bind mount" \
   "$("$DROOT" run --root "$WORK/app" --robind "$WORK/data:/mnt/data" -- sh -c 'cat /mnt/data/file; touch /mnt/data/x 2>/dev/null || echo ro')" \
