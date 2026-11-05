@@ -24,6 +24,7 @@ import (
 	"github.com/yuuki/droot/internal/mounter"
 	"github.com/yuuki/droot/internal/osutil"
 	"github.com/yuuki/droot/internal/seccomp"
+	"github.com/yuuki/droot/internal/userns"
 )
 
 func runCommand() *cli.Command {
@@ -40,7 +41,14 @@ func runCommand() *cli.Command {
 			"WORKDIR are the defaults of --user and --workdir.\n\n" +
 			"The options must come before COMMAND: everything from COMMAND on is passed\n" +
 			"to it verbatim. Mounts are left in place after COMMAND exits; remove them\n" +
-			"with 'droot umount'. Must be run as root.\n\n" +
+			"with 'droot umount'.\n\n" +
+			"Run by another user than root, droot runs rootless: it runs again as root of\n" +
+			"a new user namespace, where your user is root and your subordinate IDs\n" +
+			"(/etc/subuid and /etc/subgid, with the newuidmap and newgidmap commands) are\n" +
+			"the other users, and waits for COMMAND, passing signals on to it. The mounts\n" +
+			"are private (as with --unshare), /proc and the device files are bind mounts of\n" +
+			"the host's. Extract archives with 'droot unshare' so that their files keep\n" +
+			"their owners.\n\n" +
 			"--config FILE reads options from FILE, in a subset of TOML: lines KEY = VALUE,\n" +
 			"where KEY is the long name of an option and VALUE a string (\"...\" or '...'),\n" +
 			"true or false, or an array of strings for repeatable options; command, an\n" +
@@ -82,7 +90,7 @@ func runCommand() *cli.Command {
 			{Name: "ulimit", Kind: cli.Strings, Placeholder: "NAME=SOFT[:HARD]",
 				Usage: "set a resource limit of COMMAND, e.g. nofile=65536 or core=0:unlimited (names of ulimit, as in docker run)"},
 			{Name: "unshare", Kind: cli.Bool,
-				Usage: "make the mounts in a private mount namespace: they disappear when COMMAND and its children exit, and need no 'droot umount'"},
+				Usage: "make the mounts in a private mount namespace: they disappear when COMMAND and its children exit, and need no 'droot umount' (always the case rootless)"},
 			{Name: "unshare-ipc", Kind: cli.Bool,
 				Usage: "run COMMAND in a private IPC namespace (System V IPC, POSIX message queues)"},
 			{Name: "hostname", Kind: cli.String, Placeholder: "NAME",
@@ -190,6 +198,9 @@ var devLinks = []struct{ path, target string }{
 	// device here would allocate pseudo-terminals in the host's instance.
 	{"/dev/ptmx", "pts/ptmx"},
 }
+
+// ttyGID is the group of the pseudo-terminals, tty.
+const ttyGID = 5
 
 // devpts are the options of the devpts instance mounted on /dev/pts, like
 // Docker's.
@@ -359,8 +370,11 @@ func doRun(ctx context.Context, cmd *cli.Invocation) (err error) {
 		return cmd.UsageError("a command to run is required")
 	}
 	if os.Geteuid() != 0 {
-		return errors.New("droot run must be run as root (it needs to mount, chroot and switch users)")
+		// Rootless: run again as root of a user namespace.
+		return runRootless()
 	}
+	// Root of a user namespace: rootless, or in a container.
+	rootless := osutil.InUserNamespace()
 
 	// From now on and up to the exec, everything happens on this OS
 	// thread: the capability bounding set is a per-thread attribute, and
@@ -378,8 +392,14 @@ func doRun(ctx context.Context, cmd *cli.Invocation) (err error) {
 	}
 	defer unlock()
 	readOnly := cmd.Bool("read-only")
-	if cmd.Bool("unshare") || readOnly {
+	// In a user namespace, only the mounts of a mount namespace it owns
+	// can be changed.
+	privateNS := cmd.Bool("unshare") || readOnly || rootless
+	if privateNS {
 		if err := osutil.UnshareMountNamespace(); err != nil {
+			if rootless && errors.Is(err, syscall.EPERM) {
+				err = fmt.Errorf("%w (in a user namespace without privileges: on Ubuntu, see the sysctl kernel.apparmor_restrict_unprivileged_userns)", err)
+			}
 			return err
 		}
 		if readOnly {
@@ -456,6 +476,11 @@ func doRun(ctx context.Context, cmd *cli.Invocation) (err error) {
 		}
 		return err
 	}
+	if rootless {
+		if err := checkMapped(cred); err != nil {
+			return err
+		}
+	}
 	log.Debugf("running as uid=%d gid=%d groups=%v", cred.UID, cred.GID, cred.Groups)
 	env = defaultEnv(env, cred)
 	if cmd.IsSet("hostname") {
@@ -471,7 +496,7 @@ func doRun(ctx context.Context, cmd *cli.Invocation) (err error) {
 		if err == nil {
 			return
 		}
-		if released > 0 {
+		if released > 0 && !privateNS {
 			log.Warnf("%d mount(s) made for COMMAND are left in place: remove them with 'droot umount --root %s'", released, rootDir)
 		} else if rbErr := mnt.Rollback(); rbErr != nil {
 			log.Warnf("could not remove the mounts made before the failure (use 'droot umount'): %v", rbErr)
@@ -531,7 +556,7 @@ func doRun(ctx context.Context, cmd *cli.Invocation) (err error) {
 	linkVarLock(root)
 
 	shm := !slices.ContainsFunc(tmpfs, func(t tmpfsMount) bool { return t.path == "/dev/shm" })
-	if err := setupDev(root, mnt, shm); err != nil {
+	if err := setupDev(root, mnt, shm, rootless); err != nil {
 		return err
 	}
 	if readOnly {
@@ -549,6 +574,45 @@ func doRun(ctx context.Context, cmd *cli.Invocation) (err error) {
 		noNewPrivileges: !cmd.IsSet("no-new-privileges") || cmd.Bool("no-new-privileges"),
 		seccomp:         cmd.String("seccomp") == "default",
 	})
+}
+
+// runRootless runs droot again as root of a new user namespace, mapping the
+// user to root and their subordinate IDs, if any, to the other users (see
+// package userns), and waits for it.
+func runRootless() error {
+	m, err := userns.CurrentMapping()
+	if err != nil {
+		return err
+	}
+	return userns.Run(m)
+}
+
+// checkMapped checks, in a user namespace, that the user and the groups of
+// COMMAND exist there: droot could not switch to them. Supplementary groups
+// that do not exist are left out.
+func checkMapped(cred *identity.Credential) error {
+	if !osutil.UIDMapped(cred.UID) || !osutil.GIDMapped(cred.GID) {
+		return fmt.Errorf("cannot run as uid %d and gid %d: they do not exist in the user namespace of rootless droot, "+
+			"where your user is root and your subordinate IDs (/etc/subuid and /etc/subgid, mapped with "+
+			"newuidmap and newgidmap) are the other users; give your user subordinate IDs, or run as root with --user 0",
+			cred.UID, cred.GID)
+	}
+	if cred.Groups == nil {
+		// Not the supplementary groups of the user on the host, which
+		// do not exist in the namespace (kept only if setgroups(2) is
+		// denied).
+		cred.Groups = []int{cred.GID}
+	}
+	if cred.Groups != nil {
+		cred.Groups = slices.DeleteFunc(cred.Groups, func(g int) bool {
+			if !osutil.GIDMapped(g) {
+				log.Debugf("leaving out the group %d, which does not exist in the user namespace", g)
+				return true
+			}
+			return false
+		})
+	}
+	return nil
 }
 
 // maxConfigSize bounds the size of a --config file.
@@ -679,10 +743,18 @@ func linkVarLock(root *osutil.Root) {
 // on /dev/shm. If /dev is not on the root's own file system (for instance a
 // bind mount of the host's /dev), nothing is done there: droot must not
 // touch host devices.
-func setupDev(root *osutil.Root, mnt *mounter.Mounter, shm bool) error {
+//
+// In a user namespace (userns), where device nodes cannot be created, the
+// host's are bind mounted instead.
+func setupDev(root *osutil.Root, mnt *mounter.Mounter, shm, userns bool) error {
 	onRoot := mounter.OnMountOf(root.Fd())
 	for _, d := range devices {
-		err := root.MknodChar(d.path, d.major, d.minor, 0o666, onRoot)
+		var err error
+		if userns {
+			err = mnt.BindDevice(d.path, onRoot)
+		} else {
+			err = root.MknodChar(d.path, d.major, d.minor, 0o666, onRoot)
+		}
 		if errors.Is(err, mounter.ErrOtherMount) {
 			log.Warnf("not populating /dev: /dev in the container is a mount point (e.g. a bind mount of the host's /dev)")
 			return nil
@@ -697,7 +769,15 @@ func setupDev(root *osutil.Root, mnt *mounter.Mounter, shm bool) error {
 			log.Warnf("cannot create %s: %v", l.path, err)
 		}
 	}
-	if err := mnt.MountFS("devpts", "/dev/pts", devpts, onRoot); err != nil {
+	err := mnt.MountFS("devpts", "/dev/pts", devpts, onRoot)
+	if err != nil && userns && !osutil.GIDMapped(ttyGID) {
+		// Without the group tty, as in rootless mode without
+		// subordinate IDs.
+		opts := devpts
+		opts.Data = slices.DeleteFunc(slices.Clone(devpts.Data), func(o string) bool { return strings.HasPrefix(o, "gid=") })
+		err = mnt.MountFS("devpts", "/dev/pts", opts, onRoot)
+	}
+	if err != nil {
 		log.Warnf("cannot mount devpts on /dev/pts (pseudo-terminals will not work): %v", err)
 	}
 	if shm {
@@ -819,6 +899,10 @@ func execInRoot(ctx context.Context, rootDir string, argv, env []string, cred *i
 		opts.beforeSwitch()
 	}
 	if err := osutil.SetCredentials(cred.UID, cred.GID, cred.Groups); err != nil {
+		return err
+	}
+	// Rootless: the change of credentials cleared it.
+	if err := userns.KeepParentDeathSignal(); err != nil {
 		return err
 	}
 	if opts.noNewPrivileges {

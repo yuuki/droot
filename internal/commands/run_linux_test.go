@@ -49,7 +49,7 @@ func TestSetupDev(t *testing.T) {
 		}
 	}()
 
-	if err := setupDev(root, mnt, true); err != nil {
+	if err := setupDev(root, mnt, true, false); err != nil {
 		if os.IsPermission(err) {
 			t.Skipf("mknod not permitted here: %v", err)
 		}
@@ -79,7 +79,7 @@ func TestSetupDev(t *testing.T) {
 		t.Errorf("the devpts instance has no ptmx: %v", err)
 	}
 	// Running again reuses everything.
-	if err := setupDev(root, mnt, true); err != nil {
+	if err := setupDev(root, mnt, true, false); err != nil {
 		t.Fatal(err)
 	}
 	if mounts, _ := mnt.Mounts(); len(mounts) != 2 {
@@ -94,7 +94,7 @@ func TestSetupDev(t *testing.T) {
 	if err := unix.Mount(hostDev, devDir, "", unix.MS_BIND, ""); err != nil {
 		t.Skipf("mount not permitted here: %v", err)
 	}
-	if err := setupDev(root, mnt, true); err != nil {
+	if err := setupDev(root, mnt, true, false); err != nil {
 		t.Fatal(err)
 	}
 	if entries, _ := os.ReadDir(hostDev); len(entries) != 0 {

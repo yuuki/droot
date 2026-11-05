@@ -130,7 +130,7 @@ EOF
 # droot and the files the daemon adds to (or changes in) containers.
 listing() {
   tar --numeric-owner -tvf "$1" | awk '{ $4 = $4 " " $5; $5 = ""; print }' |
-    grep -vE ' (\.droot/.*|\.droot/|\.drootenv|\.dockerenv|dev/.*|etc/(hostname|hosts|resolv\.conf|mtab)( -> .*)?)$' | sort
+    grep -vE ' (\.droot/.*|\.droot/|\.drootenv|\.dockerenv|dev/.*|etc/|etc/(hostname|hosts|resolv\.conf|mtab)( -> .*)?)$' | sort
 }
 "$DROOT" export -o "$WORK/layers-daemon.tar" "$LAYERS_IMAGE"
 listing "$WORK/layers-daemon.tar" >"$WORK/layers-daemon.list"
@@ -347,6 +347,98 @@ if unshare -m --propagation private true 2>/dev/null; then
     fail "umount --root / must be refused"
   fi
   echo "ok - umount --root / is refused"
+fi
+
+echo "# rootless"
+rootless_skip=""
+if [[ $(cat /proc/sys/user/max_user_namespaces 2>/dev/null || echo 1) == 0 ]]; then
+  rootless_skip="user.max_user_namespaces is 0"
+elif [[ $(cat /proc/sys/kernel/unprivileged_userns_clone 2>/dev/null || echo 1) == 0 ]]; then
+  rootless_skip="kernel.unprivileged_userns_clone is 0"
+elif [[ $(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || echo 0) == 1 ]]; then
+  rootless_skip="kernel.apparmor_restrict_unprivileged_userns is 1"
+elif ! command -v setpriv >/dev/null; then
+  rootless_skip="setpriv is not installed"
+fi
+if [[ -n $rootless_skip ]]; then
+  echo "skip - rootless: $rootless_skip"
+else
+  chmod 755 "$WORK"
+  chmod 644 "$WORK/app.tar"
+  # as_user USER COMMAND...: runs COMMAND as USER, with its own runtime
+  # directory for the locks of droot. user_prefix USER sets AS_USER to the
+  # command prefix doing it, for commands run in the background.
+  user_prefix() {
+    mkdir -p "$WORK/xdg-$1"
+    chown "$1" "$WORK/xdg-$1"
+    chmod 700 "$WORK/xdg-$1"
+    AS_USER=(setpriv --reuid="$(id -u "$1")" --regid="$(id -g "$1")" --init-groups
+      env -i PATH="$PATH" HOME=/ XDG_RUNTIME_DIR="$WORK/xdg-$1")
+  }
+  as_user() {
+    user_prefix "$1"
+    shift
+    "${AS_USER[@]}" "$@"
+  }
+  if "$DROOT" unshare true 2>/dev/null; then fail "droot unshare must be refused to root"; fi
+  echo "ok - droot unshare is refused to root"
+
+  # A user without subordinate IDs: root is the only user.
+  mkdir "$WORK/rl-nobody"
+  chown nobody "$WORK/rl-nobody"
+  as_user nobody tar -xf "$WORK/app.tar" -C "$WORK/rl-nobody"
+  assert_eq "rootless without subordinate IDs: root only" \
+    "$(as_user nobody "$DROOT" run --root "$WORK/rl-nobody" --user 0 -- sh -c 'id -u; cat /proc/self/setgroups')" \
+    "$(printf '0\ndeny')"
+  if as_user nobody "$DROOT" run --root "$WORK/rl-nobody" 2>"$WORK/rl.err"; then
+    fail "rootless without subordinate IDs: the image's USER must be refused"
+  fi
+  grep -q "do not exist in the user namespace" "$WORK/rl.err" || fail "rootless: $(cat "$WORK/rl.err")"
+  echo "ok - rootless without subordinate IDs: the image's USER is refused"
+
+  # A user with subordinate IDs: ROOTLESS_USER, or the user who ran sudo.
+  SUB_USER=${ROOTLESS_USER:-${SUDO_USER:-}}
+  if [[ -n $SUB_USER ]] && grep -q "^$SUB_USER:" /etc/subuid && grep -q "^$SUB_USER:" /etc/subgid &&
+    command -v newuidmap >/dev/null && command -v newgidmap >/dev/null; then
+    mkdir "$WORK/rl"
+    chown "$SUB_USER" "$WORK/rl"
+    as_user "$SUB_USER" "$DROOT" unshare tar -xpf "$WORK/app.tar" -C "$WORK/rl"
+    first_subuid=$(grep -m 1 "^$SUB_USER:" /etc/subuid | cut -d: -f2)
+    assert_eq "droot unshare: archives keep their owners" \
+      "$(stat -c %u "$WORK/rl/home/app")" "$((first_subuid + 1500 - 1))"
+    assert_eq "rootless: the image's ENTRYPOINT and CMD run as its USER" \
+      "$(as_user "$SUB_USER" "$DROOT" run --root "$WORK/rl")" "myapp-ok from-entrypoint from-cmd"
+    assert_eq "rootless: user, devices, kernel file systems, private mounts" \
+      "$(as_user "$SUB_USER" "$DROOT" run --root "$WORK/rl" -- sh -c '
+          id -u; touch ~/x && echo home-writable
+          echo x >/dev/null && head -c 1 /dev/zero | od -An -tx1 | tr -d " "
+          stat -f -c %T /proc /dev/pts /dev/shm; touch /sys/x 2>/dev/null || echo sys-ro'
+        mounts_under "$WORK/rl")" \
+      "$(printf '1500\nhome-writable\n00\nproc\ndevpts\ntmpfs\nsys-ro\n0')"
+    assert_eq "rootless: exit status" \
+      "$(as_user "$SUB_USER" "$DROOT" run --root "$WORK/rl" -- sh -c 'exit 7' || echo $?)" "7"
+    user_prefix "$SUB_USER"
+    "${AS_USER[@]}" "$DROOT" run --root "$WORK/rl" -- sleep 30 &
+    supervisor=$!
+    sleep 1
+    kill -TERM "$supervisor"
+    status=0
+    wait "$supervisor" || status=$?
+    assert_eq "rootless: signals are passed on to COMMAND" "$status" "143"
+    "${AS_USER[@]}" "$DROOT" run --root "$WORK/rl" -- sleep 31 &
+    supervisor=$!
+    sleep 1
+    kill -KILL "$supervisor"
+    wait "$supervisor" 2>/dev/null || true
+    for _ in $(seq 20); do
+      ps -eo stat=,args= | awk '$1 !~ /Z/ && $2 == "sleep" && $3 == "31"' | grep -q . || break
+      sleep 0.1
+    done
+    assert_eq "rootless: COMMAND dies with droot" \
+      "$(ps -eo stat=,args= | awk '$1 !~ /Z/ && $2 == "sleep" && $3 == "31"' | wc -l)" "0"
+  else
+    echo "skip - rootless with subordinate IDs: set ROOTLESS_USER to a user with entries in /etc/subuid and /etc/subgid (and install newuidmap)"
+  fi
 fi
 
 echo "All integration tests passed"

@@ -7,7 +7,7 @@ droot \- a super\-easy container with chroot, without docker
 [\fIglobal options\fR] \fICOMMAND\fR [\fIoptions\fR] [\fIARG\fR...]
 .SH DESCRIPTION
 .PP
-droot exports the file system of a Docker image as a tar archive (export), runs a command inside an extracted archive with chroot(2) (run), cleans up the mounts made by run (umount) and shows them (status).
+droot exports the file system of a container image as a tar archive (export), runs a command inside an extracted archive with chroot(2) (run), as root or rootless in a user namespace, cleans up the mounts made by run (umount) and shows them (status), and runs commands in the user namespace of rootless runs (unshare).
 .SH GLOBAL OPTIONS
 .PP
 Accepted before and after \fICOMMAND\fR.
@@ -82,7 +82,9 @@ Mounts /proc, /sys and the requested bind mounts under ROOT_DIR, creates the bas
 .PP
 Without COMMAND, the ENTRYPOINT and CMD of the image saved by 'droot export' (/.droot/config.json) are run; COMMAND replaces both. The image's USER and WORKDIR are the defaults of \-\-user and \-\-workdir.
 .PP
-The options must come before COMMAND: everything from COMMAND on is passed to it verbatim. Mounts are left in place after COMMAND exits; remove them with 'droot umount'. Must be run as root.
+The options must come before COMMAND: everything from COMMAND on is passed to it verbatim. Mounts are left in place after COMMAND exits; remove them with 'droot umount'.
+.PP
+Run by another user than root, droot runs rootless: it runs again as root of a new user namespace, where your user is root and your subordinate IDs (/etc/subuid and /etc/subgid, with the newuidmap and newgidmap commands) are the other users, and waits for COMMAND, passing signals on to it. The mounts are private (as with \-\-unshare), /proc and the device files are bind mounts of the host's. Extract archives with 'droot unshare' so that their files keep their owners.
 .PP
 \-\-config FILE reads options from FILE, in a subset of TOML: lines KEY = VALUE, where KEY is the long name of an option and VALUE a string ("..." or '...'), true or false, or an array of strings for repeatable options; command, an array of strings, gives COMMAND. # starts a comment. The options given on the command line take precedence, and repeatable ones are added to the file's:
 .PP
@@ -138,7 +140,7 @@ drop the capability CAP (e.g. CHOWN, or ALL) from the ones kept by default (repe
 set a resource limit of COMMAND, e.g. nofile=65536 or core=0:unlimited (names of ulimit, as in docker run) (repeatable)
 .TP
 \fB\-\-unshare\fR
-make the mounts in a private mount namespace: they disappear when COMMAND and its children exit, and need no 'droot umount'
+make the mounts in a private mount namespace: they disappear when COMMAND and its children exit, and need no 'droot umount' (always the case rootless)
 .TP
 \fB\-\-unshare\-ipc\fR
 run COMMAND in a private IPC namespace (System V IPC, POSIX message queues)
@@ -187,6 +189,28 @@ Processes of a 'droot run \-\-unshare' are listed, but their mounts are in a pri
 .TP
 \fB\-r,\fR \fI\-\-root ROOT_DIR\fR
 root directory used with 'droot run' (required)
+.TP
+\fB\-h, \-\-help\fR
+show help
+.SS droot unshare [COMMAND [ARG...]]
+.PP
+Run a command as root of the user namespace of rootless runs.
+.PP
+For users other than root. Runs COMMAND (default: $SHELL, or /bin/sh) as root in a user namespace with the ID mapping of 'droot run' without root: your user as root, and your subordinate IDs (/etc/subuid and /etc/subgid, with the newuidmap and newgidmap commands) as the other users. There, files keep the owners of an archive, so that the users of an image can write their files:
+.PP
+.nf
+.RS 4
+droot unshare tar \-xpf app.tar \-C app
+.RE
+.fi
+.PP
+Files owned by subordinate IDs can only be deleted in the namespace too:
+.PP
+.nf
+.RS 4
+droot unshare rm \-rf app
+.RE
+.fi
 .TP
 \fB\-h, \-\-help\fR
 show help

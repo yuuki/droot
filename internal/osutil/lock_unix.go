@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/yuuki/droot/internal/log"
 )
 
 // lockPoll is how often LockRoot retries a lock held by another process.
@@ -31,16 +33,29 @@ var lockDir = "/run/droot"
 // close-on-exec) or exits.
 //
 // Only root can take the lock; for other users LockRoot does nothing, as
-// they cannot mount anything anyway.
+// they cannot mount anything anyway. In a user namespace (rootless mode),
+// the lock files are in $XDG_RUNTIME_DIR/droot, the user's own directory;
+// without XDG_RUNTIME_DIR, LockRoot does nothing either.
 func LockRoot(ctx context.Context, rootDir string, waiting func()) (unlock func(), err error) {
 	if os.Geteuid() != 0 {
 		return func() {}, nil
+	}
+	lockDir := lockDir
+	if InUserNamespace() {
+		runtimeDir := os.Getenv("XDG_RUNTIME_DIR")
+		if runtimeDir == "" || !filepath.IsAbs(runtimeDir) {
+			log.Debugf("not locking %s: XDG_RUNTIME_DIR is not set", rootDir)
+			return func() {}, nil
+		}
+		lockDir = filepath.Join(runtimeDir, "droot")
 	}
 	var st unix.Stat_t
 	if err := unix.Stat(rootDir, &st); err != nil {
 		return nil, &fs.PathError{Op: "stat", Path: rootDir, Err: err}
 	}
-	if err := os.MkdirAll(lockDir, 0o700); err != nil {
+	// In a user namespace, lockDir is in the user's own XDG_RUNTIME_DIR;
+	// its owner and mode are checked below.
+	if err := os.Mkdir(lockDir, 0o700); err != nil && !errors.Is(err, fs.ErrExist) { //nolint:gosec // G703: see above
 		return nil, err
 	}
 	var dst unix.Stat_t

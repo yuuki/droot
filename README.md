@@ -38,7 +38,8 @@ before running untrusted images.
 | Command | Requirements |
 |---|---|
 | `droot export` | Linux or macOS. For the images of a daemon, a daemon speaking the Docker Engine API: Docker Engine, Docker Desktop, Colima, OrbStack, Podman (`podman system service`), ... Images of registries, `docker save` archives and OCI layouts need no daemon. |
-| `droot run`, `droot umount` | Linux, root privileges |
+| `droot run` | Linux. As root, or as any user with [user namespaces](#running-without-root) (rootless). |
+| `droot umount` | Linux, root privileges |
 
 Building from source requires Go 1.26 or later.
 
@@ -332,8 +333,23 @@ Processes in /var/containers/app: 1
   4242  1500  /usr/local/bin/app --port 8080
 ```
 
-Processes of a `droot run --unshare` are listed, but not their mounts, which
-are private.
+Processes of a `droot run --unshare` (or rootless) are listed, but not their
+mounts, which are private.
+
+### `droot unshare`
+
+```
+droot unshare [COMMAND [ARG...]]
+```
+
+For users other than root: runs `COMMAND` (default: `$SHELL`) as root in a
+user namespace with the ID mapping of [rootless](#running-without-root) `droot
+run`, so that archives keep the owners of their files:
+
+```console
+$ droot unshare tar -xpf app.tar -C app
+$ droot unshare rm -rf app      # files owned by subordinate IDs
+```
 
 ### Global options
 
@@ -357,6 +373,45 @@ $ source <(droot completion bash)     # in ~/.bashrc
 $ source <(droot completion zsh)      # in ~/.zshrc, after compinit
 $ droot completion fish > ~/.config/fish/completions/droot.fish
 ```
+
+## Running without root
+
+`droot run`, started by a user other than root, runs **rootless**: droot
+runs itself again as root of a new
+[user namespace](https://man7.org/linux/man-pages/man7/user_namespaces.7.html),
+where it has the privileges to mount and chroot over that namespace only, and
+waits for `COMMAND`, passing the signals it receives on to it and exiting
+with its status. In the namespace:
+
+- your user is root, and your **subordinate IDs** — the ranges of
+  `/etc/subuid` and `/etc/subgid`, mapped with the `newuidmap` and
+  `newgidmap` commands (package `uidmap` on Debian and Ubuntu,
+  `shadow-utils` on Fedora) — are the users 1, 2, ... Without them, root is
+  the only user: run as `--user 0`, and extract archives with plain `tar
+  -xf`;
+- the mounts are made in a private mount namespace, as with `--unshare`:
+  they disappear with `COMMAND`, `droot umount` is not needed;
+- `/proc` and the device files are bind mounts of the host's: a new procfs
+  needs a PID namespace, device nodes cannot be created;
+- the files keep their owners: extract archives with `droot unshare tar -xpf`
+  so that the users of the image own their files, and delete them with
+  `droot unshare rm -rf`. As root, extract them with `tar -xpf` as usual.
+
+```console
+$ grep "^$USER:" /etc/subuid /etc/subgid
+/etc/subuid:alice:100000:65536
+/etc/subgid:alice:100000:65536
+$ mkdir app && droot unshare tar -xpf app.tar -C app
+$ droot run --root app --bind ~/app-data:/data
+```
+
+Rootless runs cannot raise hard resource limits (`--ulimit`), and bind mount
+only what your user can read. Some distributions restrict unprivileged user
+namespaces: Ubuntu 24.04 and later deny them capabilities unless
+`kernel.apparmor_restrict_unprivileged_userns` is 0 or an AppArmor profile
+allows droot; elsewhere, check `user.max_user_namespaces` and
+`kernel.unprivileged_userns_clone`. Locks are taken in
+`$XDG_RUNTIME_DIR/droot`.
 
 ## Exporting without a Docker daemon
 

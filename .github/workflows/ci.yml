@@ -134,6 +134,10 @@ jobs:
         with:
           go-version: stable
       - run: make build
+      # Ubuntu 24.04 denies capabilities in user namespaces created by
+      # unprivileged users: the rootless tests need them.
+      - name: Allow unprivileged user namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: End-to-end tests against Docker
         if: matrix.engine == 'docker'
         run: sudo ./script/integration-test.sh ./droot

@@ -29,7 +29,7 @@ library, and its packages carry no compatibility promise.
 |---|---|
 | `cmd/droot` | `main`: signal handling, version stamping. |
 | `internal/cli` | A small command line parser: flags, help, suggestions for typos, shell completion scripts. |
-| `internal/commands` | The commands: `export`, `run`, `umount`. |
+| `internal/commands` | The commands: `export`, `run`, `umount`, `status`, `unshare`. |
 | `internal/conffile` | The configuration files of `droot run --config`, a subset of TOML. |
 | `internal/docker` | A minimal Docker Engine API client written with the standard library, and the export logic. |
 | `internal/image` | Images read without daemon: a registry client, `docker save` archives, OCI layouts, and the flattening of layers. |
@@ -39,6 +39,7 @@ library, and its packages carry no compatibility promise.
 | `internal/mounter` | Mounting `/proc`, `/sys` and bind mounts, parsing `/proc/self/mountinfo`, unmounting. |
 | `internal/osutil` | File system and process helpers: secure path resolution, file copy, devices, capabilities, credentials, exec. |
 | `internal/seccomp` | The seccomp filter of `droot run --seccomp default`, a classic BPF program. |
+| `internal/userns` | Rootless mode: the ID mappings, the start of droot in a user namespace, and its supervision. |
 | `internal/log` | A tiny leveled logger writing to STDERR. |
 
 Only one third-party module is used: `golang.org/x/sys`.
@@ -227,6 +228,39 @@ setuid bits are preserved.
 
 Nothing is undone when the command exits: the mounts stay until
 `droot umount`.
+
+### Rootless
+
+A `droot run` (or `droot unshare`) started by a user other than root goes
+through the `userns` package first:
+
+1. Read the user's subordinate IDs from `/etc/subuid` and `/etc/subgid`. The
+   mapping is the user's own UID and GID as 0, then the subordinate ranges
+   from 1 on — if the user has both, and `newuidmap` and `newgidmap` are
+   installed; otherwise the user alone.
+2. Start `/proc/self/exe` with the same arguments in a new user namespace
+   (`CLONE_NEWUSER`, with `PR_SET_PDEATHSIG` set to `SIGKILL`). This first
+   stage blocks on a pipe while the parent writes its ID maps: with
+   `newuidmap`/`newgidmap`, or directly (`setgroups` denied, then a
+   one-line `uid_map` and `gid_map`), which an unprivileged process may do
+   for its own IDs.
+3. Released, the first stage executes droot again: having become root of
+   the namespace before this `execve(2)`, the second stage gets the
+   capabilities of the namespace, re-arms the parent-death signal (cleared by
+   the privilege change) and runs `droot run` as above, root of the
+   namespace, with these differences: the mount namespace is always private
+   (as with `--unshare`); procfs, which needs a PID namespace of its own
+   there, is replaced by a recursive bind mount of the host's `/proc`; the
+   device files are bind mounts of the host's; the devpts instance has no
+   `gid=5` if the group `tty` is not mapped; the lock is
+   `$XDG_RUNTIME_DIR/droot/DEV-INODE.lock`; unmapped supplementary groups
+   are left out; and the parent-death signal is set again after `setuid`.
+4. Meanwhile the parent, the first droot, keeps the thread that started the
+   child (the parent-death signal follows the thread), passes `SIGHUP`,
+   `SIGINT`, `SIGTERM`, `SIGQUIT`, `SIGUSR1`, `SIGUSR2`, ... on to it —
+   except, when droot is in the foreground of a terminal, the signals the
+   terminal sends to the whole process group — and exits with the exit
+   status of `COMMAND`, or kills itself with the signal that killed it.
 
 ## `droot umount`
 

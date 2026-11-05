@@ -223,6 +223,13 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
   `Entrypoint`, `Cmd`, `StopSignal`) as `/.droot/config.json`, which, unlike
   `/.drootenv`, represents every environment variable. `droot run` uses it:
   `droot run --root DIR` alone runs the image's `ENTRYPOINT` and `CMD`.
+- Rootless `droot run`: run by a user other than root, droot runs itself
+  again as root of a user namespace (the user as root, their subordinate IDs
+  from `/etc/subuid` and `/etc/subgid` as the other users, with
+  `newuidmap`/`newgidmap`), in a private mount namespace, binding the host's
+  `/proc` and device files, and supervises `COMMAND` (signals, exit status).
+  `droot unshare` runs a command in such a namespace, to extract archives
+  with their owners.
 - `droot run --workdir`/`-w`.
 - `droot run --config FILE` reads the options from a file (a subset of TOML,
   parsed without a new dependency), so that systemd units stay short; see

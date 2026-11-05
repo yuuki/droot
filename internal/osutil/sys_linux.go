@@ -110,10 +110,17 @@ func lastCap() (uintptr, error) {
 }
 
 // SetCredentials switches the process to the given groups, gid and uid, in
-// that order. If groups is nil the supplementary groups are left unchanged.
+// that order. If groups is nil the supplementary groups are left unchanged,
+// and so they are in a user namespace that denies setgroups(2) (rootless
+// mode without subordinate group IDs), where droot has no supplementary
+// groups.
 //
 // Since Go 1.16 these syscall wrappers apply to all threads of the process.
 func SetCredentials(uid, gid int, groups []int) error {
+	if groups != nil && !SetgroupsAllowed() {
+		log.Debugf("not setting the supplementary groups %v: setgroups is denied in this user namespace", groups)
+		groups = nil
+	}
 	if groups != nil {
 		if err := syscall.Setgroups(groups); err != nil {
 			return fmt.Errorf("setgroups(%v): %w", groups, err)

@@ -32,6 +32,9 @@ func (m *Mounter) ProtectKernelFS() error { return unsupported() }
 // BindMount is only supported on Linux.
 func (m *Mounter) BindMount(string, string, BindOptions) error { return unsupported() }
 
+// BindDevice is only supported on Linux.
+func (m *Mounter) BindDevice(string, osutil.DirCheck) error { return unsupported() }
+
 // MountFS is only supported on Linux.
 func (m *Mounter) MountFS(string, string, FSOptions, osutil.DirCheck) error { return unsupported() }
 

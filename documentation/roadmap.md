@@ -27,8 +27,11 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
 - **[compat]** Nothing is created in `/dev` when it is a mount point, including
   `--tmpfs /dev`; a fresh `/dev` like Docker's would need droot to tell its own
   tmpfs from the host's `devtmpfs`.
-- **[compat]** `droot run` needs real root; rootless operation with user
-  namespaces is not supported.
+- **[compat]** Rootless, `/proc` is the host's (droot has no PID namespace),
+  the device files are bind mounts of the host's, hard resource limits
+  cannot be raised, and `droot status` does not see the mounts (they are in
+  the private namespace of the run). Without subordinate IDs, only root
+  exists in the namespace.
 
 ### `droot export`
 
@@ -66,7 +69,6 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
   systemd; who removes the cgroup after the command exits must be decided.
   Today: `--ulimit`, and systemd (`systemd-run --scope`, `MemoryMax=`).
 - **[feature]** `droot umount --all`.
-- **[feature]** Rootless mode with user namespaces.
 
 ### Building and shipping
 

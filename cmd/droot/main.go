@@ -13,6 +13,7 @@ import (
 
 	"github.com/yuuki/droot/internal/commands"
 	"github.com/yuuki/droot/internal/log"
+	"github.com/yuuki/droot/internal/userns"
 )
 
 // version, commit and date are set at build time with -ldflags
@@ -71,6 +72,9 @@ func buildVersion(version, commit, date string, bi *debug.BuildInfo) string {
 }
 
 func main() {
+	// A droot started by a rootless droot in a user namespace.
+	userns.Init()
+
 	// SIGHUP: the terminal or ssh session that started droot is gone.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	// After the first signal, restore the default behavior so that a
@@ -87,6 +91,12 @@ func main() {
 	_ = log.SetFormat(os.Getenv("DROOT_LOG_FORMAT"))
 	err := commands.Run(ctx, getVersion(), os.Args)
 	stop()
+	// The exit status of the droot run rootless, which reported its
+	// errors itself.
+	var exit *userns.ExitError
+	if errors.As(err, &exit) {
+		os.Exit(exit.Code)
+	}
 	if err != nil {
 		if ctx.Err() != nil && errors.Is(err, context.Canceled) {
 			err = errors.New("interrupted")

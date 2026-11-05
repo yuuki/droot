@@ -31,7 +31,8 @@ Droot は意図的に、Docker のようなプロセス、ネットワーク、�
 | コマンド | 要件 |
 |---|---|
 | `droot export` | Linux または macOS。デーモンのイメージには、Docker Engine API に対応したデーモン（Docker Engine、Docker Desktop、Colima、OrbStack、Podman（`podman system service`）など）が必要です。レジストリのイメージ、`docker save` のアーカイブ、OCI レイアウトにはデーモンは不要です。 |
-| `droot run`, `droot umount` | Linux、root 権限 |
+| `droot run` | Linux。root、または[ユーザー名前空間](#root-を使わない実行)を使える任意のユーザー（rootless） |
+| `droot umount` | Linux、root 権限 |
 
 ソースからビルドするには Go 1.26 以降が必要です。
 
@@ -274,7 +275,20 @@ Processes in /var/containers/app: 1
   4242  1500  /usr/local/bin/app --port 8080
 ```
 
-`droot run --unshare` のプロセスは一覧に表示されますが、そのマウントはプライベートであるため表示されません。
+`droot run --unshare`（または rootless）のプロセスは一覧に表示されますが、そのマウントはプライベートであるため表示されません。
+
+### `droot unshare`
+
+```
+droot unshare [COMMAND [ARG...]]
+```
+
+root 以外のユーザー向けのコマンドです。[rootless](#root-を使わない実行) の `droot run` と同じ ID マッピングのユーザー名前空間で、`COMMAND`（デフォルトは `$SHELL`）を root として実行します。これにより、アーカイブのファイルの所有者がそのまま保たれます。
+
+```console
+$ droot unshare tar -xpf app.tar -C app
+$ droot unshare rm -rf app      # サブ ID が所有するファイル
+```
 
 <a id="global-options"></a>
 ### グローバルオプション
@@ -300,6 +314,25 @@ $ droot completion fish > ~/.config/fish/completions/droot.fish
 ```
 
 <a id="choosing-the-docker-daemon"></a>
+## root を使わない実行
+
+root 以外のユーザーが `droot run` を実行すると、**rootless** で動作します。droot は新しい[ユーザー名前空間](https://man7.org/linux/man-pages/man7/user_namespaces.7.html)の root として自分自身を再実行し（その名前空間に対してだけ、マウントや chroot の権限を持ちます）、`COMMAND` の終了を待ちます。受け取ったシグナルは `COMMAND` に転送し、その終了ステータスで終了します。名前空間の中では次のようになります。
+
+- 自分のユーザーが root になり、**サブ ID**（`/etc/subuid` と `/etc/subgid` の範囲。`newuidmap` と `newgidmap` コマンドでマッピングされます。Debian と Ubuntu では `uidmap` パッケージ、Fedora では `shadow-utils`）がユーザー 1、2、... になります。サブ ID がない場合、ユーザーは root だけです。`--user 0` で実行し、アーカイブは通常の `tar -xf` で展開してください。
+- マウントは `--unshare` と同じくプライベートなマウント名前空間で行われ、`COMMAND` とともに消えます。`droot umount` は不要です。
+- `/proc` とデバイスファイルはホストのもののバインドマウントです（新しい procfs には PID 名前空間が必要で、デバイスノードは作成できないため）。
+- ファイルの所有者はそのまま使われます。イメージのユーザーが自分のファイルを所有するように、アーカイブは `droot unshare tar -xpf` で展開し、`droot unshare rm -rf` で削除してください。root の場合は、これまでどおり `tar -xpf` で展開します。
+
+```console
+$ grep "^$USER:" /etc/subuid /etc/subgid
+/etc/subuid:alice:100000:65536
+/etc/subgid:alice:100000:65536
+$ mkdir app && droot unshare tar -xpf app.tar -C app
+$ droot run --root app --bind ~/app-data:/data
+```
+
+rootless では、ハードリミットを引き上げること（`--ulimit`）はできず、バインドマウントできるのは自分のユーザーが読めるものだけです。ディストリビューションによっては、非特権ユーザー名前空間が制限されています。Ubuntu 24.04 以降では、`kernel.apparmor_restrict_unprivileged_userns` が 0 であるか、AppArmor プロファイルが droot を許可していない限り、ユーザー名前空間でケーパビリティが使えません。それ以外の環境では `user.max_user_namespaces` と `kernel.unprivileged_userns_clone` を確認してください。ロックは `$XDG_RUNTIME_DIR/droot` に作成されます。
+
 ## Docker デーモンを使わないエクスポート
 
 `docker://`、`docker-archive:`、`oci:`、`oci-archive:` のイメージでは、`droot export` はデーモンを必要としません。Docker のない CI ランナーでも、Podman、Buildah、containerd のストアからでも（それぞれの `save` や `push` コマンドを介して）、レジストリから直接でもエクスポートできます。droot はイメージのマニフェスト（マルチプラットフォームイメージでは `--platform` のバリアント）を読み、コンテナエンジンと同じようにレイヤーを順に適用し（レイヤーの whiteout は下位レイヤーのファイルを削除します）、得られたファイルシステムを書き出します。

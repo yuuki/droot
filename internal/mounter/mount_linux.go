@@ -237,6 +237,10 @@ func NotKernelFS(fd int) error {
 
 // MountSysProc mounts procfs on /proc and recursively bind mounts the host's
 // /sys on /sys as a slave mount. Existing mounts are reused.
+//
+// In a user namespace (rootless mode), where procfs can only be mounted in a
+// PID namespace of its own, the host's /proc is bind mounted instead: droot
+// shares the PID namespace of the host anyway, so it shows the same.
 func (m *Mounter) MountSysProc() error {
 	proc, err := m.root.OpenMountTarget("/proc", true, NotKernelFS)
 	if err != nil {
@@ -244,6 +248,10 @@ func (m *Mounter) MountSysProc() error {
 	}
 	defer proc.Close()
 	p, err := m.mountOn(proc, "proc", "proc", unix.MS_NOSUID|unix.MS_NODEV|unix.MS_NOEXEC, "", false)
+	if errors.Is(err, unix.EPERM) && osutil.InUserNamespace() {
+		log.Debugf("cannot mount procfs in this user namespace: binding the host's /proc")
+		p, err = m.mountOn(proc, "/proc", "", unix.MS_BIND|unix.MS_REC, "", false)
+	}
 	if err != nil {
 		return err
 	}
@@ -565,6 +573,39 @@ func (m *Mounter) BindMount(hostPath, containerPath string, opts BindOptions) er
 		return remountReadonly(mnt)
 	}
 	return nil
+}
+
+// BindDevice bind mounts the host's device node path (e.g. /dev/null) on the
+// same path in the root, creating an empty file there if needed: in a user
+// namespace, device nodes cannot be created. check, if not nil, is applied
+// to the directories traversed, in addition to the refusal of kernel file
+// systems.
+func (m *Mounter) BindDevice(path string, check osutil.DirCheck) error {
+	var st unix.Stat_t
+	if err := unix.Stat(path, &st); err != nil {
+		return &fs.PathError{Op: "stat", Path: path, Err: err}
+	}
+	if st.Mode&unix.S_IFMT != unix.S_IFCHR {
+		return fmt.Errorf("%s is not a character device", path)
+	}
+	both := func(fd int) error {
+		if check != nil {
+			if err := check(fd); err != nil {
+				return err
+			}
+		}
+		return NotKernelFS(fd)
+	}
+	t, err := m.root.OpenMountTarget(path, false, both)
+	if err != nil {
+		return err
+	}
+	defer t.Close()
+	mnt, err := m.mountOn(t, path, "", unix.MS_BIND, "", false)
+	if err != nil {
+		return err
+	}
+	return mnt.Close()
 }
 
 // MountFS mounts a new file system of type fstype (e.g. tmpfs or devpts) on
