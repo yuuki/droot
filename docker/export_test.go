@@ -13,6 +13,7 @@ import (
 )
 
 type fakeAPI struct {
+	onCreate   func() // called during ContainerCreate
 	env        []string
 	archive    []byte
 	createErr  error
@@ -27,7 +28,15 @@ type fakeAPI struct {
 
 const fakeID = "0123456789abcdef0123456789abcdef"
 
-func (f *fakeAPI) ContainerCreate(_ context.Context, cfg *ContainerConfig, platform string) (string, error) {
+func (f *fakeAPI) ContainerCreate(ctx context.Context, cfg *ContainerConfig, platform string) (string, error) {
+	if f.onCreate != nil {
+		f.onCreate()
+	}
+	if err := ctx.Err(); err != nil {
+		// Like an HTTP request aborted after the daemon received it: the
+		// container may exist, but its ID is lost.
+		return "", err
+	}
 	if f.createErr != nil {
 		return "", f.createErr
 	}
@@ -237,6 +246,19 @@ func TestExportImageCancelledStillCleansUp(t *testing.T) {
 	}
 	if len(api.removed) != 1 {
 		t.Fatalf("container should be removed after cancellation, got %v", api.removed)
+	}
+}
+
+func TestExportImageCancelledDuringCreate(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	api := &fakeAPI{archive: buildTar(t, nil), onCreate: cancel} // Ctrl-C while creating
+	err := ExportImage(ctx, api, "img", io.Discard, ExportOptions{})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("want context.Canceled, got %v", err)
+	}
+	if len(api.removed) != 1 || api.removed[0] != fakeID {
+		t.Fatalf("the container created during the cancellation must be removed, got %v", api.removed)
 	}
 }
 

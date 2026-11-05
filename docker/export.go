@@ -42,6 +42,10 @@ var placeholderCmd = []string{"/.droot-export-placeholder"}
 // after the main context was cancelled (e.g. by Ctrl-C).
 const removeTimeout = 30 * time.Second
 
+// createTimeout bounds the creation of the temporary container, which is not
+// interrupted by cancellation (see ExportImage).
+const createTimeout = 2 * time.Minute
+
 // ExportImage writes the root filesystem of image to w as a tar archive.
 //
 // The image's environment variables are stored in /.drootenv inside the
@@ -50,11 +54,17 @@ const removeTimeout = 30 * time.Second
 // works for any image, including ones without /bin/sh such as distroless or
 // FROM scratch images.
 func ExportImage(ctx context.Context, api API, image string, w io.Writer, opts ExportOptions) (err error) {
-	id, err := api.ContainerCreate(ctx, &ContainerConfig{
+	// The creation is not cancelled with ctx: if the request were aborted
+	// after the daemon received it, the container would be created without
+	// droot ever learning its ID, and could not be removed. Cancellation is
+	// checked right after.
+	createCtx, cancelCreate := context.WithTimeout(context.WithoutCancel(ctx), createTimeout)
+	id, err := api.ContainerCreate(createCtx, &ContainerConfig{
 		Image:      image,
 		Entrypoint: placeholderCmd,
 		Labels:     map[string]string{exportLabel: "export"},
 	}, opts.Platform)
+	cancelCreate()
 	if err != nil {
 		if IsNotFound(err) {
 			return fmt.Errorf("image %s not found locally; pull or build it first (e.g. `docker pull %s`): %w", image, image, err)
@@ -77,6 +87,9 @@ func ExportImage(ctx context.Context, api API, image string, w io.Writer, opts E
 		}
 		log.Debugf("removed temporary container %s", shortID(id))
 	}()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	info, err := api.ContainerInspect(ctx, id)
 	if err != nil {
