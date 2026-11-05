@@ -47,8 +47,6 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
 
 ### Project
 
-- **[project]** The Homebrew tap (`yuuki/homebrew-droot`) is not updated by
-  the release workflow and must be checked against the new asset names.
 - **[project]** Windows is not supported at all.
 
 ## Feature ideas
@@ -82,7 +80,3 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
 
 - **[ux]** A declarative file (e.g. `/etc/droot/app.toml`) describing the run
   options of an application, usable from systemd units.
-
-### Project and maintenance
-
-- **[project]** Automate the Homebrew tap with GoReleaser, or drop it.

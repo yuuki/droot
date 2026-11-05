@@ -127,8 +127,6 @@ change adds an entry under "Unreleased".
       [Sigstore](https://www.sigstore.dev), listed under the repository's
       *Attestations*).
 4. Review the draft and publish it.
-5. Update the Homebrew tap (`yuuki/homebrew-droot`) with the new URL and
-   checksum.
 
 If the workflow fails before the release is published, fix the cause and
 re-run it: the draft is replaced. Never move a published tag; release a new

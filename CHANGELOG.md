@@ -283,3 +283,7 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
   `golang.org/x/sys`.
 - The goxc/ghr/gobump release scripts and the Dockerfile used to build in a
   container (cross compilation needs no cgo any more).
+- The Homebrew installation instructions. The tap (`yuuki/homebrew-droot`)
+  is no longer maintained and still installs droot 0.7.7: `droot run` and
+  `droot umount` need Linux, and the macOS binaries attached to the
+  releases (for `droot export`) need no package manager.

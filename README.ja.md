@@ -65,16 +65,6 @@ $ gh attestation verify droot --repo yuuki/droot --signer-workflow yuuki/droot/.
 $ go install github.com/yuuki/droot/cmd/droot@latest
 ```
 
-### Homebrew
-
-```console
-$ brew tap yuuki/droot
-$ brew install droot
-```
-
-> [!WARNING]
-> tap の formula が更新されるまでは、droot 0.7.7 がインストールされます。このバージョンの `droot export` は、Docker API バージョン 1.29 に固定されているため、現在の Docker リリースでは動作しません。ビルド済みバイナリか `go install` を使うことをおすすめします。
-
 <a id="from-source"></a>
 ### ソースから
 
