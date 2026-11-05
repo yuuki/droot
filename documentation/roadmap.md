@@ -79,10 +79,6 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
 
 ### Usability
 
-- **[ux]** man pages and Markdown CLI reference generated from the CLI
-  definition (`internal/cli`).
-- **[ux]** `droot version` with commit and build date; `--quiet`; structured
-  logs (`log/slog`, JSON).
 - **[ux]** A declarative file (e.g. `/etc/droot/app.toml`) describing the run
   options of an application, usable from systemd units.
 - **[ux]** Example systemd unit files and a deployment tutorial.

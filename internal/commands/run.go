@@ -214,7 +214,9 @@ type bindMount struct {
 }
 
 func doRun(ctx context.Context, cmd *cli.Invocation) (err error) {
-	setup(cmd)
+	if err := setup(cmd); err != nil {
+		return err
+	}
 	if runtime.GOOS != "linux" {
 		return fmt.Errorf("droot run is only supported on Linux (running on %s)", runtime.GOOS)
 	}

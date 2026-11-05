@@ -24,7 +24,9 @@ func umountCommand() *cli.Command {
 }
 
 func doUmount(ctx context.Context, cmd *cli.Invocation) error {
-	setup(cmd)
+	if err := setup(cmd); err != nil {
+		return err
+	}
 	if cmd.String("root") == "" {
 		return cmd.UsageError("--root is required")
 	}

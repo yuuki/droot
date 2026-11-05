@@ -28,7 +28,7 @@ func testApp(got *result) *App {
 		return nil
 	}
 	flags := []*Flag{
-		{Name: "name", Aliases: []string{"n"}, Kind: String, Placeholder: "NAME", Usage: "a name"},
+		{Name: "name", Aliases: []string{"n"}, Kind: String, Placeholder: "NAME", Usage: "a name", EnvVar: "APP_TEST_NAME"},
 		{Name: "item", Aliases: []string{"i"}, Kind: Strings, Placeholder: "ITEM", Usage: "an item"},
 		{Name: "flag", Aliases: []string{"f", "fl"}, Kind: Bool, Usage: "a flag"},
 	}
@@ -116,6 +116,13 @@ func TestEnvVar(t *testing.T) {
 	t.Setenv("APP_TEST_DEBUG", "")
 	if err := testApp(&got).Run(context.Background(), []string{"app", "mixed"}); err != nil || got.debug {
 		t.Fatalf("an empty variable is ignored: %+v, %v", got, err)
+	}
+	t.Setenv("APP_TEST_NAME", "from-env")
+	if err := testApp(&got).Run(context.Background(), []string{"app", "mixed"}); err != nil || got.name != "from-env" {
+		t.Fatalf("APP_TEST_NAME: %+v, %v", got, err)
+	}
+	if err := testApp(&got).Run(context.Background(), []string{"app", "mixed", "-n", "flag"}); err != nil || got.name != "flag" {
+		t.Fatalf("the flag must take precedence: %+v, %v", got, err)
 	}
 	t.Setenv("APP_TEST_DEBUG", "maybe")
 	if err := testApp(&got).Run(context.Background(), []string{"app", "mixed"}); err == nil {

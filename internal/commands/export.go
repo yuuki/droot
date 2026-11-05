@@ -87,7 +87,9 @@ func exportCommand() *cli.Command {
 }
 
 func doExport(ctx context.Context, cmd *cli.Invocation) error {
-	setup(cmd)
+	if err := setup(cmd); err != nil {
+		return err
+	}
 	if len(cmd.Args()) != 1 || cmd.Args()[0] == "" {
 		return cmd.UsageError("exactly one image is required")
 	}
@@ -178,9 +180,9 @@ func doExport(ctx context.Context, cmd *cli.Invocation) error {
 }
 
 // progressOutput returns where the progress of an export is shown: STDERR
-// if it is a terminal, and the output is not in debug mode.
+// if it is a terminal, unless the messages are quiet, JSON or debug output.
 func progressOutput() *os.File {
-	if log.IsDebug() {
+	if log.IsDebug() || log.IsQuiet() || log.IsJSON() {
 		return nil
 	}
 	return os.Stderr

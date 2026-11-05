@@ -27,6 +27,10 @@ test-root: ## Run unit tests as root, including the ones that mount file systems
 integration-test: build ## Run end-to-end tests against the local Docker daemon (needs root)
 	$(SUDO) ./script/integration-test.sh ./$(BIN)
 
+.PHONY: docs
+docs: ## Regenerate documentation/cli.md and documentation/droot.1 from the command definitions
+	go run ./internal/cmd/gendocs documentation
+
 FUZZTIME ?= 30s
 
 .PHONY: fuzz

@@ -4,29 +4,70 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"os/signal"
+	"runtime"
 	"runtime/debug"
 	"strings"
 	"syscall"
 
 	"github.com/yuuki/droot/internal/commands"
+	"github.com/yuuki/droot/internal/log"
 )
 
-// version is set at build time with -ldflags "-X main.version=...".
-var version = ""
+// version, commit and date are set at build time with -ldflags
+// "-X main.version=... -X main.commit=... -X main.date=..." (GoReleaser and
+// make build do).
+var version, commit, date string
 
+// getVersion returns the version shown by --version, e.g.
+// "0.8.0 (commit 1a2b3c4d5e6f, 2026-11-05T10:00:00Z, go1.26.0)".
 func getVersion() string {
-	if version != "" {
-		return strings.TrimPrefix(version, "v")
+	bi, _ := debug.ReadBuildInfo()
+	return buildVersion(version, commit, date, bi)
+}
+
+func buildVersion(version, commit, date string, bi *debug.BuildInfo) string {
+	modified := false
+	if bi != nil {
+		// `go install github.com/yuuki/droot/cmd/droot@vX.Y.Z` records
+		// the module version, and builds from a git checkout the commit.
+		if version == "" && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
+			version = bi.Main.Version
+		}
+		for _, s := range bi.Settings {
+			switch s.Key {
+			case "vcs.revision":
+				if commit == "" {
+					commit = s.Value
+				}
+			case "vcs.time":
+				if date == "" {
+					date = s.Value
+				}
+			case "vcs.modified":
+				modified = s.Value == "true"
+			}
+		}
 	}
-	// `go install github.com/yuuki/droot/cmd/droot@vX.Y.Z` and builds from
-	// a git checkout record the module version.
-	if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
-		return strings.TrimPrefix(bi.Main.Version, "v")
+	if version == "" {
+		version = "dev"
 	}
-	return "dev"
+	var details []string
+	if commit != "" {
+		if len(commit) > 12 {
+			commit = commit[:12]
+		}
+		if modified {
+			commit += "-dirty"
+		}
+		details = append(details, "commit "+commit)
+	}
+	if date != "" {
+		details = append(details, date)
+	}
+	details = append(details, runtime.Version())
+	return strings.TrimPrefix(version, "v") + " (" + strings.Join(details, ", ") + ")"
 }
 
 func main() {
@@ -42,13 +83,15 @@ func main() {
 	// by `droot run` still gets the default SIGPIPE behavior.
 	signal.Notify(make(chan os.Signal, 1), syscall.SIGPIPE)
 
+	// Until the options are parsed, errors already follow DROOT_LOG_FORMAT.
+	_ = log.SetFormat(os.Getenv("DROOT_LOG_FORMAT"))
 	err := commands.Run(ctx, getVersion(), os.Args)
 	stop()
 	if err != nil {
 		if ctx.Err() != nil && errors.Is(err, context.Canceled) {
 			err = errors.New("interrupted")
 		}
-		fmt.Fprintf(os.Stderr, "droot: %v\n", err)
+		log.Errorf("%v", err)
 		os.Exit(1)
 	}
 }

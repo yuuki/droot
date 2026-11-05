@@ -321,7 +321,13 @@ are not.
 | Option | Description |
 |---|---|
 | `-D`, `--debug` | Print debug messages to STDERR. Also enabled by `DROOT_DEBUG=1`. |
-| `-v`, `--version` | Print the version. |
+| `-q`, `--quiet` | Print errors only: no warnings, informational messages nor progress. Also enabled by `DROOT_QUIET=1`. |
+| `--log-format FORMAT` | Format of the messages on STDERR: `text` (the default) or `json`, one [`log/slog`](https://pkg.go.dev/log/slog) JSON object per line (`{"time":...,"level":"WARN","msg":...}`) for log collectors. Also set by `DROOT_LOG_FORMAT`. |
+| `-v`, `--version` | Print the version, with the commit and its date. |
+
+The [command line reference](documentation/cli.md) and the man page
+([`documentation/droot.1`](documentation/droot.1), also in the release
+archives: `man -l droot.1`) list every option.
 
 ### Shell completion
 
@@ -367,6 +373,7 @@ $ DOCKER_HOST=ssh://deploy@build.example.com droot export -o app.tar app
 
 ## Documentation
 
+- [Command line reference](documentation/cli.md)
 - [How droot works](documentation/architecture.md)
 - [Security considerations](documentation/security.md)
 - [Development guide](documentation/development.md)

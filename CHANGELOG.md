@@ -241,6 +241,13 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
 - A warning when `--user NAME` maps to uid 0 in the image.
 - Temporary export containers are labeled `io.github.yuuki.droot`.
 - Bind mounting single files with `--bind`/`--robind`.
+- `--quiet`/`-q` and `--log-format json` (structured messages with
+  `log/slog`, e.g. for journald), also set by `DROOT_QUIET` and
+  `DROOT_LOG_FORMAT`.
+- `droot --version` also prints the commit, its date and the Go version.
+- A command line reference (`documentation/cli.md`) and a man page
+  (`documentation/droot.1`, in the release archives), generated from the
+  command definitions by `make docs`.
 - `droot completion bash|zsh|fish` prints a completion script for the
   commands and options, including the users, groups and directories taken by
   `droot run` options, and the command line after `droot run`'s COMMAND.

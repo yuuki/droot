@@ -22,7 +22,8 @@ builds:
         goarch: arm
     flags: [-trimpath]
     ldflags:
-      - -s -w -X main.version={{ .Version }}
+      # The commit date rather than the build date: reproducible builds.
+      - -s -w -X main.version={{ .Version }} -X main.commit={{ .FullCommit }} -X main.date={{ .CommitDate }}
     mod_timestamp: "{{ .CommitTimestamp }}"
 
 # The assets are named and laid out like those of droot 0.7.7, so that
@@ -43,6 +44,7 @@ archives:
       - LICENSE_OF_DEPENDENCIES.md
       - README.md
       - CHANGELOG.md
+      - documentation/droot.1
   - id: binary
     formats: [binary]
     name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}"

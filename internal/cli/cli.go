@@ -51,8 +51,8 @@ type Flag struct {
 	// Placeholder names the value in the help, e.g. ROOT_DIR.
 	Placeholder string
 	Usage       string
-	// EnvVar, for a Bool flag, is an environment variable giving its
-	// default value.
+	// EnvVar is an environment variable giving the default value of a
+	// Bool or String flag.
 	EnvVar string
 	// Complete is a hint for shell completion of the value: "file",
 	// "dir", "user", "group" or "" (no completion).
@@ -88,6 +88,8 @@ type App struct {
 	Usage       string
 	Version     string
 	Description string
+	// Homepage is shown in the man page.
+	Homepage string
 	// Flags are global flags, accepted before and after the command name.
 	Flags    []*Flag
 	Commands []*Command
@@ -232,7 +234,7 @@ func (a *App) Run(ctx context.Context, args []string) error {
 	if inv.Bool("help") {
 		return a.WriteHelp(a.stdout(), cmd)
 	}
-	if err := inv.applyEnv(a.Flags); err != nil {
+	if err := inv.applyEnv(flags); err != nil {
 		return err
 	}
 	return cmd.Action(ctx, inv)
@@ -329,15 +331,19 @@ func (inv *Invocation) parse(flags []*Flag, args []string, stopAtArg bool) ([]st
 	return positional, nil
 }
 
-// applyEnv sets Bool flags that were not given on the command line from
-// their environment variable.
+// applyEnv sets the Bool and String flags that were not given on the
+// command line from their environment variable.
 func (inv *Invocation) applyEnv(flags []*Flag) error {
 	for _, f := range flags {
-		if f.EnvVar == "" || f.Kind != Bool || inv.set[f.Name] {
+		if f.EnvVar == "" || f.Kind == Strings || inv.set[f.Name] {
 			continue
 		}
 		s, ok := os.LookupEnv(f.EnvVar)
 		if !ok || s == "" {
+			continue
+		}
+		if f.Kind == String {
+			inv.values[f.Name] = s
 			continue
 		}
 		b, err := strconv.ParseBool(s)

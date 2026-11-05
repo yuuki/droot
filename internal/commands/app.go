@@ -11,9 +11,10 @@ import (
 // NewApp returns the definition of the droot command line.
 func NewApp(version string) *cli.App {
 	return &cli.App{
-		Name:    "droot",
-		Usage:   "a super-easy container with chroot, without docker",
-		Version: version,
+		Name:     "droot",
+		Usage:    "a super-easy container with chroot, without docker",
+		Version:  version,
+		Homepage: "https://github.com/yuuki/droot",
 		Description: "droot exports the file system of a Docker image as a tar archive (export),\n" +
 			"runs a command inside an extracted archive with chroot(2) (run),\n" +
 			"cleans up the mounts made by run (umount) and shows them (status).",
@@ -24,6 +25,20 @@ func NewApp(version string) *cli.App {
 				Kind:    cli.Bool,
 				Usage:   "enable debug output",
 				EnvVar:  "DROOT_DEBUG",
+			},
+			{
+				Name:    "quiet",
+				Aliases: []string{"q"},
+				Kind:    cli.Bool,
+				Usage:   "print errors only: no warnings, informational messages nor progress",
+				EnvVar:  "DROOT_QUIET",
+			},
+			{
+				Name:        "log-format",
+				Kind:        cli.String,
+				Placeholder: "FORMAT",
+				Usage:       "format of the messages on STDERR: text or json (one log/slog JSON object per line)",
+				EnvVar:      "DROOT_LOG_FORMAT",
 			},
 		},
 		Commands: []*cli.Command{
@@ -41,7 +56,12 @@ func Run(ctx context.Context, version string, args []string) error {
 }
 
 // setup applies the global flags. It is called by every subcommand so that
-// --debug also works when given after the subcommand name.
-func setup(inv *cli.Invocation) {
+// they also work when given after the subcommand name.
+func setup(inv *cli.Invocation) error {
 	log.SetDebug(inv.Bool("debug"))
+	log.SetQuiet(inv.Bool("quiet"))
+	if err := log.SetFormat(inv.String("log-format")); err != nil {
+		return inv.UsageError("%v", err)
+	}
+	return nil
 }

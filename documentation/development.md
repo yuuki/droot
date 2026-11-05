@@ -21,6 +21,7 @@ $ make test               # unit tests with the race detector; root-only tests a
 $ make test-root          # unit tests as root, including real mounts and mknod (sudo)
 $ make integration-test   # build and run script/integration-test.sh against Docker (sudo)
 $ make fuzz               # run every fuzz target for FUZZTIME (default 30s)
+$ make docs               # regenerate documentation/cli.md and droot.1 (a test checks them)
 $ make lint               # golangci-lint (configuration in .golangci.yml)
 $ make fmt                # gofmt + goimports
 $ make vet                # go vet for Linux and macOS
@@ -95,4 +96,11 @@ Vulnerability reports go through GitHub's private vulnerability reporting
 (Security → Private vulnerability reporting).
 
 The version printed by `droot --version` comes from `-X main.version` (set by
-GoReleaser and `make build`) or, for `go install`, from the module version.
+GoReleaser and `make build`) or, for `go install`, from the module version;
+the commit and its date from `-X main.commit` and `-X main.date` (set by
+GoReleaser) or from the VCS information Go embeds when building from a git
+checkout.
+
+`documentation/cli.md` and `documentation/droot.1` are generated from the
+command definitions (`internal/commands`) by `make docs`; a unit test fails
+when they are out of date.
