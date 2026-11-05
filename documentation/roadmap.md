@@ -27,8 +27,6 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
 - **[compat]** Nothing is created in `/dev` when it is a mount point, including
   `--tmpfs /dev`; a fresh `/dev` like Docker's would need droot to tell its own
   tmpfs from the host's `devtmpfs`.
-- **[ux]** Inherited behavior whose purpose is unclear: `--bind` creates a
-  `.droot.keep` file in empty host directories. Decide whether to keep it.
 - **[compat]** `droot run` needs real root; rootless operation with user
   namespaces is not supported.
 

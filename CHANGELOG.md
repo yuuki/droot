@@ -45,6 +45,9 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
   `/proc/sysrq-trigger`, `/proc/irq`, `/proc/bus`, `/proc/fs` and the whole
   of `/sys` read-only. Applications that change kernel settings (e.g. with
   `sysctl -w`) fail; use `--no-mask` to keep the old behavior.
+- `droot run` no longer creates a `.droot.keep` file in empty `--bind` and
+  `--robind` source directories, as droot 0.7 did for an undocumented
+  reason: droot does not write into the host directories it binds.
 - `droot run` requires root (euid 0) and refuses `--root /`;
   `droot umount --root /` is refused.
 - `DOCKER_CERT_PATH` alone no longer enables TLS: like the docker CLI, TLS is

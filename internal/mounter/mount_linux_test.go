@@ -154,8 +154,8 @@ func TestMounterLifecycle(t *testing.T) {
 	if b, err := os.ReadFile(filepath.Join(root, "etc", "app", "config.yml")); err != nil || string(b) != "key: value" {
 		t.Errorf("file bind mount: %q, %v", b, err)
 	}
-	if _, err := os.Stat(filepath.Join(hostEmpty, keepFile)); err != nil {
-		t.Errorf("keep file should be created in empty sources: %v", err)
+	if entries, err := os.ReadDir(hostEmpty); err != nil || len(entries) != 0 {
+		t.Errorf("droot must not write into bind sources, %s has %v (%v)", hostEmpty, entries, err)
 	}
 	// The symlink must have been resolved inside the root.
 	if _, err := os.Stat(filepath.Join(dir, "host", "escaped")); err == nil {

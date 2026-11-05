@@ -173,9 +173,8 @@ assert_eq "--tmpfs" \
   "$("$DROOT" run --root "$WORK/app" --user root --tmpfs /tmp:size=1m --tmpfs /run:exec -- sh -c 'stat -f -c %T /tmp; printf "#!/bin/sh\necho exec-ok\n" > /tmp/x; chmod +x /tmp/x; /tmp/x 2>/dev/null || echo noexec; cp /tmp/x /run/x && /run/x')" \
   "$(printf 'tmpfs\nnoexec\nexec-ok')"
 mkdir -p "$WORK/hostdev"
-touch "$WORK/hostdev/marker" # not empty, so that no .droot.keep is created
 "$DROOT" run --root "$WORK/app" --bind "$WORK/hostdev:/dev" -- true 2>/dev/null
-assert_eq "a bind mounted /dev is left alone" "$(ls -A "$WORK/hostdev")" "marker"
+assert_eq "a bind mounted /dev is left alone, nothing is written into bind sources" "$(ls -A "$WORK/hostdev")" ""
 "$DROOT" umount --root "$WORK/app"
 assert_eq "read-only bind mount" \
   "$("$DROOT" run --root "$WORK/app" --user root --robind "$WORK/data:/mnt/data" -- sh -c 'cat /mnt/data/file; touch /mnt/data/x 2>/dev/null || echo ro')" \

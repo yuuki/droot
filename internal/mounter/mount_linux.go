@@ -6,7 +6,6 @@ import (
 	"io/fs"
 	"os"
 	"path"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -16,10 +15,6 @@ import (
 	"github.com/yuuki/droot/internal/log"
 	"github.com/yuuki/droot/internal/osutil"
 )
-
-// keepFile is created in empty bind mount sources (behavior inherited from
-// droot <= 0.7).
-const keepFile = ".droot.keep"
 
 // readMountInfo returns the mounts of the calling thread's mount namespace,
 // which differs from the process's after UnshareMountNamespace.
@@ -547,17 +542,6 @@ func (m *Mounter) BindMount(hostPath, containerPath string, opts BindOptions) er
 	fi, err := os.Stat(hostPath)
 	if err != nil {
 		return fmt.Errorf("bind mount source: %w", err)
-	}
-
-	if fi.IsDir() && osutil.IsDirEmpty(hostPath) {
-		// Best effort: the source may be read-only.
-		// O_EXCL|O_NOFOLLOW: a symlink planted there by a container
-		// must not make droot create a file elsewhere on the host.
-		if f, err := os.OpenFile(filepath.Join(hostPath, keepFile), os.O_CREATE|os.O_EXCL|os.O_RDONLY|unix.O_NOFOLLOW, 0o644); err != nil {
-			log.Debugf("cannot create %s in %s: %v", keepFile, hostPath, err)
-		} else {
-			_ = f.Close()
-		}
 	}
 
 	t, err := m.root.OpenMountTarget(containerPath, fi.IsDir(), NotKernelFS)

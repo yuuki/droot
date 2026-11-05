@@ -34,25 +34,6 @@ func TestExistsFileAndDir(t *testing.T) {
 	}
 }
 
-func TestIsDirEmpty(t *testing.T) {
-	dir := t.TempDir()
-	empty := filepath.Join(dir, "empty")
-	if err := os.Mkdir(empty, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	mustWrite(t, filepath.Join(dir, "nonempty", "file"), "x")
-
-	if IsDirEmpty("/path/to/notexist") {
-		t.Error("nonexistent dir should not be empty")
-	}
-	if !IsDirEmpty(empty) {
-		t.Error("empty dir should be empty")
-	}
-	if IsDirEmpty(filepath.Join(dir, "nonempty")) {
-		t.Error("nonempty dir should not be empty")
-	}
-}
-
 func TestLookPath(t *testing.T) {
 	executables := map[string]bool{"/usr/local/bin/app": true, "/bin/sh": true, "/usr/bin/sh": true}
 	isExec := func(p string) error {

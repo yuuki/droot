@@ -4,14 +4,11 @@ package osutil
 import (
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
-
-	"github.com/yuuki/droot/internal/log"
 )
 
 // ExistsFile reports whether path exists and is not a directory.
@@ -24,19 +21,6 @@ func ExistsFile(path string) bool {
 func ExistsDir(path string) bool {
 	fi, err := os.Stat(path)
 	return err == nil && fi.IsDir()
-}
-
-// IsDirEmpty reports whether dir is a readable, empty directory.
-func IsDirEmpty(dir string) bool {
-	f, err := os.Open(dir)
-	if err != nil {
-		log.Debugf("failed to open %s: %v", dir, err)
-		return false
-	}
-	defer f.Close()
-
-	_, err = f.Readdirnames(1)
-	return errors.Is(err, io.EOF)
 }
 
 // DefaultPath is the search path used when the environment has no PATH.
