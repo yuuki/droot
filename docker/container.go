@@ -79,6 +79,10 @@ func (c *Client) ContainerExport(ctx context.Context, id string) (io.ReadCloser,
 	if err != nil {
 		return nil, err
 	}
+	if resp.StatusCode != http.StatusOK {
+		_ = resp.Body.Close()
+		return nil, &APIError{StatusCode: resp.StatusCode, Message: "unexpected status for an export"}
+	}
 	return resp.Body, nil
 }
 

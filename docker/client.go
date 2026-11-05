@@ -58,7 +58,14 @@ func NewClient(ep Endpoint) (*Client, error) {
 	c := &Client{
 		// No overall timeout: exports stream arbitrarily large archives.
 		// Cancellation is done through contexts.
-		httpClient: &http.Client{Transport: transport},
+		httpClient: &http.Client{
+			Transport: transport,
+			// The Engine API never redirects. Following a redirect could
+			// resend requests (and the TLS client certificate) elsewhere.
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
 		host:       ep.Host,
 		apiVersion: ep.APIVersion,
 	}
@@ -215,6 +222,10 @@ func (c *Client) send(ctx context.Context, method, u string, body io.Reader) (*h
 			return nil, ctxErr
 		}
 		return nil, fmt.Errorf("cannot connect to the Docker daemon at %s (is the daemon running?): %w", c.host, err)
+	}
+	if resp.StatusCode >= http.StatusMultipleChoices && resp.StatusCode < http.StatusBadRequest {
+		_ = resp.Body.Close()
+		return nil, &APIError{StatusCode: resp.StatusCode, Message: fmt.Sprintf("unexpected redirect to %q", resp.Header.Get("Location"))}
 	}
 	if resp.StatusCode >= http.StatusBadRequest {
 		defer resp.Body.Close()

@@ -70,6 +70,10 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
   no longer kills droot with SIGPIPE before the cleanup, SIGHUP is handled
   like SIGINT, Ctrl-C works while the reader of stdout is stalled, and a
   second Ctrl-C terminates droot immediately.
+- `droot export` accepted a stream cut between two tar entries, or an empty
+  `204` answer, as a complete archive. It now requires `200 OK` and the
+  end-of-archive marker. Redirects are no longer followed (they could resend
+  requests and the TLS client certificate elsewhere).
 - `droot export -o FILE` created the file with mode 0644 regardless of the
   umask (archives may contain secrets such as `/etc/shadow`), replaced the
   mode and owner of an existing file, replaced a symlink instead of writing

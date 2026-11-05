@@ -269,6 +269,24 @@ func TestExportImageRemoveFailureIsNotFatal(t *testing.T) {
 	}
 }
 
+func TestExportImageDetectsTruncation(t *testing.T) {
+	full := buildTar(t, sampleEntries())
+	// Cut the stream cleanly after the first entry (a directory: one header
+	// block), i.e. at an entry boundary, without the end-of-archive marker.
+	for name, body := range map[string][]byte{
+		"cut at an entry boundary": full[:512],
+		"empty body":               nil,
+	} {
+		t.Run(name, func(t *testing.T) {
+			api := &fakeAPI{archive: body}
+			err := ExportImage(context.Background(), api, "img", io.Discard, ExportOptions{})
+			if !errors.Is(err, errTruncated) {
+				t.Fatalf("want errTruncated, got %v", err)
+			}
+		})
+	}
+}
+
 func TestIsEnvFile(t *testing.T) {
 	for name, want := range map[string]bool{
 		".drootenv": true, "./.drootenv": true, "/.drootenv": true,

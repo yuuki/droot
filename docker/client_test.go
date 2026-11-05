@@ -193,6 +193,35 @@ func TestClientPinnedAPIVersion(t *testing.T) {
 	}
 }
 
+func TestClientRefusesRedirectsAndOddStatuses(t *testing.T) {
+	var hits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		switch r.URL.Path {
+		case "/v1.41/containers/x/json":
+			http.Redirect(w, r, "/elsewhere", http.StatusTemporaryRedirect)
+		case "/v1.41/containers/x/export":
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Errorf("unexpected request %s", r.URL)
+		}
+	}))
+	defer srv.Close()
+	c, err := NewClient(Endpoint{Host: "tcp://" + srv.Listener.Addr().String(), APIVersion: "1.41"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.ContainerInspect(context.Background(), "x"); err == nil || !strings.Contains(err.Error(), "redirect") {
+		t.Fatalf("want a redirect error, got %v", err)
+	}
+	if hits != 1 {
+		t.Fatalf("the redirect was followed (%d requests)", hits)
+	}
+	if _, err := c.ContainerExport(context.Background(), "x"); err == nil {
+		t.Fatal("an export answered with 204 must fail")
+	}
+}
+
 func TestClientConnectionError(t *testing.T) {
 	c, err := NewClient(Endpoint{Host: "unix://" + filepath.Join(t.TempDir(), "nonexistent.sock")})
 	if err != nil {

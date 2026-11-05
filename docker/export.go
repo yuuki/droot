@@ -134,14 +134,44 @@ func isEnvFile(name string) bool {
 	return path.Clean("/"+name) == environ.EnvFilePath
 }
 
+// zeroTail counts the consecutive zero bytes at the end of what was read.
+type zeroTail struct {
+	r     io.Reader
+	zeros int
+}
+
+func (z *zeroTail) Read(p []byte) (int, error) {
+	n, err := z.r.Read(p)
+	for _, b := range p[:n] {
+		if b == 0 {
+			z.zeros++
+		} else {
+			z.zeros = 0
+		}
+	}
+	return n, err
+}
+
+// errTruncated is returned for an archive without end-of-archive marker.
+var errTruncated = errors.New("the exported archive is truncated (no end-of-archive marker): the connection to the Docker daemon was probably cut")
+
 // rewriteArchive copies the tar stream r to w, replacing any existing
 // /.drootenv entry with one containing env.
+//
+// archive/tar reports the end of the input at an entry boundary like the
+// end-of-archive marker (two zero blocks), so a stream cut cleanly between
+// two entries would look complete. The marker is therefore checked
+// explicitly: the stream must end with at least 1024 zero bytes.
 func rewriteArchive(r io.Reader, w io.Writer, env []byte) error {
-	tr := tar.NewReader(r)
+	zr := &zeroTail{r: r}
+	tr := tar.NewReader(zr)
 	tw := tar.NewWriter(w)
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
+			if zr.zeros < 2*512 {
+				return errTruncated
+			}
 			break
 		}
 		if err != nil {
