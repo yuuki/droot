@@ -80,6 +80,10 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
   silently ignored with API versions older than 1.41 (now an error); and
   every 404 — such as an image lacking the requested platform — was reported
   as "image not found locally".
+- Images that already contained a `/.drootenv` hard-linked from another
+  file, or a `/.drootenv` directory, produced archives that `tar` failed to
+  extract. Entries below such a directory are dropped too, and hard links
+  to dropped files become regular files with the original content.
 - The environment saved in `/.drootenv` is read from the image's
   configuration instead of the temporary container's, to which Podman adds
   `container=podman` (and reorders the variables).

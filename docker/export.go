@@ -146,10 +146,17 @@ func encodeEnvFile(env []string) []byte {
 	return []byte(b.String())
 }
 
-// isEnvFile reports whether a tar entry name refers to /.drootenv.
-func isEnvFile(name string) bool {
-	return path.Clean("/"+name) == environ.EnvFilePath
+// isReplaced reports whether a tar entry is dropped from the archive because
+// droot writes its own /.drootenv: /.drootenv itself, or anything below it
+// if the image has a directory by that name.
+func isReplaced(name string) bool {
+	p := path.Clean("/" + name)
+	return p == environ.EnvFilePath || strings.HasPrefix(p, environ.EnvFilePath+"/")
 }
+
+// maxDroppedBytes bounds the content of dropped entries kept in memory to
+// rewrite hard links pointing at them.
+const maxDroppedBytes = 64 << 20
 
 // zeroTail counts the consecutive zero bytes at the end of what was read.
 type zeroTail struct {
@@ -183,6 +190,9 @@ func rewriteArchive(r io.Reader, w io.Writer, env []byte) error {
 	zr := &zeroTail{r: r}
 	tr := tar.NewReader(zr)
 	tw := tar.NewWriter(w)
+	// Content of the dropped regular files, for hard links pointing at them.
+	dropped := map[string][]byte{}
+	var droppedBytes int64
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
@@ -194,7 +204,33 @@ func rewriteArchive(r io.Reader, w io.Writer, env []byte) error {
 		if err != nil {
 			return fmt.Errorf("read exported archive: %w", err)
 		}
-		if isEnvFile(hdr.Name) {
+		if isReplaced(hdr.Name) {
+			if hdr.Typeflag == tar.TypeReg {
+				droppedBytes += hdr.Size
+				if droppedBytes > maxDroppedBytes {
+					return fmt.Errorf("the image's own %s is too large", environ.EnvFilePath)
+				}
+				b, err := io.ReadAll(tr)
+				if err != nil {
+					return fmt.Errorf("read archive entry %s: %w", hdr.Name, err)
+				}
+				dropped[path.Clean("/"+hdr.Name)] = b
+			}
+			continue
+		}
+		if content, ok := dropped[path.Clean("/"+hdr.Linkname)]; ok && hdr.Typeflag == tar.TypeLink {
+			// The target of this hard link was dropped: keep the file
+			// as a regular file with the original content.
+			reg := *hdr
+			reg.Typeflag = tar.TypeReg
+			reg.Linkname = ""
+			reg.Size = int64(len(content))
+			if err := tw.WriteHeader(&reg); err != nil {
+				return fmt.Errorf("write archive entry %s: %w", hdr.Name, err)
+			}
+			if _, err := tw.Write(content); err != nil {
+				return fmt.Errorf("write archive entry %s: %w", hdr.Name, err)
+			}
 			continue
 		}
 		if err := tw.WriteHeader(hdr); err != nil {

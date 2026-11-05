@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -310,13 +311,69 @@ func TestExportImageDetectsTruncation(t *testing.T) {
 	}
 }
 
-func TestIsEnvFile(t *testing.T) {
+func TestExportImageImageWithItsOwnDrootenv(t *testing.T) {
+	tests := map[string][]entry{
+		"hard link to .drootenv": {
+			{hdr: tar.Header{Typeflag: tar.TypeDir, Name: "etc/", Mode: 0o755, ModTime: mtime}},
+			{hdr: tar.Header{Typeflag: tar.TypeReg, Name: ".drootenv", Mode: 0o640, ModTime: mtime}, body: "OLD=1\n"},
+			{hdr: tar.Header{Typeflag: tar.TypeLink, Name: "etc/hl-to-drootenv", Linkname: ".drootenv", Mode: 0o640, ModTime: mtime}},
+		},
+		".drootenv directory": {
+			{hdr: tar.Header{Typeflag: tar.TypeDir, Name: ".drootenv/", Mode: 0o755, ModTime: mtime}},
+			{hdr: tar.Header{Typeflag: tar.TypeReg, Name: ".drootenv/child", Mode: 0o644, ModTime: mtime}, body: "child"},
+			{hdr: tar.Header{Typeflag: tar.TypeLink, Name: "kept", Linkname: ".drootenv/child", ModTime: mtime}},
+		},
+	}
+	for name, entries := range tests {
+		t.Run(name, func(t *testing.T) {
+			api := &fakeAPI{env: []string{"A=1"}, archive: buildTar(t, entries)}
+			var out bytes.Buffer
+			if err := ExportImage(context.Background(), api, "img", &out, ExportOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			got := map[string]entry{}
+			for _, e := range readTar(t, out.Bytes()) {
+				if _, dup := got[e.hdr.Name]; dup {
+					t.Fatalf("duplicate entry %s", e.hdr.Name)
+				}
+				got[e.hdr.Name] = e
+				if strings.HasPrefix(e.hdr.Name, ".drootenv/") {
+					t.Errorf("entry below .drootenv kept: %s", e.hdr.Name)
+				}
+				if e.hdr.Typeflag == tar.TypeLink && isReplaced(e.hdr.Linkname) {
+					t.Errorf("hard link to a dropped entry kept: %s -> %s", e.hdr.Name, e.hdr.Linkname)
+				}
+			}
+			if env := got[".drootenv"]; env.hdr.Typeflag != tar.TypeReg || env.body != "A=1\n" {
+				t.Errorf("unexpected .drootenv: %+v %q", env.hdr, env.body)
+			}
+			if hl, ok := got["etc/hl-to-drootenv"]; ok && (hl.hdr.Typeflag != tar.TypeReg || hl.body != "OLD=1\n") {
+				t.Errorf("the hard link must become a regular file with the old content: %+v %q", hl.hdr, hl.body)
+			}
+			if k, ok := got["kept"]; ok && (k.hdr.Typeflag != tar.TypeReg || k.body != "child") {
+				t.Errorf("the hard link must become a regular file with the old content: %+v %q", k.hdr, k.body)
+			}
+
+			// GNU tar, if available, must extract the result.
+			if _, err := exec.LookPath("tar"); err == nil {
+				dir := t.TempDir()
+				cmd := exec.Command("tar", "-xf", "-", "-C", dir)
+				cmd.Stdin = bytes.NewReader(out.Bytes())
+				if b, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("tar -x failed: %v\n%s", err, b)
+				}
+			}
+		})
+	}
+}
+
+func TestIsReplaced(t *testing.T) {
 	for name, want := range map[string]bool{
-		".drootenv": true, "./.drootenv": true, "/.drootenv": true,
-		"etc/.drootenv": false, ".drootenv.bak": false, ".drootenv/x": false,
+		".drootenv": true, "./.drootenv": true, "/.drootenv": true, ".drootenv/": true, ".drootenv/x": true,
+		"etc/.drootenv": false, ".drootenv.bak": false, ".drootenvx/y": false,
 	} {
-		if got := isEnvFile(name); got != want {
-			t.Errorf("isEnvFile(%q) = %v, want %v", name, got, want)
+		if got := isReplaced(name); got != want {
+			t.Errorf("isReplaced(%q) = %v, want %v", name, got, want)
 		}
 	}
 }
