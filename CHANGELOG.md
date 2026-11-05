@@ -59,7 +59,11 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
   quotes, `$` or backquotes are preserved verbatim instead of being interpreted
   by a shell.
 - `droot export` always removes its temporary container, including after
-  errors and Ctrl-C, and writes `-o FILE` atomically.
+  errors and Ctrl-C, and writes `-o FILE` atomically. In particular, a write
+  to a closed pipe (`droot export img | head`, or a failing `aws s3 cp -`)
+  no longer kills droot with SIGPIPE before the cleanup, SIGHUP is handled
+  like SIGINT, Ctrl-C works while the reader of stdout is stalled, and a
+  second Ctrl-C terminates droot immediately.
 - `droot run` dropped capabilities and changed credentials on one OS thread
   only and could `exec` from another one, so the command could run with the
   full capability bounding set. The goroutine is now locked to its thread.

@@ -8,7 +8,9 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/urfave/cli/v3"
 
@@ -174,7 +176,7 @@ func TestWriteFileIsAtomic(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := writeFile(out, func(w io.Writer) error {
+	err := writeFile(context.Background(), out, func(w io.Writer) error {
 		_, _ = io.WriteString(w, "partial")
 		return errors.New("export failed")
 	})
@@ -188,7 +190,7 @@ func TestWriteFileIsAtomic(t *testing.T) {
 		t.Fatalf("temporary files left behind: %v", entries)
 	}
 
-	if err := writeFile(out, func(w io.Writer) error {
+	if err := writeFile(context.Background(), out, func(w io.Writer) error {
 		_, err := io.WriteString(w, "archive")
 		return err
 	}); err != nil {
@@ -202,7 +204,52 @@ func TestWriteFileIsAtomic(t *testing.T) {
 		t.Fatalf("got %q mode %v", b, fi.Mode())
 	}
 
-	if err := writeFile(dir, func(io.Writer) error { return nil }); err == nil {
+	if err := writeFile(context.Background(), dir, func(io.Writer) error { return nil }); err == nil {
 		t.Fatal("writing to a directory should fail")
+	}
+}
+
+func TestCancelableWriterUnblocks(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	defer w.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	cw := cancelableWriter{ctx: ctx, w: w}
+
+	done := make(chan error, 1)
+	go func() {
+		// Nobody reads the pipe: this blocks once its buffer is full.
+		buf := make([]byte, 1<<20)
+		for {
+			if _, err := cw.Write(buf); err != nil {
+				done <- err
+				return
+			}
+		}
+	}()
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("want context.Canceled, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a blocked write was not interrupted by the cancellation")
+	}
+}
+
+func TestOpenCancelableFIFO(t *testing.T) {
+	fifo := filepath.Join(t.TempDir(), "fifo")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if _, err := openCancelable(ctx, fifo); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("opening a FIFO without reader should give up, got %v", err)
 	}
 }

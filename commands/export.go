@@ -66,34 +66,84 @@ func doExport(ctx context.Context, cmd *cli.Command) error {
 	}
 
 	if toStdout {
-		return writeBuffered(os.Stdout, export)
+		return writeBuffered(ctx, os.Stdout, export)
 	}
-	return writeFile(output, export)
+	return writeFile(ctx, output, export)
 }
 
-func writeBuffered(w io.Writer, write func(io.Writer) error) error {
-	bw := bufio.NewWriterSize(w, 1<<20)
+func writeBuffered(ctx context.Context, w io.Writer, write func(io.Writer) error) error {
+	bw := bufio.NewWriterSize(cancelableWriter{ctx: ctx, w: w}, 1<<20)
 	if err := write(bw); err != nil {
 		return err
 	}
 	return bw.Flush()
 }
 
+// cancelableWriter returns from Write as soon as ctx is cancelled, even when
+// the underlying write blocks because the reader of a pipe stalled, so that
+// droot can still remove its temporary container on Ctrl-C. A blocked write
+// is abandoned (the process exits shortly after).
+type cancelableWriter struct {
+	ctx context.Context
+	w   io.Writer
+}
+
+func (c cancelableWriter) Write(p []byte) (int, error) {
+	if err := c.ctx.Err(); err != nil {
+		return 0, err
+	}
+	type result struct {
+		n   int
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		n, err := c.w.Write(p)
+		done <- result{n, err}
+	}()
+	select {
+	case r := <-done:
+		return r.n, r.err
+	case <-c.ctx.Done():
+		return 0, c.ctx.Err()
+	}
+}
+
+// openCancelable opens path for writing, giving up when ctx is cancelled:
+// opening a FIFO blocks until a reader appears.
+func openCancelable(ctx context.Context, path string) (*os.File, error) {
+	type result struct {
+		f   *os.File
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		f, err := os.OpenFile(path, os.O_WRONLY, 0)
+		done <- result{f, err}
+	}()
+	select {
+	case r := <-done:
+		return r.f, r.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
 // writeFile writes to path atomically: the data goes to a temporary file in
 // the same directory, which is renamed to path only on success, so that a
 // failed or interrupted export never leaves a truncated archive behind.
 // Non-regular files such as /dev/stdout or named pipes are written directly.
-func writeFile(path string, write func(io.Writer) error) (err error) {
+func writeFile(ctx context.Context, path string, write func(io.Writer) error) (err error) {
 	if fi, statErr := os.Stat(path); statErr == nil && !fi.Mode().IsRegular() {
 		if fi.IsDir() {
 			return errors.New(path + " is a directory")
 		}
-		f, err := os.OpenFile(path, os.O_WRONLY, 0)
+		f, err := openCancelable(ctx, path)
 		if err != nil {
 			return err
 		}
 		defer f.Close()
-		return writeBuffered(f, write)
+		return writeBuffered(ctx, f, write)
 	}
 
 	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
@@ -107,7 +157,7 @@ func writeFile(path string, write func(io.Writer) error) (err error) {
 		}
 	}()
 
-	if err := writeBuffered(tmp, write); err != nil {
+	if err := writeBuffered(ctx, tmp, write); err != nil {
 		return err
 	}
 	if err := tmp.Chmod(0o644); err != nil {

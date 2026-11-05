@@ -46,7 +46,7 @@ sequenceDiagram
   D->>E: GET /containers/{id}/json (Config.Env)
   D->>E: GET /containers/{id}/export (tar stream)
   D->>D: copy every tar entry, drop any existing .drootenv,<br/>append .drootenv with the image's environment
-  D->>E: DELETE /containers/{id}?force=1&v=1 (always, even after errors or Ctrl-C)
+  D->>E: DELETE /containers/{id}?force=1&v=1 (always, even after errors, Ctrl-C, SIGHUP or a broken pipe)
 ```
 
 Design notes:
