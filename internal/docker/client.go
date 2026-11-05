@@ -42,6 +42,7 @@ type Client struct {
 	httpClient *http.Client
 	baseURL    string // scheme://host[/path], without a trailing slash
 	host       string // the endpoint as configured by the user, for messages
+	cleartext  bool   // TCP without TLS
 
 	mu         sync.Mutex
 	apiVersion string // "" until negotiated
@@ -111,6 +112,7 @@ func NewClient(ep Endpoint) (*Client, error) {
 			host = net.JoinHostPort(u.Hostname(), port)
 		}
 		scheme := "http"
+		c.cleartext = !useTLS
 		if useTLS {
 			scheme = "https"
 			if transport.TLSClientConfig, err = ep.tlsConfig(); err != nil {
@@ -120,11 +122,14 @@ func NewClient(ep Endpoint) (*Client, error) {
 		transport.Proxy = http.ProxyFromEnvironment
 		c.baseURL = scheme + "://" + host + strings.TrimRight(u.Path, "/")
 	case "ssh":
-		return nil, fmt.Errorf("docker host %q: ssh:// endpoints are not supported by droot; "+
-			"forward the remote socket instead, e.g. `ssh -nNT -L /tmp/docker.sock:/var/run/docker.sock HOST` "+
-			"and set DOCKER_HOST=unix:///tmp/docker.sock", ep.Host)
+		args, err := sshArgs(hostURL)
+		if err != nil {
+			return nil, err
+		}
+		transport.DialContext = sshDialer(args)
+		c.baseURL = "http://api.moby.localhost"
 	default:
-		return nil, fmt.Errorf("docker host %q: unsupported scheme %q (supported: unix, tcp, http, https)", ep.Host, u.Scheme)
+		return nil, fmt.Errorf("docker host %q: unsupported scheme %q (supported: unix, tcp, http, https, ssh)", ep.Host, u.Scheme)
 	}
 	return c, nil
 }
@@ -162,7 +167,7 @@ func IsNotFound(err error) bool {
 // Ping checks that the daemon is reachable and negotiates the API version
 // unless one was configured explicitly.
 func (c *Client) Ping(ctx context.Context) error {
-	resp, err := c.send(ctx, http.MethodGet, c.baseURL+"/_ping", nil)
+	resp, err := c.send(ctx, http.MethodGet, c.baseURL+"/_ping", nil, nil)
 	if err != nil {
 		return err
 	}
@@ -214,6 +219,10 @@ func versionLess(a, b string) bool {
 // do sends a request to a versioned API endpoint. path must already be
 // escaped. When in is non-nil it is sent as a JSON body.
 func (c *Client) do(ctx context.Context, method, path string, query url.Values, in any) (*http.Response, error) {
+	return c.doHeader(ctx, method, path, query, in, nil)
+}
+
+func (c *Client) doHeader(ctx context.Context, method, path string, query url.Values, in any, header http.Header) (*http.Response, error) {
 	version, err := c.APIVersion(ctx)
 	if err != nil {
 		return nil, err
@@ -231,13 +240,16 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 		}
 		body = bytes.NewReader(b)
 	}
-	return c.send(ctx, method, u, body)
+	return c.send(ctx, method, u, body, header)
 }
 
-func (c *Client) send(ctx context.Context, method, u string, body io.Reader) (*http.Response, error) {
+func (c *Client) send(ctx context.Context, method, u string, body io.Reader, header http.Header) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, method, u, body)
 	if err != nil {
 		return nil, err
+	}
+	for k, v := range header {
+		req.Header[k] = v
 	}
 	req.Header.Set("User-Agent", userAgent)
 	if body != nil {

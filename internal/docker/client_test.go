@@ -345,7 +345,7 @@ func TestUnixSocketPathsAreLiteral(t *testing.T) {
 }
 
 func TestNewClientUnsupported(t *testing.T) {
-	for _, host := range []string{"ssh://user@host", "npipe:////./pipe/docker_engine", "fd://", "tcp://", "%zz://x"} {
+	for _, host := range []string{"ssh://user:pw@host", "ssh://host/path", "ssh://", "npipe:////./pipe/docker_engine", "fd://", "tcp://", "%zz://x"} {
 		if _, err := NewClient(Endpoint{Host: host}); err == nil {
 			t.Errorf("NewClient(%q) should fail", host)
 		}

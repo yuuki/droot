@@ -99,6 +99,24 @@ echo "ok - --reproducible"
 assert_eq "--exclude and --drop-docker-files" \
   "$("$DROOT" export --exclude /usr/share/apk --exclude '*.so.*' --drop-docker-files "$IMAGE" | tar -t | grep -cE '^(usr/share/apk|\.dockerenv$|.*\.so\.)' || true)" "0"
 rm -f "$WORK/r1.tar" "$WORK/r2.tar" "$WORK/app.tar.gz" "$WORK/app.tar.gz.sha256"
+PULL_IMAGE=docker.io/library/hello-world:latest
+$DOCKER rmi -f "$PULL_IMAGE" >/dev/null 2>&1 || true
+assert_eq "--pull" "$("$DROOT" export --pull "$PULL_IMAGE" 2>/dev/null | tar -t | grep -c '^hello$')" "1"
+$DOCKER rmi -f "$PULL_IMAGE" >/dev/null 2>&1 || true
+if [[ $DOCKER == docker ]] && docker system dial-stdio --help >/dev/null 2>&1; then
+  # A fake ssh running `docker system dial-stdio` locally, against the
+  # daemon of this test.
+  mkdir -p "$WORK/fakessh"
+  cat >"$WORK/fakessh/ssh" <<EOF
+#!/bin/sh
+while [ "\$1" != "--" ]; do shift; done
+shift 2 # -- and the host
+exec env DOCKER_HOST="${DOCKER_HOST:-unix:///var/run/docker.sock}" "\$@"
+EOF
+  chmod +x "$WORK/fakessh/ssh"
+  assert_eq "ssh:// DOCKER_HOST" \
+    "$(PATH="$WORK/fakessh:$PATH" DOCKER_HOST=ssh://user@remote:2222 "$DROOT" export "$IMAGE" | tar -t | grep -c '^\.droot/config\.json$')" "1"
+fi
 if "$DROOT" export does-not-exist:nope >/dev/null 2>&1; then fail "exporting a missing image should fail"; fi
 echo "ok - exporting a missing image fails"
 

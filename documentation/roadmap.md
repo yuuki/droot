@@ -34,11 +34,9 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
 
 ### `droot export`
 
-- **[compat]** A Docker Engine API daemon and a local image are required:
-  there is no pull (and no registry authentication), no support for
-  `docker save`/OCI layouts, and `--platform` only selects among the variants
-  present locally.
-- **[compat]** `ssh://` and `npipe://` `DOCKER_HOST`s are not supported.
+- **[compat]** A Docker Engine API daemon is required (`--pull` fetches images
+  missing locally): `docker save` tarballs and OCI layouts are not supported.
+- **[compat]** `npipe://` `DOCKER_HOST`s (Windows) are not supported.
 - **[compat]** Environment variables with multi-line values or keys starting
   with `#` cannot be represented in `/.drootenv` and are skipped (with a
   warning). The file has no version marker or escaping.
@@ -71,8 +69,6 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
 
 ### Building and shipping
 
-- **[feature]** `droot export --pull` with registry authentication from
-  `~/.docker/config.json` and credential helpers.
 - **[feature]** Daemonless export: flatten images straight from a registry, a
   `docker save` tarball or an OCI layout (works on CI runners without Docker
   and with Podman/Buildah/containerd stores).
@@ -80,7 +76,6 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
   checksum or signature (cosign, minisign), extract atomically and switch a
   symlink while keeping N releases (capze-like), then optionally restart a
   systemd unit.
-- **[feature]** `ssh://` daemons through `ssh HOST docker system dial-stdio`.
 
 ### Usability
 

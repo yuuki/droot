@@ -50,6 +50,11 @@ func exportCommand() *cli.Command {
 				Usage:       "export the PLATFORM variant of a multi-platform image, e.g. linux/amd64",
 			},
 			{
+				Name:  "pull",
+				Kind:  cli.Bool,
+				Usage: "pull IMAGE (for --platform) from its registry first, with the credentials of the docker CLI",
+			},
+			{
 				Name:        "compress",
 				Kind:        cli.String,
 				Placeholder: "ALGO",
@@ -126,6 +131,16 @@ func doExport(ctx context.Context, cmd *cli.Invocation) error {
 	}
 	if err := client.Ping(ctx); err != nil {
 		return err
+	}
+	if cmd.Bool("pull") {
+		auth, err := docker.RegistryAuth(ctx, image)
+		if err != nil {
+			return fmt.Errorf("registry credentials: %w", err)
+		}
+		log.Infof("pulling %s", docker.WithDefaultTag(image))
+		if err := client.ImagePull(ctx, image, opts.Platform, auth, func(s string) { log.Debugf("%s", s) }); err != nil {
+			return err
+		}
 	}
 	var sum hash.Hash
 	export := func(w io.Writer) (err error) {

@@ -88,7 +88,7 @@ func ExportImage(ctx context.Context, api API, image string, w io.Writer, opts E
 	cancelCreate()
 	if err != nil {
 		if isNoSuchImage(err) {
-			return fmt.Errorf("image %s not found locally; pull or build it first (e.g. `docker pull %s`): %w", image, image, err)
+			return fmt.Errorf("image %s not found locally; pull or build it first (`droot export --pull`, or e.g. `docker pull %s`): %w", image, image, err)
 		}
 		return fmt.Errorf("create container from image %s: %w", image, err)
 	}

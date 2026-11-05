@@ -193,9 +193,12 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
 
 - Docker contexts (`DOCKER_CONTEXT`, `docker context use`, including contexts
   with `skip-tls-verify` and no TLS files), `DOCKER_CONFIG`,
-  `DOCKER_API_VERSION` and `https://` hosts. A clear error is printed for
-  unsupported `ssh://` hosts. Works with Docker Desktop, Colima, OrbStack and
-  Podman's Docker-compatible socket.
+  `DOCKER_API_VERSION`, `https://` hosts and `ssh://` hosts (through `ssh
+  HOST docker system dial-stdio`, like the docker CLI). Works with Docker
+  Desktop, Colima, OrbStack and Podman's Docker-compatible socket.
+- `droot export --pull` pulls the image first, with the credentials of the
+  docker CLI (credential helpers, `credsStore`, `auths`), for `--platform` if
+  given.
 - `droot export --platform` to pick a variant of a multi-platform image.
 - `droot export` options for the ship step: `--compress gzip|zstd`,
   `--checksum` (`FILE.sha256`), `--reproducible` archives, `--exclude

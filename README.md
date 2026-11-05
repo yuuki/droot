@@ -163,13 +163,15 @@ that `droot run` can use them. Images without a shell, such as distroless or
 |---|---|
 | `-o`, `--output FILE` | Write the archive to `FILE` instead of STDOUT (`-` means STDOUT). The file is replaced atomically, so an interrupted export never leaves a truncated archive behind; like a plain `> FILE` redirection, a new file follows the umask, an existing file keeps its mode and owner, and symlinks are followed. |
 | `--platform PLATFORM` | Export the given variant (e.g. `linux/amd64`) of a multi-platform image. |
+| `--pull` | Pull `IMAGE` from its registry first (the `--platform` variant, if given), as `docker pull` would, with the credentials of the docker CLI: the credential helpers (`credHelpers`, `credsStore`) and the `auths` of `$DOCKER_CONFIG/config.json`. Without a tag, `latest` is pulled. |
 | `--compress ALGO` | Compress the archive with `gzip`, or `zstd` (with the `zstd` command). |
 | `--checksum` | Also write the SHA-256 checksum of the archive (as written, compressed or not) to `FILE.sha256`, in the format of `sha256sum`; needs `-o FILE`. Verify it with `sha256sum -c FILE.sha256` before extracting the archive as root. |
 | `--reproducible` | Make the archive depend only on the image, so that exporting the same image again gives the same bytes (for caches, deduplication or signatures): modification times later than `$SOURCE_DATE_EPOCH`, or else the image's creation time, are set to it (the files Docker creates in every container and the files added by droot are dated from it), and access and change times are dropped. Entries keep the order of the daemon. |
 | `--exclude PATTERN` | Leave out the entries matching `PATTERN`, and everything below a matching directory. A pattern containing `/` is matched against absolute paths (`/usr/share/doc`, `/var/cache/apk/*`), a pattern without `/` against base names (`*.pyc`); the syntax is that of Go's [`path.Match`](https://pkg.go.dev/path#Match). A hard link to a left out file is left out too, with a warning. Repeatable. |
 | `--drop-docker-files` | Leave out the files Docker adds to every container: `/.dockerenv`, and the empty placeholders `/etc/hostname`, `/etc/hosts`, `/etc/resolv.conf` and `/dev/console` (use `--cp` or `--bind-net-files` with `droot run`). |
 
-The image must exist locally (`docker pull` or `docker build` it first).
+Without `--pull`, the image must exist locally (`docker pull` or `docker
+build` it first).
 droot refuses to write the archive to a terminal. When STDERR is a terminal,
 the size exported so far is shown there.
 
@@ -335,7 +337,8 @@ $ droot completion fish > ~/.config/fish/completions/droot.fish
 
 `droot export` finds the daemon like the `docker` CLI does:
 
-1. `DOCKER_HOST` (`unix:///path/to/docker.sock`, `tcp://host:2376`), with
+1. `DOCKER_HOST` (`unix:///path/to/docker.sock`, `tcp://host:2376`,
+   `ssh://[user@]host[:port]`), with
    `DOCKER_TLS_VERIFY` (TLS, verifying the daemon's certificate), `DOCKER_TLS`
    (TLS without verification) and `DOCKER_CERT_PATH` (`ca.pem`, `cert.pem`,
    `key.pem`; default `~/.docker`);
@@ -353,9 +356,14 @@ $ DOCKER_HOST=unix://$XDG_RUNTIME_DIR/podman/podman.sock droot export -o app.tar
 $ DOCKER_HOST=tcp://192.0.2.10:2376 DOCKER_TLS_VERIFY=1 DOCKER_CERT_PATH=~/.docker/remote droot export app > app.tar
 ```
 
-`ssh://` hosts are not supported; forward the remote socket instead:
-`ssh -nNT -L /tmp/docker.sock:/var/run/docker.sock host` and
-`DOCKER_HOST=unix:///tmp/docker.sock`.
+With an `ssh://` host, droot runs `ssh [-l user] [-p port] host docker system
+dial-stdio` for each connection, like the docker CLI: the local `ssh` must log
+in without a password prompt (keys, an agent), and the remote host needs the
+`docker` command.
+
+```console
+$ DOCKER_HOST=ssh://deploy@build.example.com droot export -o app.tar app
+```
 
 ## Documentation
 

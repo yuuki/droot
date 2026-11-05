@@ -45,6 +45,9 @@ sequenceDiagram
   participant D as droot
   participant E as Docker Engine API
   D->>E: GET /_ping (negotiate the API version)
+  opt --pull
+    D->>E: POST /images/create?fromImage=IMAGE (X-Registry-Auth from the docker CLI's credentials)
+  end
   D->>E: POST /containers/create {Image, placeholder Entrypoint, label}
   Note right of E: the container is never started
   D->>E: GET /containers/{id}/json (Image: the ID of the image used)
@@ -56,8 +59,9 @@ sequenceDiagram
 
 Design notes:
 
-- **No Docker SDK.** The `docker` package implements the six endpoints above
-  over HTTP with `net/http`, on a unix socket or TCP (optionally TLS). The
+- **No Docker SDK.** The `docker` package implements the seven endpoints above
+  over HTTP with `net/http`, on a unix socket, TCP (optionally TLS) or the
+  standard input and output of `ssh HOST docker system dial-stdio`. The
   daemon address is resolved like the `docker` CLI does (`DOCKER_HOST`,
   `DOCKER_CONTEXT`, current context, default socket).
 - **API version.** droot uses the version advertised by the daemon in the
