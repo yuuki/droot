@@ -23,7 +23,7 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
   persist after the command exits: users must remember `droot umount`, and
   concurrent runs share mounts (`--unshare` avoids both).
 - **[compat]** `STOPSIGNAL` is saved but not used (droot does not supervise
-  COMMAND), and `HOSTNAME` is not set.
+  COMMAND), and `HOSTNAME` is only set with `--hostname`.
 - **[compat]** Nothing is created in `/dev` when it is a mount point, including
   `--tmpfs /dev`; a fresh `/dev` like Docker's would need droot to tell its own
   tmpfs from the host's `devtmpfs`.
@@ -38,8 +38,9 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
   missing locally): `docker save` tarballs and OCI layouts are not supported.
 - **[compat]** `npipe://` `DOCKER_HOST`s (Windows) are not supported.
 - **[compat]** Environment variables with multi-line values or keys starting
-  with `#` cannot be represented in `/.drootenv` and are skipped (with a
-  warning). The file has no version marker or escaping.
+  with `#` cannot be represented in `/.drootenv`: they are only in
+  `/.droot/config.json`, which droot 0.7 does not read (a warning is printed
+  at export time).
 - **[security]** droot checksums archives (`--checksum`) but does not sign
   them; the README shows how to sign the checksum file with cosign or
   minisign.
