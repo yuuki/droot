@@ -58,6 +58,24 @@ func privilegedDir(t *testing.T) string {
 	return dir
 }
 
+// newTestMounter returns a Mounter for root whose mounts are removed when the
+// test ends.
+func newTestMounter(t *testing.T, root string) *Mounter {
+	t.Helper()
+	r, err := osutil.OpenRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = r.Close() })
+	m := NewMounter(r)
+	t.Cleanup(func() {
+		if _, err := m.UmountAll(); err != nil {
+			t.Errorf("UmountAll: %v", err)
+		}
+	})
+	return m
+}
+
 func TestMounterLifecycle(t *testing.T) {
 	dir := privilegedDir(t)
 	root := filepath.Join(dir, "app")
@@ -187,16 +205,10 @@ func TestBindMountRefusesDangerousTargets(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	r, err := osutil.OpenRoot(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer r.Close()
-	m := NewMounter(r)
+	m := newTestMounter(t, root)
 	if err := m.MountSysProc(); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _, _ = m.UmountAll() })
 
 	for target, want := range map[string]string{
 		"/intoproc/x": "procfs",
@@ -241,13 +253,7 @@ func TestBindMountsDoNotPropagateToTheHost(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	r, err := osutil.OpenRoot(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer r.Close()
-	m := NewMounter(r)
-	t.Cleanup(func() { _, _ = m.UmountAll() })
+	m := newTestMounter(t, root)
 	if err := m.BindMount(hostApp, "/app", false); err != nil {
 		t.Fatal(err)
 	}
@@ -266,6 +272,46 @@ func TestBindMountsDoNotPropagateToTheHost(t *testing.T) {
 		if mi.Mountpoint == filepath.Join(root, "app") && strings.Contains(mi.Optional, "shared:") {
 			t.Fatalf("the bind mount joined the host's peer group: %q", mi.Optional)
 		}
+	}
+}
+
+func TestUmountDoesNotFollowSymlinks(t *testing.T) {
+	dir := privilegedDir(t)
+	root := filepath.Join(dir, "app")
+	hostMount := filepath.Join(dir, "outside", "b")
+	for _, d := range []string{root, hostMount} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A mount of the host, outside the root.
+	if err := unix.Mount("tmpfs", hostMount, "tmpfs", 0, "size=1m"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = unix.Unmount(hostMount, unix.MNT_DETACH) })
+	mounts, err := readMountInfo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hostID int
+	for _, mi := range mounts {
+		if mi.Mountpoint == hostMount {
+			hostID = mi.ID
+		}
+	}
+
+	// The container replaced <root>/a, which held a mount b, with a symlink
+	// to the host directory after droot read /proc/self/mountinfo.
+	if err := os.Symlink(filepath.Dir(hostMount), filepath.Join(root, "a")); err != nil {
+		t.Fatal(err)
+	}
+	m := newTestMounter(t, root)
+	stale := MountInfo{ID: hostID, Mountpoint: filepath.Join(root, "a", "b")}
+	if ok, _ := m.umount(stale); ok {
+		t.Fatal("umount reported success through a symlink")
+	}
+	if ok, _ := isMountpoint(hostMount); !ok {
+		t.Fatal("a mount outside the root was detached through a symlink")
 	}
 }
 

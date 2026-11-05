@@ -63,6 +63,7 @@ func ResolveRootDir(dir string) (string, error) {
 type MountInfo struct {
 	ID         int
 	Parent     int
+	Dev        string // major:minor of the file system
 	Root       string
 	Mountpoint string
 	Options    string
@@ -99,6 +100,7 @@ func ParseMountInfo(r io.Reader) ([]MountInfo, error) {
 		mounts = append(mounts, MountInfo{
 			ID:         id,
 			Parent:     parent,
+			Dev:        f[2],
 			Root:       unescape(f[3]),
 			Mountpoint: unescape(f[4]),
 			Options:    f[5],
@@ -137,18 +139,27 @@ func isUnder(root, path string) bool {
 	return path == root || strings.HasPrefix(path, root+"/")
 }
 
-// mountpointsUnder returns the mount points at or below root in the order
-// they must be unmounted: deepest first, and later mounts before earlier ones
-// on the same mount point.
-func mountpointsUnder(mounts []MountInfo, root string) []string {
-	var mps []string
+// mountsUnder returns the mounts at or below root in the order they must be
+// unmounted: deepest first, and later mounts before earlier ones on the same
+// mount point.
+func mountsUnder(mounts []MountInfo, root string) []MountInfo {
+	var res []MountInfo
 	for i := len(mounts) - 1; i >= 0; i-- {
 		if isUnder(root, mounts[i].Mountpoint) {
-			mps = append(mps, mounts[i].Mountpoint)
+			res = append(res, mounts[i])
 		}
 	}
-	slices.SortStableFunc(mps, func(a, b string) int {
-		return strings.Count(b, "/") - strings.Count(a, "/")
+	slices.SortStableFunc(res, func(a, b MountInfo) int {
+		return strings.Count(b.Mountpoint, "/") - strings.Count(a.Mountpoint, "/")
 	})
+	return res
+}
+
+// mountpointsUnder is like mountsUnder but returns only the mount points.
+func mountpointsUnder(mounts []MountInfo, root string) []string {
+	var mps []string
+	for _, mi := range mountsUnder(mounts, root) {
+		mps = append(mps, mi.Mountpoint)
+	}
 	return mps
 }

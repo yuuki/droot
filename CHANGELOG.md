@@ -84,6 +84,11 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
 - `--robind` cleared the `nosuid`, `nodev` and `noexec` flags of the source
   mount when remounting it read-only.
 - `--robind` failed for empty read-only source directories.
+- `droot umount` unmounted by path, following symlinks: a process in the
+  container could replace a directory holding a mount point with a symlink
+  and make droot detach a mount of the host. Mount points are now opened
+  without following symlinks and unmounted through their descriptor after
+  checking their mount ID.
 - `droot umount --root /a/app` also unmounted `/a/app2/...`, mishandled mount
   points containing spaces, and missed mounts when the root path contained a
   symbolic link.

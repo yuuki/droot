@@ -389,6 +389,33 @@ func (r *Root) OpenMountTarget(path string, dir bool, check DirCheck) (*MountTar
 	}, nil
 }
 
+// OpenNoFollow returns an O_PATH descriptor of path without following any
+// symlink: a symlink anywhere in path is an error. Mount points are crossed,
+// so the descriptor refers to the top-most mount at path, if any.
+func (r *Root) OpenNoFollow(path string) (*os.File, error) {
+	res, err := r.lookup(path, lookupOptions{noSymlinks: true})
+	if err != nil {
+		return nil, err
+	}
+	if res.name == "" {
+		return os.NewFile(uintptr(res.dir), r.displayPath(path)), nil
+	}
+	defer unix.Close(res.dir)
+	fd, err := unix.Openat(res.dir, res.name, unix.O_PATH|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, &fs.PathError{Op: "open", Path: r.displayPath(path), Err: err}
+	}
+	var st unix.Stat_t
+	if err := unix.Fstat(fd, &st); err != nil || st.Mode&unix.S_IFMT == unix.S_IFLNK {
+		_ = unix.Close(fd)
+		if err == nil {
+			err = fmt.Errorf("unexpected symbolic link %q", res.name)
+		}
+		return nil, &fs.PathError{Op: "open", Path: r.displayPath(path), Err: err}
+	}
+	return os.NewFile(uintptr(fd), r.displayPath(path)), nil
+}
+
 // OpenFile opens the regular file at path for reading, following symlinks
 // inside the root. FIFOs, devices and other special files are refused
 // without blocking.

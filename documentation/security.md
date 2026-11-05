@@ -56,6 +56,8 @@ running on the host with a different root directory.
   directories for symlinks while droot works.
 - The mounts droot makes are slave mounts: nothing mounted inside the
   container propagates back to the host's directories.
+- `droot umount` never follows symlinks and checks the mount ID of every
+  mount point before detaching it.
 - Device nodes are only created on the container's own file system and are
   owned by root; a bind mount of the host's `/dev` is left untouched.
 - Mount targets are never the root directory itself and are never resolved

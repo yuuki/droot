@@ -141,6 +141,11 @@ Nothing is undone when the command exits: the mounts stay until
 
 Reads `/proc/self/mountinfo`, selects the mount points equal to the root or
 below `root + "/"` (so `/var/containers/app2` is not affected by
-`--root /var/containers/app`), sorts them deepest first and unmounts each with
-`MNT_DETACH`. Mount points already detached together with their parent are
-ignored, which makes the command idempotent.
+`--root /var/containers/app`) and sorts them deepest first. Each mount point
+is then opened from the root with `osutil.Root` *without following any
+symlink*, and unmounted with `MNT_DETACH` through `/proc/self/fd/N` only if
+the descriptor belongs to the mount listed in mountinfo (same mount ID). A
+process in the container therefore cannot redirect the unmount to a host
+mount by replacing a directory with a symlink. Mount points already
+detached together with their parent are ignored, which makes the command
+idempotent.

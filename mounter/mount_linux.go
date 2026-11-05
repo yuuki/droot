@@ -288,24 +288,67 @@ func (m *Mounter) Mounts() ([]string, error) {
 
 // UmountAll lazily unmounts every mount point at or below the root, deepest
 // first, and returns the mount points it unmounted.
+//
+// Mount points are taken from /proc/self/mountinfo, but unmounting by path
+// would follow symlinks: a process in the container could replace a directory
+// with a symlink to a host directory and make droot detach a host mount. So
+// each mount point is opened from the root without following any symlink,
+// and only unmounted (through its descriptor) if the descriptor belongs to
+// the very mount listed in mountinfo.
 func (m *Mounter) UmountAll() ([]string, error) {
-	mps, err := m.Mounts()
+	mounts, err := readMountInfo()
 	if err != nil {
 		return nil, err
 	}
 	var unmounted []string
 	var errs []error
-	for _, mp := range mps {
-		err := unix.Unmount(mp, unix.MNT_DETACH)
-		switch {
-		case err == nil:
-			log.Debugf("umount %s", mp)
-			unmounted = append(unmounted, mp)
-		case errors.Is(err, unix.EINVAL), errors.Is(err, unix.ENOENT):
-			// Already detached together with its parent.
-		default:
-			errs = append(errs, &fs.PathError{Op: "umount", Path: mp, Err: err})
+	for _, mi := range mountsUnder(mounts, m.rootDir) {
+		ok, err := m.umount(mi)
+		if err != nil {
+			errs = append(errs, err)
+		}
+		if ok {
+			unmounted = append(unmounted, mi.Mountpoint)
 		}
 	}
 	return unmounted, errors.Join(errs...)
+}
+
+// umount unmounts the mount mi if it is still reachable at its mount point
+// without following symlinks.
+func (m *Mounter) umount(mi MountInfo) (bool, error) {
+	f, err := m.root.OpenNoFollow(strings.TrimPrefix(mi.Mountpoint, m.rootDir))
+	if errors.Is(err, unix.ENOENT) {
+		return false, nil // detached together with its parent
+	}
+	if err != nil {
+		return false, fmt.Errorf("umount %s: %w", mi.Mountpoint, err)
+	}
+	defer f.Close()
+
+	if id, err := mountID(int(f.Fd())); err == nil {
+		if id != mi.ID {
+			log.Debugf("skipping %s: mount %d is not reachable there (found mount %d)", mi.Mountpoint, mi.ID, id)
+			return false, nil
+		}
+	} else {
+		var st unix.Stat_t
+		if err := unix.Fstat(int(f.Fd()), &st); err != nil {
+			return false, err
+		}
+		if fmt.Sprintf("%d:%d", unix.Major(st.Dev), unix.Minor(st.Dev)) != mi.Dev {
+			return false, nil
+		}
+	}
+
+	err = unix.Unmount(osutil.FdPath(int(f.Fd())), unix.MNT_DETACH)
+	switch {
+	case err == nil:
+		log.Debugf("umount %s", mi.Mountpoint)
+		return true, nil
+	case errors.Is(err, unix.EINVAL):
+		return false, nil // not a mount point any more
+	default:
+		return false, &fs.PathError{Op: "umount", Path: mi.Mountpoint, Err: err}
+	}
 }
