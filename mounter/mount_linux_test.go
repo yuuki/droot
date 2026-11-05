@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"golang.org/x/sys/unix"
@@ -163,6 +164,57 @@ func TestMounterLifecycle(t *testing.T) {
 	}
 	if again, err := m.UmountAll(); err != nil || len(again) != 0 {
 		t.Fatalf("second UmountAll = %q, %v", again, err)
+	}
+}
+
+func TestBindMountRefusesDangerousTargets(t *testing.T) {
+	dir := privilegedDir(t)
+	root := filepath.Join(dir, "app")
+	host := filepath.Join(dir, "host")
+	for _, d := range []string{root, host} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A malicious image: links into the kernel's pseudo file systems and to
+	// the root itself.
+	for link, target := range map[string]string{
+		"intoproc": "/proc/sys/droot-test",
+		"intosys":  "/sys/fs/droot-test",
+		"toroot":   "/",
+	} {
+		if err := os.Symlink(target, filepath.Join(root, link)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r, err := osutil.OpenRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	m := NewMounter(r)
+	if err := m.MountSysProc(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = m.UmountAll() })
+
+	for target, want := range map[string]string{
+		"/intoproc/x": "procfs",
+		"/intosys/x":  "sysfs",
+		"/toroot":     osutil.ErrIsRoot.Error(),
+		"/":           osutil.ErrIsRoot.Error(),
+	} {
+		err := m.BindMount(host, target, false)
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("BindMount(%s) = %v, want an error mentioning %q", target, err, want)
+		}
+	}
+	if ok, _ := isMountpoint(root); ok {
+		t.Fatal("the root itself must never be mounted over")
+	}
+	// Re-running on the existing /proc and /sys mounts still works.
+	if err := m.MountSysProc(); err != nil {
+		t.Fatal(err)
 	}
 }
 

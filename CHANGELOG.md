@@ -62,6 +62,11 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
   component) and every operation is done relative to the resolved directory,
   which also resists a running container swapping directories for symlinks
   while droot works.
+- A bind mount target resolving to the root itself (e.g. an image symlink
+  `/data -> /` with `--bind H:/data`) mounted the host directory over the
+  whole container, and targets resolving through `/proc` or `/sys` created
+  directories in the host's kernel file systems (e.g. cgroups). Both are
+  now refused.
 - `/.drootenv` lines whose value contained `=` (e.g. `JAVA_OPTS=-Da=b`) were
   dropped, and lines longer than 64 KiB silently truncated the environment.
 - `--robind` cleared the `nosuid`, `nodev` and `noexec` flags of the source

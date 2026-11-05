@@ -54,6 +54,9 @@ running on the host with a different root directory.
   `/proc/self/fd/N`, ...). Symlinks in an image cannot make droot mount on or
   write to host paths, even if a process of a running container swaps
   directories for symlinks while droot works.
+- Mount targets are never the root directory itself and are never resolved
+  through kernel pseudo file systems (procfs, sysfs, cgroupfs, tracefs, ...),
+  where creating a directory changes the host's kernel state.
 - `CAP_DAC_READ_SEARCH` is dropped: with `open_by_handle_at(2)` it allows
   reading any file of the host and escaping the chroot (the "shocker" exploit).
 - `CAP_SYS_CHROOT`, `CAP_SYS_ADMIN`, `CAP_MKNOD`, `CAP_SYS_PTRACE`, ... are

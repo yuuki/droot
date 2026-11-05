@@ -110,10 +110,44 @@ func mountOn(t *osutil.MountTarget, source, fstype string, flags uintptr) (*os.F
 	return f, nil
 }
 
+// kernelFS are the pseudo file systems found under /proc and /sys. Mount
+// targets are never resolved through them: creating a directory there
+// changes the state of the host's kernel (a mkdir in cgroupfs creates a
+// cgroup, in tracefs a trace instance, ...).
+var kernelFS = map[uint32]string{
+	unix.PROC_SUPER_MAGIC:    "procfs",
+	unix.SYSFS_MAGIC:         "sysfs",
+	unix.CGROUP_SUPER_MAGIC:  "cgroupfs",
+	unix.CGROUP2_SUPER_MAGIC: "cgroup2fs",
+	unix.TRACEFS_MAGIC:       "tracefs",
+	unix.DEBUGFS_MAGIC:       "debugfs",
+	unix.SECURITYFS_MAGIC:    "securityfs",
+	unix.BPF_FS_MAGIC:        "bpffs",
+	unix.PSTOREFS_MAGIC:      "pstore",
+	unix.EFIVARFS_MAGIC:      "efivarfs",
+	unix.SELINUX_MAGIC:       "selinuxfs",
+	unix.SMACK_MAGIC:         "smackfs",
+	unix.BINFMTFS_MAGIC:      "binfmt_misc",
+	0x62656570:               "configfs",
+	0x65735543:               "fusectl",
+}
+
+// notKernelFS is an osutil.DirCheck refusing directories of kernelFS.
+func notKernelFS(fd int) error {
+	var st unix.Statfs_t
+	if err := unix.Statfs(osutil.FdPath(fd), &st); err != nil {
+		return err
+	}
+	if name, ok := kernelFS[uint32(st.Type)]; ok {
+		return fmt.Errorf("refusing to resolve a mount target through %s (a symlink in the container points into /proc or /sys?)", name)
+	}
+	return nil
+}
+
 // MountSysProc mounts procfs on /proc and recursively bind mounts the host's
 // /sys on /sys as a slave mount. Existing mounts are reused.
 func (m *Mounter) MountSysProc() error {
-	proc, err := m.root.OpenMountTarget("/proc", true, nil)
+	proc, err := m.root.OpenMountTarget("/proc", true, notKernelFS)
 	if err != nil {
 		return err
 	}
@@ -124,7 +158,7 @@ func (m *Mounter) MountSysProc() error {
 	}
 	_ = p.Close()
 
-	sys, err := m.root.OpenMountTarget("/sys", true, nil)
+	sys, err := m.root.OpenMountTarget("/sys", true, notKernelFS)
 	if err != nil {
 		return err
 	}
@@ -159,7 +193,7 @@ func (m *Mounter) BindMount(hostPath, containerPath string, readonly bool) error
 		}
 	}
 
-	t, err := m.root.OpenMountTarget(containerPath, fi.IsDir(), nil)
+	t, err := m.root.OpenMountTarget(containerPath, fi.IsDir(), notKernelFS)
 	if err != nil {
 		return err
 	}

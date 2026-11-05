@@ -165,7 +165,8 @@ Notes:
 
 - Paths given to `--bind`/`--robind` and the files copied by `--cp` are resolved
   *inside* `ROOT_DIR`: symbolic links in the image cannot redirect them to the
-  host's file system.
+  host's file system. A bind mount target may not be `ROOT_DIR` itself nor lie
+  inside `/proc` or `/sys`.
 - The supplementary groups are those listing the user in `ROOT_DIR/etc/group`.
 - `COMMAND` is looked up in the `PATH` of the container environment (falling
   back to `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`), not in

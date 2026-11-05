@@ -64,8 +64,10 @@ func (r *Root) Fd() int { return r.fd }
 // it to the very file the descriptor refers to, not to a path name.
 func FdPath(fd int) string { return "/proc/self/fd/" + strconv.Itoa(fd) }
 
-// DirCheck is called for every directory traversed or created while
-// resolving a path. Returning an error aborts the resolution.
+// DirCheck is called with every directory traversed while resolving a path
+// (excluding the root and the last component) and with the directory in
+// which a missing component is about to be created. Returning an error
+// aborts the resolution.
 type DirCheck func(fd int) error
 
 type lookupOptions struct {
@@ -190,15 +192,15 @@ func (r *Root) lookup(unsafePath string, opt lookupOptions) (res resolved, err e
 			}
 			parts = append(strings.Split(target, "/"), parts...)
 		case unix.S_IFDIR:
+			if last {
+				_ = unix.Close(fd)
+				return keep(part)
+			}
 			if opt.check != nil {
 				if err := opt.check(fd); err != nil {
 					_ = unix.Close(fd)
 					return fail(err)
 				}
-			}
-			if last {
-				_ = unix.Close(fd)
-				return keep(part)
 			}
 			stack = append(stack, fd)
 		default:
@@ -251,7 +253,7 @@ func readlinkFd(fd int) (string, error) {
 
 // OpenDir returns an O_PATH descriptor of the directory at path, following
 // symlinks inside the root. Missing directories are created (mode 0755) if
-// create is set. check, if not nil, is applied to every directory traversed.
+// create is set. See DirCheck for check.
 func (r *Root) OpenDir(path string, create bool, check DirCheck) (*os.File, error) {
 	res, err := r.lookup(path, lookupOptions{mkdir: create, followLast: true, check: check})
 	if err != nil {
@@ -276,12 +278,6 @@ func (r *Root) OpenDir(path string, create bool, check DirCheck) (*os.File, erro
 	if err != nil {
 		return nil, &fs.PathError{Op: "open", Path: r.displayPath(path), Err: err}
 	}
-	if check != nil {
-		if err := check(fd); err != nil {
-			_ = unix.Close(fd)
-			return nil, &fs.PathError{Op: "open", Path: r.displayPath(path), Err: err}
-		}
-	}
 	return os.NewFile(uintptr(fd), r.displayPath(path)), nil
 }
 
@@ -293,7 +289,6 @@ type MountTarget struct {
 	parent int
 	name   string
 	dir    bool
-	check  DirCheck
 }
 
 // ParentFd returns an O_PATH descriptor of the directory containing the
@@ -314,14 +309,14 @@ func (t *MountTarget) Reopen() (*os.File, error) {
 	if err != nil {
 		return nil, &fs.PathError{Op: "open", Path: t.File.Name(), Err: err}
 	}
-	if err := verifyTarget(fd, t.dir, t.check); err != nil {
+	if err := verifyTarget(fd, t.dir); err != nil {
 		_ = unix.Close(fd)
 		return nil, &fs.PathError{Op: "open", Path: t.File.Name(), Err: err}
 	}
 	return os.NewFile(uintptr(fd), t.File.Name()), nil
 }
 
-func verifyTarget(fd int, dir bool, check DirCheck) error {
+func verifyTarget(fd int, dir bool) error {
 	var st unix.Stat_t
 	if err := unix.Fstat(fd, &st); err != nil {
 		return err
@@ -333,8 +328,6 @@ func verifyTarget(fd int, dir bool, check DirCheck) error {
 		return unix.ENOTDIR
 	case !dir && mode == unix.S_IFDIR:
 		return unix.EISDIR
-	case dir && check != nil:
-		return check(fd)
 	}
 	return nil
 }
@@ -342,7 +335,7 @@ func verifyTarget(fd int, dir bool, check DirCheck) error {
 // OpenMountTarget resolves a mount target. Symlinks are followed inside the
 // root. A missing target is created as a directory (dir) or as an empty
 // regular file. A path resolving to the root itself is refused with
-// ErrIsRoot, and so is a path ending in "..".
+// ErrIsRoot, and so is a path ending in "..". See DirCheck for check.
 func (r *Root) OpenMountTarget(path string, dir bool, check DirCheck) (*MountTarget, error) {
 	res, err := r.lookup(path, lookupOptions{mkdir: true, followLast: true, check: check})
 	if err != nil {
@@ -384,7 +377,7 @@ func (r *Root) OpenMountTarget(path string, dir bool, check DirCheck) (*MountTar
 	if err != nil {
 		return fail("open", err)
 	}
-	if err := verifyTarget(fd, dir, check); err != nil {
+	if err := verifyTarget(fd, dir); err != nil {
 		_ = unix.Close(fd)
 		return fail("mount", err)
 	}
@@ -393,7 +386,6 @@ func (r *Root) OpenMountTarget(path string, dir bool, check DirCheck) (*MountTar
 		parent: res.dir,
 		name:   res.name,
 		dir:    dir,
-		check:  check,
 	}, nil
 }
 
