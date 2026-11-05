@@ -87,6 +87,10 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
   whole container, and targets resolving through `/proc` or `/sys` created
   directories in the host's kernel file systems (e.g. cgroups). Both are
   now refused.
+- The container's `/etc/passwd` and `/etc/group` were opened by path on the
+  host: an absolute symlink in the image made droot read the host's files,
+  and a FIFO made it hang. They are now resolved inside the root and must be
+  regular files.
 - `/.drootenv` lines whose value contained `=` (e.g. `JAVA_OPTS=-Da=b`) were
   dropped, and lines longer than 64 KiB silently truncated the environment.
 - `--robind` cleared the `nosuid`, `nodev` and `noexec` flags of the source
@@ -115,6 +119,7 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
   Podman's Docker-compatible socket.
 - `droot export --platform` to pick a variant of a multi-platform image.
 - `droot run --no-new-privileges` sets the `no_new_privs` flag.
+- A warning when `--user NAME` maps to uid 0 in the image.
 - Temporary export containers are labeled `io.github.yuuki.droot`.
 - Bind mounting single files with `--bind`/`--robind`.
 - `droot completion bash|zsh|fish`.

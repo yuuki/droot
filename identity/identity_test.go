@@ -1,11 +1,29 @@
 package identity
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
+	"time"
+
+	"golang.org/x/sys/unix"
+
+	"github.com/yuuki/droot/log"
+	"github.com/yuuki/droot/osutil"
 )
+
+func openRoot(t *testing.T, dir string) *osutil.Root {
+	t.Helper()
+	r, err := osutil.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = r.Close() })
+	return r
+}
 
 func newRoot(t *testing.T) string {
 	t.Helper()
@@ -35,7 +53,7 @@ audio:x:1800: app
 }
 
 func TestResolve(t *testing.T) {
-	root := newRoot(t)
+	root := openRoot(t, newRoot(t))
 	uid, gid := os.Getuid(), os.Getgid()
 
 	tests := []struct {
@@ -117,7 +135,7 @@ func TestResolve(t *testing.T) {
 }
 
 func TestResolveWithoutDatabases(t *testing.T) {
-	root := t.TempDir() // no /etc at all
+	root := openRoot(t, t.TempDir()) // no /etc at all
 	got, err := Resolve(root, "1234", "5678")
 	if err != nil {
 		t.Fatal(err)
@@ -129,12 +147,77 @@ func TestResolveWithoutDatabases(t *testing.T) {
 
 func TestResolveFallsBackToHost(t *testing.T) {
 	// "root" exists on virtually every host; the container has no passwd.
-	root := t.TempDir()
+	root := openRoot(t, t.TempDir())
 	got, err := Resolve(root, "root", "")
 	if err != nil {
 		t.Skipf("host has no root user: %v", err)
 	}
 	if got.UID != 0 || got.Username != "root" {
 		t.Fatalf("unexpected credential %+v", *got)
+	}
+}
+
+func TestResolveReadsInsideTheRoot(t *testing.T) {
+	base := t.TempDir()
+	rootDir := filepath.Join(base, "root")
+	hostEtc := filepath.Join(base, "hostetc")
+	for _, d := range []string{rootDir, hostEtc} {
+		if err := os.Mkdir(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// /etc of the image points to a host directory: it must be resolved
+	// inside the root, where it does not exist.
+	if err := os.WriteFile(filepath.Join(hostEtc, "passwd"), []byte("hostonly:x:4321:4321::/:/bin/sh\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(hostEtc, filepath.Join(rootDir, "etc")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Resolve(openRoot(t, rootDir), "hostonly", ""); err == nil {
+		t.Fatal("a symlink in the image must not make droot read the host's files")
+	}
+}
+
+func TestResolveRefusesFIFO(t *testing.T) {
+	rootDir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(rootDir, "etc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := unix.Mkfifo(filepath.Join(rootDir, "etc", "passwd"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := Resolve(openRoot(t, rootDir), "app", "")
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("a FIFO as /etc/passwd must be an error")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("droot hung on a FIFO /etc/passwd")
+	}
+}
+
+func TestResolveWarnsWhenANameMapsToRoot(t *testing.T) {
+	rootDir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(rootDir, "etc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rootDir, "etc", "passwd"), []byte("app:x:0:0::/:/bin/sh\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+	cred, err := Resolve(openRoot(t, rootDir), "app", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cred.UID != 0 || !strings.Contains(buf.String(), "maps to uid 0") {
+		t.Fatalf("uid=%d, log=%q", cred.UID, buf.String())
 	}
 }

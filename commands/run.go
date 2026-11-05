@@ -137,7 +137,7 @@ func doRun(_ context.Context, cmd *cli.Command) error {
 		}
 	}
 
-	cred, err := identity.Resolve(rootDir, cmd.String("user"), cmd.String("group"))
+	cred, err := identity.Resolve(root, cmd.String("user"), cmd.String("group"))
 	if err != nil {
 		return err
 	}

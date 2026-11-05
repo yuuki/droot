@@ -153,7 +153,7 @@ Runs `COMMAND` inside `ROOT_DIR` (an extracted archive). In order, droot:
 | Option | Description |
 |---|---|
 | `-r`, `--root ROOT_DIR` | Root directory to chroot into (required). |
-| `-u`, `--user USER` | User name or ID to run as. Names are looked up in `ROOT_DIR/etc/passwd` first, then on the host. Unknown numeric IDs are accepted. |
+| `-u`, `--user USER` | User name or ID to run as. Names are looked up in `ROOT_DIR/etc/passwd` first, then on the host, so the image decides what a name maps to (droot warns when a name other than `root` maps to uid 0); numeric IDs do not depend on the image. Unknown numeric IDs are accepted. |
 | `-g`, `--group GROUP` | Group name or ID to run as. Defaults to the primary group of `--user`. |
 | `-b`, `--bind SRC[:DEST]` | Bind mount the host's `SRC` (directory or file) on `DEST` (default: `SRC`) in the container. Repeatable. |
 | `--robind SRC[:DEST]` | Same as `--bind`, but read-only. Repeatable. |

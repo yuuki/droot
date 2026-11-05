@@ -28,6 +28,9 @@ running on the host with a different root directory.
   change host kernel settings through files such as `/proc/sys/*`,
   `/proc/sysrq-trigger` or sysfs attributes that are only protected by file
   permissions.
+- With images you did not build, give `--user` and `--group` as numeric IDs:
+  a name is looked up in the image's `/etc/passwd`, which can map any name to
+  uid 0 (droot prints a warning when it does).
 - Only run **trusted images**. setuid-root programs in the image (`su`,
   `sudo`, `ping`, ...) let an unprivileged user regain the capabilities left in
   the bounding set: use `--no-new-privileges` (or remove them from production
