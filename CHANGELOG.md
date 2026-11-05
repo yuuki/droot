@@ -188,11 +188,16 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
 - linux/arm64 and darwin/arm64 binaries and a `checksums.txt` in releases.
   The assets keep the names and layout of 0.7.7 (`droot_linux_amd64.tar.gz`,
   `droot_darwin_amd64.zip`, bare `droot_linux_amd64`, ...).
+- Signed SLSA build provenance attestations for every release asset
+  (`gh attestation verify`), an SPDX SBOM for every archive, and
+  reproducible binaries and archives.
 - Documentation: architecture, security considerations, development guide,
   known issues and ideas.
 - CI on GitHub Actions (lint, unit tests as user and root on the minimum and
-  latest Go, end-to-end tests against Docker, cross builds), Dependabot,
-  GoReleaser release workflow.
+  latest Go, end-to-end tests against Docker, govulncheck, a security linter
+  for the workflows, release snapshots), Dependabot, and a release workflow
+  that runs CI on the tagged commit, builds a draft release with GoReleaser
+  and takes its notes from this changelog.
 
 ### Removed
 
