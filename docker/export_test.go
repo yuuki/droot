@@ -199,8 +199,8 @@ func TestExportImage(t *testing.T) {
 	}
 }
 
-func TestExportImageSkipsMultilineEnv(t *testing.T) {
-	api := &fakeAPI{env: []string{"A=1", "CERT=line1\nline2", "B=2"}, archive: buildTar(t, nil)}
+func TestExportImageSkipsUnrepresentableEnv(t *testing.T) {
+	api := &fakeAPI{env: []string{"A=1", "CERT=line1\nline2", "#HASH=v", " SPACED=x", "B=2"}, archive: buildTar(t, nil)}
 	var out bytes.Buffer
 	if err := ExportImage(context.Background(), api, "img", &out, ExportOptions{}); err != nil {
 		t.Fatal(err)

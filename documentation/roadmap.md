@@ -54,8 +54,9 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
   `docker save`/OCI layouts, and `--platform` only selects among the variants
   present locally.
 - **[compat]** `ssh://` and `npipe://` `DOCKER_HOST`s are not supported.
-- **[compat]** Environment values containing newlines cannot be represented
-  in `/.drootenv` and are skipped. The file has no version marker or escaping.
+- **[compat]** Environment variables with multi-line values or keys starting
+  with `#` cannot be represented in `/.drootenv` and are skipped (with a
+  warning). The file has no version marker or escaping.
 - **[ux]** No progress indication for large images; no compression option
   (pipe to `gzip`/`zstd`).
 - **[security]** Archives are neither checksummed nor signed by droot.

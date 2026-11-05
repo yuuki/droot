@@ -130,14 +130,16 @@ func ExportImage(ctx context.Context, api API, image string, w io.Writer, opts E
 }
 
 // encodeEnvFile renders env in the format read by environ.ParseEnv.
-// Variables whose value contains a newline cannot be represented and are
-// skipped with a warning.
+// Variables that would not be read back exactly — values containing a
+// newline, keys starting with '#' (read as comments) or surrounded by
+// spaces — are skipped with a warning.
 func encodeEnvFile(env []string) []byte {
 	var b strings.Builder
 	for _, e := range env {
-		if strings.ContainsAny(e, "\r\n") {
+		parsed, err := environ.ParseEnv(strings.NewReader(e))
+		if err != nil || len(parsed) != 1 || parsed[0] != e || strings.ContainsAny(e, "\r\n") {
 			k, _, _ := strings.Cut(e, "=")
-			log.Warnf("skipping environment variable %s: multi-line values are not supported in %s", k, environ.EnvFilePath)
+			log.Warnf("skipping environment variable %q: it cannot be represented in %s", k, environ.EnvFilePath)
 			continue
 		}
 		b.WriteString(e)

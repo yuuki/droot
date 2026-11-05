@@ -80,6 +80,9 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
   silently ignored with API versions older than 1.41 (now an error); and
   every 404 — such as an image lacking the requested platform — was reported
   as "image not found locally".
+- Environment variables that `/.drootenv` cannot represent (keys starting
+  with `#`, which were silently read back as comments, keys surrounded by
+  spaces, multi-line values) are skipped with a warning at export time.
 - Images that already contained a `/.drootenv` hard-linked from another
   file, or a `/.drootenv` directory, produced archives that `tar` failed to
   extract. Entries below such a directory are dropped too, and hard links

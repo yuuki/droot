@@ -87,9 +87,10 @@ JAVA_OPTS=-Dfoo=bar -Dbaz=qux
 ```
 
 One `KEY=VALUE` per line, everything after the first `=` being the value.
-Blank lines and lines starting with `#` are ignored when reading. Values
-containing newlines cannot be represented and are skipped with a warning at
-export time.
+Blank lines and lines starting with `#` are ignored when reading. Variables
+that would not be read back exactly (values containing newlines, keys
+starting with `#` or surrounded by spaces) cannot be represented and are
+skipped with a warning at export time.
 
 Extract archives as root with `tar -xpf` so that ownership, permissions and
 setuid bits are preserved.
