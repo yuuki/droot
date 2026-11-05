@@ -230,6 +230,8 @@ func TestEndpointFromEnv(t *testing.T) {
 	configDir := t.TempDir()
 	writeContext(t, configDir, "colima",
 		`{"Name":"colima","Endpoints":{"docker":{"Host":"unix:///home/me/.colima/default/docker.sock","SkipTLSVerify":false}}}`)
+	writeContext(t, configDir, "skipverify",
+		`{"Name":"skipverify","Endpoints":{"docker":{"Host":"tcp://192.0.2.11:2376","SkipTLSVerify":true}}}`)
 	id := writeContext(t, configDir, "remote",
 		`{"Name":"remote","Endpoints":{"docker":{"Host":"tcp://192.0.2.10:2376","SkipTLSVerify":true}}}`)
 	if err := os.MkdirAll(filepath.Join(configDir, "contexts", "tls", id, "docker"), 0o755); err != nil {
@@ -287,6 +289,11 @@ func TestEndpointFromEnv(t *testing.T) {
 			config: `{"currentContext":"remote"}`,
 			want: Endpoint{Host: "tcp://192.0.2.10:2376", UseTLS: true, SkipTLSVerify: true,
 				CertDir: filepath.Join(configDir, "contexts", "tls", id, "docker")},
+		},
+		{
+			name: "context skipping TLS verification without TLS files still uses TLS",
+			env:  map[string]string{"DOCKER_CONTEXT": "skipverify"},
+			want: Endpoint{Host: "tcp://192.0.2.11:2376", UseTLS: true, SkipTLSVerify: true},
 		},
 		{
 			name:   "default context",

@@ -136,7 +136,8 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
 
 ### Added
 
-- Docker contexts (`DOCKER_CONTEXT`, `docker context use`), `DOCKER_CONFIG`,
+- Docker contexts (`DOCKER_CONTEXT`, `docker context use`, including contexts
+  with `skip-tls-verify` and no TLS files), `DOCKER_CONFIG`,
   `DOCKER_API_VERSION` and `https://` hosts. A clear error is printed for
   unsupported `ssh://` hosts. Works with Docker Desktop, Colima, OrbStack and
   Podman's Docker-compatible socket.

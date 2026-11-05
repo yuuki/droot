@@ -150,7 +150,9 @@ func loadContextEndpoint(configDir, name string) (Endpoint, error) {
 		return Endpoint{}, fmt.Errorf("docker context %q has no docker endpoint", name)
 	}
 
-	ep := Endpoint{Host: dockerEP.Host, SkipTLSVerify: dockerEP.SkipTLSVerify}
+	// Like the docker CLI, use TLS when the context has TLS material or
+	// skips verification.
+	ep := Endpoint{Host: dockerEP.Host, SkipTLSVerify: dockerEP.SkipTLSVerify, UseTLS: dockerEP.SkipTLSVerify}
 	tlsDir := filepath.Join(configDir, "contexts", "tls", id, "docker")
 	if fi, err := os.Stat(tlsDir); err == nil && fi.IsDir() { //nolint:gosec // G703: see above
 		ep.UseTLS = true
