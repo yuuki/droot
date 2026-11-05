@@ -105,7 +105,9 @@ Build an image and export its file system:
 
 ```console
 $ docker build -t dockerfiles/app .
-$ droot export dockerfiles/app | gzip -c | aws s3 cp - s3://drootexamples/app.tar.gz
+$ droot export --compress gzip --checksum -o app.tar.gz dockerfiles/app
+$ aws s3 cp app.tar.gz s3://drootexamples/app.tar.gz
+$ aws s3 cp app.tar.gz.sha256 s3://drootexamples/app.tar.gz.sha256
 ```
 
 Deploy and run it on a server (extract as root so that file ownership and
@@ -114,7 +116,9 @@ setuid bits are preserved):
 ```console
 $ sudo droot umount --root /var/containers/app   # it is safe to umount before run if you use --bind
 $ sudo mkdir -p /tmp/app /var/containers/app
-$ aws s3 cp s3://drootexamples/app.tar.gz - | sudo tar -xpzf - -C /tmp/app
+$ aws s3 cp s3://drootexamples/app.tar.gz . && aws s3 cp s3://drootexamples/app.tar.gz.sha256 .
+$ sha256sum -c app.tar.gz.sha256
+$ sudo tar -xpzf app.tar.gz -C /tmp/app
 $ sudo mv -T /tmp/app /var/containers/app
 $ sudo droot run --cp --user appuser --group appgroup --bind /var/log/app --root /var/containers/app -- command
 ```
@@ -159,9 +163,20 @@ that `droot run` can use them. Images without a shell, such as distroless or
 |---|---|
 | `-o`, `--output FILE` | Write the archive to `FILE` instead of STDOUT (`-` means STDOUT). The file is replaced atomically, so an interrupted export never leaves a truncated archive behind; like a plain `> FILE` redirection, a new file follows the umask, an existing file keeps its mode and owner, and symlinks are followed. |
 | `--platform PLATFORM` | Export the given variant (e.g. `linux/amd64`) of a multi-platform image. |
+| `--compress ALGO` | Compress the archive with `gzip`, or `zstd` (with the `zstd` command). |
+| `--checksum` | Also write the SHA-256 checksum of the archive (as written, compressed or not) to `FILE.sha256`, in the format of `sha256sum`; needs `-o FILE`. Verify it with `sha256sum -c FILE.sha256` before extracting the archive as root. |
+| `--reproducible` | Make the archive depend only on the image, so that exporting the same image again gives the same bytes (for caches, deduplication or signatures): modification times later than `$SOURCE_DATE_EPOCH`, or else the image's creation time, are set to it (the files Docker creates in every container and the files added by droot are dated from it), and access and change times are dropped. Entries keep the order of the daemon. |
+| `--exclude PATTERN` | Leave out the entries matching `PATTERN`, and everything below a matching directory. A pattern containing `/` is matched against absolute paths (`/usr/share/doc`, `/var/cache/apk/*`), a pattern without `/` against base names (`*.pyc`); the syntax is that of Go's [`path.Match`](https://pkg.go.dev/path#Match). A hard link to a left out file is left out too, with a warning. Repeatable. |
+| `--drop-docker-files` | Leave out the files Docker adds to every container: `/.dockerenv`, and the empty placeholders `/etc/hostname`, `/etc/hosts`, `/etc/resolv.conf` and `/dev/console` (use `--cp` or `--bind-net-files` with `droot run`). |
 
 The image must exist locally (`docker pull` or `docker build` it first).
-droot refuses to write the archive to a terminal.
+droot refuses to write the archive to a terminal. When STDERR is a terminal,
+the size exported so far is shown there.
+
+To sign archives, sign the checksum file with your tool of choice, e.g.
+`cosign sign-blob --bundle app.tar.gz.sha256.sigstore.json app.tar.gz.sha256`
+or `minisign -Sm app.tar.gz.sha256`, and verify the signature, then the
+checksum, before extracting.
 
 ### `droot run`
 

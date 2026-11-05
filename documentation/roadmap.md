@@ -42,12 +42,9 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
 - **[compat]** Environment variables with multi-line values or keys starting
   with `#` cannot be represented in `/.drootenv` and are skipped (with a
   warning). The file has no version marker or escaping.
-- **[ux]** No progress indication for large images; no compression option
-  (pipe to `gzip`/`zstd`).
-- **[security]** Archives are neither checksummed nor signed by droot.
-- **[compat]** The archive contains the files Docker adds to every container
-  (`/.dockerenv`, empty `/etc/hostname`, `/etc/hosts`, `/etc/resolv.conf`,
-  `/dev/console`, ...).
+- **[security]** droot checksums archives (`--checksum`) but does not sign
+  them; the README shows how to sign the checksum file with cosign or
+  minisign.
 
 ### Project
 
@@ -79,8 +76,6 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
 - **[feature]** Daemonless export: flatten images straight from a registry, a
   `docker save` tarball or an OCI layout (works on CI runners without Docker
   and with Podman/Buildah/containerd stores).
-- **[feature]** `--compress gzip|zstd`, checksum files, reproducible archives
-  (normalized mtimes, sorted entries) and `--exclude` patterns to slim images.
 - **[feature]** `droot deploy`/`droot import`: download (S3/HTTP), verify a
   checksum or signature (cosign, minisign), extract atomically and switch a
   symlink while keeping N releases (capze-like), then optionally restart a

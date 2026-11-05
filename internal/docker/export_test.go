@@ -18,13 +18,14 @@ import (
 )
 
 type fakeAPI struct {
-	onCreate   func() // called during ContainerCreate
-	env        []string
-	archive    []byte
-	createErr  error
-	exportErr  error
-	removeErr  error
-	exportBody io.ReadCloser
+	onCreate     func() // called during ContainerCreate
+	env          []string
+	archive      []byte
+	createErr    error
+	exportErr    error
+	removeErr    error
+	exportBody   io.ReadCloser
+	imageCreated string // image creation time
 
 	created        *ContainerConfig
 	platform       string
@@ -59,7 +60,7 @@ func (f *fakeAPI) ContainerInspect(_ context.Context, id string) (*ContainerInfo
 
 func (f *fakeAPI) ImageInspect(_ context.Context, ref, platform string) (*ImageInfo, error) {
 	f.inspectedImage = ref
-	info := &ImageInfo{ID: ref}
+	info := &ImageInfo{ID: ref, Created: f.imageCreated}
 	info.Config = &ImageConfig{Env: f.env, WorkingDir: "/app", User: "app:staff", Entrypoint: []string{"/entry"}, Cmd: []string{"serve", "--port=80"}, StopSignal: "SIGQUIT"}
 	return info, nil
 }

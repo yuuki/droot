@@ -197,6 +197,9 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
   unsupported `ssh://` hosts. Works with Docker Desktop, Colima, OrbStack and
   Podman's Docker-compatible socket.
 - `droot export --platform` to pick a variant of a multi-platform image.
+- `droot export` options for the ship step: `--compress gzip|zstd`,
+  `--checksum` (`FILE.sha256`), `--reproducible` archives, `--exclude
+  PATTERN` and `--drop-docker-files`; the progress is shown on a terminal.
 - `droot export` saves the image configuration (`Env`, `WorkingDir`, `User`,
   `Entrypoint`, `Cmd`, `StopSignal`) as `/.droot/config.json`, which, unlike
   `/.drootenv`, represents every environment variable. `droot run` uses it:

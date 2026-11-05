@@ -84,6 +84,8 @@ func (c *Client) ContainerInspect(ctx context.Context, id string) (*ContainerInf
 type ImageInfo struct {
 	ID     string       `json:"Id"`
 	Config *ImageConfig `json:"Config"`
+	// Created is the creation time of the image (RFC 3339).
+	Created string `json:"Created"`
 }
 
 // ImageConfig is the subset of an image's configuration that droot saves.

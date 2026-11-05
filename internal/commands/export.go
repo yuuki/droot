@@ -4,15 +4,22 @@ import (
 	"bufio"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
+	"hash"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
+	"time"
 
 	"github.com/yuuki/droot/internal/cli"
 	"github.com/yuuki/droot/internal/docker"
+	"github.com/yuuki/droot/internal/log"
 	"github.com/yuuki/droot/internal/osutil"
 )
 
@@ -23,8 +30,8 @@ func exportCommand() *cli.Command {
 		ArgsUsage: "IMAGE[:TAG]",
 		Description: "Creates a temporary container from IMAGE (without starting it), streams its\n" +
 			"file system as a tar archive and removes the container. The image's\n" +
-			"environment variables are saved as /.drootenv in the archive so that\n" +
-			"'droot run' can restore them.\n\n" +
+			"configuration is saved as /.droot/config.json and its environment as\n" +
+			"/.drootenv in the archive, for 'droot run'.\n\n" +
 			"The Docker daemon is selected like the docker CLI does, from DOCKER_HOST,\n" +
 			"DOCKER_TLS_VERIFY, DOCKER_CERT_PATH, DOCKER_CONTEXT or the current docker context.",
 		Flags: []*cli.Flag{
@@ -41,6 +48,33 @@ func exportCommand() *cli.Command {
 				Kind:        cli.String,
 				Placeholder: "PLATFORM",
 				Usage:       "export the PLATFORM variant of a multi-platform image, e.g. linux/amd64",
+			},
+			{
+				Name:        "compress",
+				Kind:        cli.String,
+				Placeholder: "ALGO",
+				Usage:       "compress the archive with gzip, or zstd (with the zstd command)",
+			},
+			{
+				Name:  "checksum",
+				Kind:  cli.Bool,
+				Usage: "also write the SHA-256 checksum of the archive to FILE.sha256 (sha256sum format; needs -o)",
+			},
+			{
+				Name:  "reproducible",
+				Kind:  cli.Bool,
+				Usage: "make the archive depend only on the image: modification times later than $SOURCE_DATE_EPOCH or the image's creation time are set to it",
+			},
+			{
+				Name:        "exclude",
+				Kind:        cli.Strings,
+				Placeholder: "PATTERN",
+				Usage:       "leave out the files matching PATTERN and everything below matching directories; a PATTERN with a / matches absolute paths (/usr/share/doc), one without a / base names (*.pyc)",
+			},
+			{
+				Name:  "drop-docker-files",
+				Kind:  cli.Bool,
+				Usage: "leave out the files Docker adds to every container: /.dockerenv and the empty /etc/hostname, /etc/hosts, /etc/resolv.conf and /dev/console",
 			},
 		},
 		Action: doExport,
@@ -59,6 +93,32 @@ func doExport(ctx context.Context, cmd *cli.Invocation) error {
 	if toStdout && osutil.IsTerminal(os.Stdout) {
 		return cmd.UsageError("refusing to write a tar archive to a terminal; use -o FILE or redirect stdout")
 	}
+	checksum := cmd.Bool("checksum")
+	if checksum && toStdout {
+		return cmd.UsageError("--checksum needs -o FILE")
+	}
+	algo := cmd.String("compress")
+	if algo != "" && !slices.Contains(compressions, algo) {
+		return cmd.UsageError("unknown compression %q: want gzip or zstd", algo)
+	}
+	opts := docker.ExportOptions{
+		Platform:        cmd.String("platform"),
+		Exclude:         cmd.Strings("exclude"),
+		DropDockerFiles: cmd.Bool("drop-docker-files"),
+		Reproducible:    cmd.Bool("reproducible"),
+	}
+	if err := docker.ValidatePatterns(opts.Exclude); err != nil {
+		return cmd.UsageError("%v", err)
+	}
+	if opts.Reproducible {
+		if s, ok := os.LookupEnv("SOURCE_DATE_EPOCH"); ok && s != "" {
+			epoch, err := strconv.ParseInt(s, 10, 64)
+			if err != nil {
+				return fmt.Errorf("invalid SOURCE_DATE_EPOCH %q: want a number of seconds", s)
+			}
+			opts.ClampTime = time.Unix(epoch, 0)
+		}
+	}
 
 	client, err := docker.NewClientFromEnv()
 	if err != nil {
@@ -67,15 +127,48 @@ func doExport(ctx context.Context, cmd *cli.Invocation) error {
 	if err := client.Ping(ctx); err != nil {
 		return err
 	}
-	opts := docker.ExportOptions{Platform: cmd.String("platform")}
-	export := func(w io.Writer) error {
-		return docker.ExportImage(ctx, client, image, w, opts)
+	var sum hash.Hash
+	export := func(w io.Writer) (err error) {
+		if checksum {
+			sum = sha256.New()
+			w = io.MultiWriter(w, sum)
+		}
+		c, err := newCompressor(ctx, w, algo)
+		if err != nil {
+			return err
+		}
+		p := newProgress(c, "exporting "+image, progressOutput())
+		defer func() { p.end(err == nil) }()
+		if err := docker.ExportImage(ctx, client, image, p, opts); err != nil {
+			c.abort()
+			return err
+		}
+		return c.finish()
 	}
 
 	if toStdout {
 		return writeBuffered(ctx, os.Stdout, export)
 	}
-	return writeFile(ctx, output, export)
+	if err := writeFile(ctx, output, export); err != nil {
+		return err
+	}
+	if checksum {
+		line := fmt.Sprintf("%x  %s\n", sum.Sum(nil), filepath.Base(output))
+		return writeFile(ctx, output+".sha256", func(w io.Writer) error {
+			_, err := io.WriteString(w, line)
+			return err
+		})
+	}
+	return nil
+}
+
+// progressOutput returns where the progress of an export is shown: STDERR
+// if it is a terminal, and the output is not in debug mode.
+func progressOutput() *os.File {
+	if log.IsDebug() {
+		return nil
+	}
+	return os.Stderr
 }
 
 func writeBuffered(ctx context.Context, w io.Writer, write func(io.Writer) error) error {

@@ -84,6 +84,21 @@ assert_eq "export writes the image config to .droot/config.json" \
   "$(tar -xOf "$WORK/app.tar" .droot/config.json | grep -cE '"(WorkingDir": "/usr/local/myapp|User": "app|from-entrypoint|from-cmd)"')" "4"
 assert_eq "export leaves no temporary container" \
   "$($DOCKER ps -aq --filter label=io.github.yuuki.droot | wc -l)" "0"
+(cd "$WORK" && "$DROOT" export --compress gzip --checksum -o app.tar.gz "$IMAGE" && sha256sum --quiet -c app.tar.gz.sha256) ||
+  fail "--compress gzip --checksum: the checksum does not match"
+assert_eq "--compress gzip" "$(tar -tzf "$WORK/app.tar.gz" | grep -c '^\.droot/config\.json$')" "1"
+if command -v zstd >/dev/null; then
+  "$DROOT" export --compress zstd "$IMAGE" | zstd -dc | tar -t >/dev/null || fail "--compress zstd"
+  echo "ok - --compress zstd"
+fi
+"$DROOT" export --reproducible -o "$WORK/r1.tar" "$IMAGE"
+sleep 1.1
+"$DROOT" export --reproducible -o "$WORK/r2.tar" "$IMAGE"
+cmp -s "$WORK/r1.tar" "$WORK/r2.tar" || fail "--reproducible: two exports of the same image differ"
+echo "ok - --reproducible"
+assert_eq "--exclude and --drop-docker-files" \
+  "$("$DROOT" export --exclude /usr/share/apk --exclude '*.so.*' --drop-docker-files "$IMAGE" | tar -t | grep -cE '^(usr/share/apk|\.dockerenv$|.*\.so\.)' || true)" "0"
+rm -f "$WORK/r1.tar" "$WORK/r2.tar" "$WORK/app.tar.gz" "$WORK/app.tar.gz.sha256"
 if "$DROOT" export does-not-exist:nope >/dev/null 2>&1; then fail "exporting a missing image should fail"; fi
 echo "ok - exporting a missing image fails"
 

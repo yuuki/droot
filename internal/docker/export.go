@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"path"
+	"slices"
 	"strings"
 	"time"
 
@@ -30,6 +31,20 @@ type API interface {
 type ExportOptions struct {
 	// Platform selects the image variant, e.g. "linux/arm64". Optional.
 	Platform string
+	// Exclude drops the entries matching one of these patterns, and
+	// everything below a matching directory (see Excluded).
+	Exclude []string
+	// DropDockerFiles drops the files Docker adds to every container:
+	// /.dockerenv, and the empty /etc/hostname, /etc/hosts,
+	// /etc/resolv.conf and /dev/console.
+	DropDockerFiles bool
+	// Reproducible makes the archive depend only on the image: the
+	// modification times later than ClampTime (default: the image's
+	// creation time) are set to it, and access and change times are
+	// dropped, so that exporting the same image twice gives the same
+	// archive.
+	Reproducible bool
+	ClampTime    time.Time
 }
 
 // exportLabel marks the temporary containers created by droot so that leftovers
@@ -121,9 +136,26 @@ func ExportImage(ctx context.Context, api API, image string, w io.Writer, opts E
 	if err != nil {
 		return err
 	}
-	files := []extraFile{
-		{name: environ.EnvFilePath, content: encodeEnvFile(cfg.Env)},
-		{name: imageconfig.Path, content: cfgFile},
+	rw := rewriter{
+		files: []extraFile{
+			{name: environ.EnvFilePath, content: encodeEnvFile(cfg.Env)},
+			{name: imageconfig.Path, content: cfgFile},
+		},
+		exclude:         opts.Exclude,
+		dropDockerFiles: opts.DropDockerFiles,
+		modTime:         time.Now().Truncate(time.Second),
+	}
+	if opts.Reproducible {
+		rw.clamp = opts.ClampTime
+		if rw.clamp.IsZero() {
+			created, err := time.Parse(time.RFC3339Nano, img.Created)
+			if err != nil {
+				return fmt.Errorf("--reproducible: the image has no valid creation time (%q); set SOURCE_DATE_EPOCH", img.Created)
+			}
+			rw.clamp = created
+		}
+		rw.clamp = rw.clamp.Truncate(time.Second)
+		rw.modTime = rw.clamp
 	}
 
 	body, err := api.ContainerExport(ctx, id)
@@ -132,7 +164,7 @@ func ExportImage(ctx context.Context, api API, image string, w io.Writer, opts E
 	}
 	defer body.Close()
 
-	if err := rewriteArchive(body, w, files); err != nil {
+	if err := rw.rewrite(body, w); err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
 		}
@@ -207,19 +239,100 @@ func (z *zeroTail) Read(p []byte) (int, error) {
 // errTruncated is returned for an archive without end-of-archive marker.
 var errTruncated = errors.New("the exported archive is truncated (no end-of-archive marker): the connection to the Docker daemon was probably cut")
 
-// rewriteArchive copies the tar stream r to w, dropping the entries of
-// replacedPaths and appending files (and their parent directories).
+// rewriter rewrites the archive exported by the daemon.
+type rewriter struct {
+	files           []extraFile // appended, with their parent directories
+	exclude         []string
+	dropDockerFiles bool
+	clamp           time.Time // if not zero, the latest modification time
+	modTime         time.Time // of the appended files
+}
+
+// dockerFiles are the files Docker adds to every container. They are only
+// dropped if they are empty regular files, except /.dockerenv.
+var dockerFiles = []string{"/.dockerenv", "/etc/hostname", "/etc/hosts", "/etc/resolv.conf", "/dev/console"}
+
+// Excluded reports whether the entry name (relative or absolute) is
+// excluded by one of the patterns: a pattern containing "/" is matched
+// with path.Match against the absolute path of the entry and of its parent
+// directories, a pattern without "/" against their base names, so that
+// "/usr/share/doc" excludes that directory and everything below it, and
+// "*.pyc" every .pyc file.
+func Excluded(name string, patterns []string) bool {
+	p := path.Clean("/" + name)
+	for ; p != "/"; p = path.Dir(p) {
+		for _, pat := range patterns {
+			subject := path.Base(p)
+			if strings.Contains(pat, "/") {
+				subject, pat = p, path.Clean("/"+pat)
+			}
+			if ok, _ := path.Match(pat, subject); ok {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// ValidatePatterns checks the syntax of exclusion patterns.
+func ValidatePatterns(patterns []string) error {
+	for _, pat := range patterns {
+		if _, err := path.Match(pat, ""); err != nil || pat == "" {
+			return fmt.Errorf("invalid exclusion pattern %q", pat)
+		}
+	}
+	return nil
+}
+
+func (rw *rewriter) dropped(hdr *tar.Header) bool {
+	if len(rw.exclude) > 0 && Excluded(hdr.Name, rw.exclude) {
+		return true
+	}
+	if rw.dropDockerFiles {
+		p := path.Clean("/" + hdr.Name)
+		if p == "/.dockerenv" {
+			return true
+		}
+		if slices.Contains(dockerFiles, p) && hdr.Typeflag == tar.TypeReg && hdr.Size == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// normalize applies --reproducible to a header.
+func (rw *rewriter) normalize(hdr *tar.Header) {
+	if rw.clamp.IsZero() {
+		return
+	}
+	if hdr.ModTime.After(rw.clamp) {
+		hdr.ModTime = rw.clamp
+	}
+	hdr.AccessTime, hdr.ChangeTime = time.Time{}, time.Time{}
+	for _, k := range []string{"atime", "ctime", "mtime"} {
+		delete(hdr.PAXRecords, k)
+	}
+	// Sub-second precision would need PAX records whose presence depends
+	// on the daemon.
+	hdr.ModTime = hdr.ModTime.Truncate(time.Second)
+}
+
+// rewrite copies the tar stream r to w, dropping the entries of
+// replacedPaths and the excluded ones, and appending rw.files (and their
+// parent directories).
 //
 // archive/tar reports the end of the input at an entry boundary like the
 // end-of-archive marker (two zero blocks), so a stream cut cleanly between
 // two entries would look complete. The marker is therefore checked
 // explicitly: the stream must end with at least 1024 zero bytes.
-func rewriteArchive(r io.Reader, w io.Writer, files []extraFile) error {
+func (rw *rewriter) rewrite(r io.Reader, w io.Writer) error {
 	zr := &zeroTail{r: r}
 	tr := tar.NewReader(zr)
 	tw := tar.NewWriter(w)
 	// Content of the dropped regular files, for hard links pointing at them.
 	dropped := map[string][]byte{}
+	// Entries dropped by rw.dropped, for hard links pointing at them.
+	excluded := map[string]bool{}
 	var droppedBytes int64
 	for {
 		hdr, err := tr.Next()
@@ -246,6 +359,16 @@ func rewriteArchive(r io.Reader, w io.Writer, files []extraFile) error {
 			}
 			continue
 		}
+		if rw.dropped(hdr) {
+			excluded[path.Clean("/"+hdr.Name)] = true
+			continue
+		}
+		if hdr.Typeflag == tar.TypeLink && excluded[path.Clean("/"+hdr.Linkname)] {
+			log.Warnf("dropping %s too: it is a hard link to the excluded %s", path.Clean("/"+hdr.Name), path.Clean("/"+hdr.Linkname))
+			excluded[path.Clean("/"+hdr.Name)] = true
+			continue
+		}
+		rw.normalize(hdr)
 		if content, ok := dropped[path.Clean("/"+hdr.Linkname)]; ok && hdr.Typeflag == tar.TypeLink {
 			// The target of this hard link was dropped: keep the file
 			// as a regular file with the original content.
@@ -269,9 +392,9 @@ func rewriteArchive(r io.Reader, w io.Writer, files []extraFile) error {
 		}
 	}
 
-	modTime := time.Now().Truncate(time.Second)
+	modTime := rw.modTime
 	dirs := map[string]bool{}
-	for _, f := range files {
+	for _, f := range rw.files {
 		// Parent directories first, e.g. .droot/ for .droot/config.json.
 		var parents []string
 		for d := path.Dir(f.name); d != "/" && !dirs[d]; d = path.Dir(d) {
