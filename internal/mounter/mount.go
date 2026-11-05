@@ -41,6 +41,53 @@ type BindOptions struct {
 	Replace bool
 }
 
+// FSOptions are the options of a new file system mount (MountFS).
+type FSOptions struct {
+	ReadOnly, NoSuid, NoDev, NoExec, NoAtime bool
+	// Data are the options of the file system, e.g. size=64m for tmpfs.
+	Data []string
+}
+
+// tmpfsData are the tmpfs options accepted by ParseTmpfsOptions: KEY=VALUE
+// for the keys ending in "=", flags otherwise.
+var tmpfsData = []string{"size=", "nr_blocks=", "nr_inodes=", "mode=", "uid=", "gid=", "huge=", "mpol=", "inode32", "inode64", "noswap"}
+
+// ParseTmpfsOptions parses the comma-separated OPTS of --tmpfs PATH:OPTS
+// over defaults: the mount flags ro, rw, nosuid, suid, nodev, dev, noexec,
+// exec and noatime, and the options of tmpfs(5) such as size=64m or
+// mode=1777.
+func ParseTmpfsOptions(opts string, defaults FSOptions) (FSOptions, error) {
+	o := defaults
+	o.Data = slices.Clone(o.Data)
+	if opts == "" {
+		return o, nil
+	}
+	for item := range strings.SplitSeq(opts, ",") {
+		switch item {
+		case "ro", "rw":
+			o.ReadOnly = item == "ro"
+		case "nosuid", "suid":
+			o.NoSuid = item == "nosuid"
+		case "nodev", "dev":
+			o.NoDev = item == "nodev"
+		case "noexec", "exec":
+			o.NoExec = item == "noexec"
+		case "noatime":
+			o.NoAtime = true
+		default:
+			name, value, hasValue := strings.Cut(item, "=")
+			if hasValue {
+				name += "="
+			}
+			if !slices.Contains(tmpfsData, name) || (hasValue && value == "") {
+				return FSOptions{}, fmt.Errorf("unknown or invalid tmpfs option %q", item)
+			}
+			o.Data = append(o.Data, item)
+		}
+	}
+	return o, nil
+}
+
 // RootDir returns the container root directory.
 func (m *Mounter) RootDir() string { return m.rootDir }
 

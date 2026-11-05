@@ -52,6 +52,8 @@ func runCommand() *cli.Command {
 				Usage: "bind mount SRC from the host on DEST (default: SRC) in the container; OPTS is a comma-separated list of ro, rw and rbind (recursive)"},
 			{Name: "robind", Kind: cli.Strings, Placeholder: "SRC[:DEST][:OPTS]", Complete: "file",
 				Usage: "read-only bind mount (same as --bind SRC:DEST:ro)"},
+			{Name: "tmpfs", Kind: cli.Strings, Placeholder: "PATH[:OPTS]",
+				Usage: "mount a tmpfs on PATH in the container; OPTS are mount flags (ro, exec, ...: nosuid,nodev,noexec by default) and tmpfs options (size=64m, mode=1777, ...)"},
 			{Name: "copy-files", Aliases: []string{"cp"}, Kind: cli.Bool,
 				Usage: "copy the host's " + strings.Join(hostFiles, ", ") + " into the container"},
 			{Name: "bind-net-files", Kind: cli.Bool,
@@ -95,8 +97,54 @@ var devices = []struct {
 }{
 	{"/dev/null", 1, 3},
 	{"/dev/zero", 1, 5},
+	{"/dev/full", 1, 7},
 	{"/dev/random", 1, 8},
 	{"/dev/urandom", 1, 9},
+	{"/dev/tty", 5, 0},
+}
+
+// devLinks are the symbolic links created in ROOT_DIR/dev.
+var devLinks = []struct{ path, target string }{
+	{"/dev/fd", "/proc/self/fd"},
+	{"/dev/stdin", "/proc/self/fd/0"},
+	{"/dev/stdout", "/proc/self/fd/1"},
+	{"/dev/stderr", "/proc/self/fd/2"},
+	// The ptmx of the devpts instance mounted on /dev/pts. A character
+	// device here would allocate pseudo-terminals in the host's instance.
+	{"/dev/ptmx", "pts/ptmx"},
+}
+
+// devpts are the options of the devpts instance mounted on /dev/pts, like
+// Docker's.
+var devpts = mounter.FSOptions{NoSuid: true, NoExec: true, Data: []string{"newinstance", "ptmxmode=0666", "mode=0620", "gid=5"}}
+
+// shmfs are the options of the tmpfs mounted on /dev/shm, like Docker's.
+var shmfs = mounter.FSOptions{NoSuid: true, NoDev: true, NoExec: true, Data: []string{"mode=1777", "size=64m"}}
+
+// tmpfsDefaults are the default flags of --tmpfs mounts.
+var tmpfsDefaults = mounter.FSOptions{NoSuid: true, NoDev: true, NoExec: true}
+
+type tmpfsMount struct {
+	path string
+	opts mounter.FSOptions
+}
+
+type userMount struct {
+	target string
+	mount  func() error
+}
+
+// parseTmpfsOption parses PATH[:OPTS] (see mounter.ParseTmpfsOptions).
+func parseTmpfsOption(spec string) (tmpfsMount, error) {
+	p, opts, _ := strings.Cut(spec, ":")
+	if !filepath.IsAbs(p) {
+		return tmpfsMount{}, fmt.Errorf("invalid tmpfs mount %q: %s is not an absolute path", spec, p)
+	}
+	o, err := mounter.ParseTmpfsOptions(opts, tmpfsDefaults)
+	if err != nil {
+		return tmpfsMount{}, fmt.Errorf("invalid tmpfs mount %q: %w", spec, err)
+	}
+	return tmpfsMount{path: filepath.Clean(p), opts: o}, nil
 }
 
 type bindMount struct {
@@ -163,6 +211,14 @@ func doRun(ctx context.Context, cmd *cli.Invocation) error {
 		binds = append(binds, b)
 	}
 	bindNetFiles := cmd.Bool("bind-net-files")
+	var tmpfs []tmpfsMount
+	for _, spec := range cmd.Strings("tmpfs") {
+		t, err := parseTmpfsOption(spec)
+		if err != nil {
+			return err
+		}
+		tmpfs = append(tmpfs, t)
+	}
 
 	// Every path inside the container is resolved through this descriptor
 	// so that a process of a previous run cannot redirect droot to the host
@@ -248,12 +304,34 @@ func doRun(ctx context.Context, cmd *cli.Invocation) error {
 	if err := mnt.MountSysProc(); err != nil {
 		return err
 	}
+	// Bind and tmpfs mounts, parents before children (like Docker), so
+	// that `--tmpfs /data --bind H:/data/x` binds H inside the tmpfs.
+	var mounts []userMount
 	for _, b := range binds {
+		mounts = append(mounts, userMount{target: b.container, mount: func() error {
+			if err := mnt.BindMount(b.host, b.container, b.opts); err != nil {
+				return fmt.Errorf("bind mount %s on %s: %w", b.host, b.container, err)
+			}
+			return nil
+		}})
+	}
+	for _, t := range tmpfs {
+		mounts = append(mounts, userMount{target: t.path, mount: func() error {
+			if err := mnt.MountFS("tmpfs", t.path, t.opts, nil); err != nil {
+				return fmt.Errorf("mount a tmpfs on %s: %w", t.path, err)
+			}
+			return nil
+		}})
+	}
+	slices.SortStableFunc(mounts, func(a, b userMount) int {
+		return strings.Count(a.target, "/") - strings.Count(b.target, "/")
+	})
+	for _, m := range mounts {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := mnt.BindMount(b.host, b.container, b.opts); err != nil {
-			return fmt.Errorf("bind mount %s on %s: %w", b.host, b.container, err)
+		if err := m.mount(); err != nil {
+			return err
 		}
 	}
 	if bindNetFiles {
@@ -268,7 +346,8 @@ func doRun(ctx context.Context, cmd *cli.Invocation) error {
 
 	linkVarLock(root)
 
-	if err := createDevices(root); err != nil {
+	shm := !slices.ContainsFunc(tmpfs, func(t tmpfsMount) bool { return t.path == "/dev/shm" })
+	if err := setupDev(root, mnt, shm); err != nil {
 		return err
 	}
 
@@ -361,20 +440,35 @@ func linkVarLock(root *osutil.Root) {
 	}
 }
 
-// createDevices creates the device nodes, owned by root with mode 0666. If
-// /dev is not on the root's own file system (for instance a bind mount of
-// the host's /dev), nothing is created there: droot must not touch host
-// devices.
-func createDevices(root *osutil.Root) error {
+// setupDev populates /dev: the device nodes (owned by root, mode 0666), the
+// usual symlinks, a devpts instance on /dev/pts and, if shm is set, a tmpfs
+// on /dev/shm. If /dev is not on the root's own file system (for instance a
+// bind mount of the host's /dev), nothing is done there: droot must not
+// touch host devices.
+func setupDev(root *osutil.Root, mnt *mounter.Mounter, shm bool) error {
 	onRoot := mounter.OnMountOf(root.Fd())
 	for _, d := range devices {
 		err := root.MknodChar(d.path, d.major, d.minor, 0o666, onRoot)
 		if errors.Is(err, mounter.ErrOtherMount) {
-			log.Warnf("not creating device nodes: /dev in the container is a mount point (e.g. a bind mount of the host's /dev)")
+			log.Warnf("not populating /dev: /dev in the container is a mount point (e.g. a bind mount of the host's /dev)")
 			return nil
 		}
 		if err != nil {
 			return err
+		}
+	}
+	// The following are conveniences: failures are not fatal.
+	for _, l := range devLinks {
+		if err := root.EnsureSymlink(l.target, l.path, onRoot); err != nil {
+			log.Warnf("cannot create %s: %v", l.path, err)
+		}
+	}
+	if err := mnt.MountFS("devpts", "/dev/pts", devpts, onRoot); err != nil {
+		log.Warnf("cannot mount devpts on /dev/pts (pseudo-terminals will not work): %v", err)
+	}
+	if shm {
+		if err := mnt.MountFS("tmpfs", "/dev/shm", shmfs, onRoot); err != nil {
+			log.Warnf("cannot mount a tmpfs on /dev/shm: %v", err)
 		}
 	}
 	return nil

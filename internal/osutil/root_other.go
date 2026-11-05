@@ -66,5 +66,8 @@ func (*Root) MknodChar(string, uint32, uint32, os.FileMode, DirCheck) error {
 // SymlinkIfMissing is only supported on Linux.
 func (*Root) SymlinkIfMissing(string, string) error { return unsupported("symlink") }
 
+// EnsureSymlink is only supported on Linux.
+func (*Root) EnsureSymlink(string, string, DirCheck) error { return unsupported("symlink") }
+
 // CopyFileIn is only supported on Linux.
 func (*Root) CopyFileIn(string, string) error { return unsupported("copy") }

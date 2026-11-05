@@ -26,6 +26,9 @@ func (m *Mounter) MountSysProc() error { return unsupported() }
 // BindMount is only supported on Linux.
 func (m *Mounter) BindMount(string, string, BindOptions) error { return unsupported() }
 
+// MountFS is only supported on Linux.
+func (m *Mounter) MountFS(string, string, FSOptions, osutil.DirCheck) error { return unsupported() }
+
 // Mounts is only supported on Linux.
 func (m *Mounter) Mounts() ([]string, error) { return nil, unsupported() }
 

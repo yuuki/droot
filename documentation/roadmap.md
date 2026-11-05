@@ -27,10 +27,9 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
   must remember `droot umount`, and concurrent runs share mounts.
 - **[compat]** `STOPSIGNAL` is saved but not used (droot does not supervise
   COMMAND), and `HOSTNAME` is not set.
-- **[compat]** Only `/dev/null`, `/dev/zero`, `/dev/random` and `/dev/urandom`
-  are created. `/dev/pts`, `/dev/ptmx`, `/dev/tty`, `/dev/full`, `/dev/shm`
-  (tmpfs, needed e.g. by Python multiprocessing), `/dev/fd` and
-  `/dev/std{in,out,err}` are missing, and `/tmp`/`/run` are not tmpfs.
+- **[compat]** Nothing is created in `/dev` when it is a mount point, including
+  `--tmpfs /dev`; a fresh `/dev` like Docker's would need droot to tell its own
+  tmpfs from the host's `devtmpfs`.
 - **[ux]** Inherited behavior whose purpose is unclear: `--bind` creates a
   `.droot.keep` file in empty host directories. Decide whether to keep it.
 - **[compat]** `droot run` needs real root; rootless operation with user
@@ -70,8 +69,6 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
   default as simple as today.
 - **[feature]** `--no-new-privileges`, `--cap-add`/`--cap-drop`, an optional
   seccomp profile, `--read-only` root.
-- **[feature]** `--tmpfs PATH`, `/dev/shm`, `/dev/pts` and the other common
-  devices and symlinks.
 - **[feature]** Bind propagation modes (`shared`, `private`, ...); droot makes
   every mount a slave mount today.
 - **[feature]** Resource limits: `--ulimit`, cgroup v2 (`--memory`, `--cpus`,

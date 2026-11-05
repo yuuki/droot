@@ -494,6 +494,54 @@ func (r *Root) MknodChar(path string, major, minor uint32, perm os.FileMode, che
 	return nil
 }
 
+// EnsureSymlink makes sure path is the symbolic link path -> target: a
+// symlink with another target or a file of another kind (but a directory)
+// at path is replaced. Missing parent directories are created. See DirCheck
+// for check; it is also applied to the directory the link is created in.
+func (r *Root) EnsureSymlink(target, path string, check DirCheck) error {
+	res, err := r.lookup(path, lookupOptions{mkdir: true, check: check})
+	if err != nil {
+		return err
+	}
+	defer unix.Close(res.dir)
+	if res.name == "" {
+		return &fs.PathError{Op: "symlink", Path: r.displayPath(path), Err: unix.EISDIR}
+	}
+	if check != nil {
+		if err := check(res.dir); err != nil {
+			return &fs.PathError{Op: "symlink", Path: r.displayPath(path), Err: err}
+		}
+	}
+	var st unix.Stat_t
+	err = unix.Fstatat(res.dir, res.name, &st, unix.AT_SYMLINK_NOFOLLOW)
+	switch {
+	case err == nil && st.Mode&unix.S_IFMT == unix.S_IFLNK:
+		fd, err := unix.Openat(res.dir, res.name, unix.O_PATH|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		if err != nil {
+			return &fs.PathError{Op: "open", Path: r.displayPath(path), Err: err}
+		}
+		cur, err := readlinkFd(fd)
+		_ = unix.Close(fd)
+		if err == nil && cur == target {
+			return nil
+		}
+		fallthrough
+	case err == nil && st.Mode&unix.S_IFMT != unix.S_IFDIR:
+		log.Debugf("replacing %s with a symlink to %s", r.displayPath(path), target)
+		if err := unix.Unlinkat(res.dir, res.name, 0); err != nil {
+			return &fs.PathError{Op: "unlink", Path: r.displayPath(path), Err: err}
+		}
+	case err == nil:
+		return &fs.PathError{Op: "symlink", Path: r.displayPath(path), Err: unix.EISDIR}
+	case !errors.Is(err, unix.ENOENT):
+		return &fs.PathError{Op: "stat", Path: r.displayPath(path), Err: err}
+	}
+	if err := unix.Symlinkat(target, res.dir, res.name); err != nil {
+		return &fs.PathError{Op: "symlink", Path: r.displayPath(path), Err: err}
+	}
+	return nil
+}
+
 // SymlinkIfMissing creates the symbolic link path -> target unless something
 // already exists at path. The parent directory must exist.
 func (r *Root) SymlinkIfMissing(target, path string) error {

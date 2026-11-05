@@ -126,7 +126,7 @@ func mount(source, target, fstype string, flags uintptr, data string) error {
 // host's peer group, and the mounts made under it in the container (e.g. a
 // read-only bind inside a read-write one) would propagate back to the host's
 // directory — without the read-only flag, which does not propagate.
-func mountOn(t *osutil.MountTarget, source, fstype string, flags uintptr, replace bool) (*os.File, error) {
+func mountOn(t *osutil.MountTarget, source, fstype string, flags uintptr, data string, replace bool) (*os.File, error) {
 	target := t.File
 	mounted, err := isMountRoot(t.ParentFd(), int(target.Fd()))
 	if err != nil {
@@ -157,7 +157,7 @@ func mountOn(t *osutil.MountTarget, source, fstype string, flags uintptr, replac
 		defer target.Close()
 	}
 	if !mounted {
-		if err := mount(source, osutil.FdPath(int(target.Fd())), fstype, flags, ""); err != nil {
+		if err := mount(source, osutil.FdPath(int(target.Fd())), fstype, flags, data); err != nil {
 			return nil, fmt.Errorf("mount %s on %s: %w", source, t.File.Name(), err)
 		}
 	}
@@ -222,7 +222,7 @@ func (m *Mounter) MountSysProc() error {
 		return err
 	}
 	defer proc.Close()
-	p, err := mountOn(proc, "proc", "proc", unix.MS_NOSUID|unix.MS_NODEV|unix.MS_NOEXEC, false)
+	p, err := mountOn(proc, "proc", "proc", unix.MS_NOSUID|unix.MS_NODEV|unix.MS_NOEXEC, "", false)
 	if err != nil {
 		return err
 	}
@@ -233,7 +233,7 @@ func (m *Mounter) MountSysProc() error {
 		return err
 	}
 	defer sys.Close()
-	s, err := mountOn(sys, "/sys", "", unix.MS_BIND|unix.MS_REC, false) // made an rslave mount
+	s, err := mountOn(sys, "/sys", "", unix.MS_BIND|unix.MS_REC, "", false) // made an rslave mount
 	if err != nil {
 		return err
 	}
@@ -267,7 +267,7 @@ func (m *Mounter) BindMount(hostPath, containerPath string, opts BindOptions) er
 	if opts.Recursive {
 		flags |= unix.MS_REC
 	}
-	mnt, err := mountOn(t, hostPath, "", flags, opts.Replace)
+	mnt, err := mountOn(t, hostPath, "", flags, "", opts.Replace)
 	if err != nil {
 		return err
 	}
@@ -279,6 +279,47 @@ func (m *Mounter) BindMount(hostPath, containerPath string, opts BindOptions) er
 		return remountReadonly(mnt)
 	}
 	return nil
+}
+
+// MountFS mounts a new file system of type fstype (e.g. tmpfs or devpts) on
+// the directory containerPath, created if needed. An existing mount is
+// reused. check, if not nil, is applied to the directories traversed, in
+// addition to the refusal of kernel file systems.
+func (m *Mounter) MountFS(fstype, containerPath string, opts FSOptions, check osutil.DirCheck) error {
+	both := func(fd int) error {
+		if check != nil {
+			if err := check(fd); err != nil {
+				return err
+			}
+		}
+		return notKernelFS(fd)
+	}
+	t, err := m.root.OpenMountTarget(containerPath, true, both)
+	if err != nil {
+		return err
+	}
+	defer t.Close()
+	var flags uintptr
+	if opts.ReadOnly {
+		flags |= unix.MS_RDONLY
+	}
+	if opts.NoSuid {
+		flags |= unix.MS_NOSUID
+	}
+	if opts.NoDev {
+		flags |= unix.MS_NODEV
+	}
+	if opts.NoExec {
+		flags |= unix.MS_NOEXEC
+	}
+	if opts.NoAtime {
+		flags |= unix.MS_NOATIME
+	}
+	mnt, err := mountOn(t, fstype, fstype, flags, strings.Join(opts.Data, ","), false)
+	if err != nil {
+		return err
+	}
+	return mnt.Close()
 }
 
 // remountReadonlyRecursive makes the mount open as mnt and every mount below

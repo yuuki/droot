@@ -117,8 +117,14 @@ assert_eq "--env-file and --env KEY take values from droot's environment" \
 assert_eq "capability bounding set" \
   "$("$DROOT" run --root "$WORK/app" --user root -- awk '/^CapBnd/ {print $2}' /proc/self/status)" "00000000000004cb"
 assert_eq "device nodes" \
-  "$("$DROOT" run --root "$WORK/app" --user app -- sh -c 'stat -c "%n %t:%T %a %u" /dev/null /dev/zero /dev/random /dev/urandom' | tr '\n' ' ')" \
-  "/dev/null 1:3 666 0 /dev/zero 1:5 666 0 /dev/random 1:8 666 0 /dev/urandom 1:9 666 0 "
+  "$("$DROOT" run --root "$WORK/app" --user app -- sh -c 'stat -c "%n %t:%T %a %u" /dev/null /dev/zero /dev/full /dev/random /dev/urandom /dev/tty' | tr '\n' ' ')" \
+  "/dev/null 1:3 666 0 /dev/zero 1:5 666 0 /dev/full 1:7 666 0 /dev/random 1:8 666 0 /dev/urandom 1:9 666 0 /dev/tty 5:0 666 0 "
+assert_eq "/dev/pts, /dev/ptmx, /dev/shm and /dev/fd" \
+  "$("$DROOT" run --root "$WORK/app" --user app -- sh -c 'readlink /dev/ptmx; stat -f -c %T /dev/pts /dev/shm; test -c /dev/pts/ptmx && echo ptmx; echo x > /dev/shm/f && cat /dev/shm/f; echo fd | cat /dev/stdin; ls /dev/fd/ >/dev/null && echo fds')" \
+  "$(printf 'pts/ptmx\ndevpts\ntmpfs\nptmx\nx\nfd\nfds')"
+assert_eq "--tmpfs" \
+  "$("$DROOT" run --root "$WORK/app" --user root --tmpfs /tmp:size=1m --tmpfs /run:exec -- sh -c 'stat -f -c %T /tmp; printf "#!/bin/sh\necho exec-ok\n" > /tmp/x; chmod +x /tmp/x; /tmp/x 2>/dev/null || echo noexec; cp /tmp/x /run/x && /run/x')" \
+  "$(printf 'tmpfs\nnoexec\nexec-ok')"
 mkdir -p "$WORK/hostdev"
 touch "$WORK/hostdev/marker" # not empty, so that no .droot.keep is created
 "$DROOT" run --root "$WORK/app" --bind "$WORK/hostdev:/dev" -- true 2>/dev/null

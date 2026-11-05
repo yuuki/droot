@@ -180,8 +180,8 @@ arguments. The image's `USER` and `WORKDIR` are the defaults of `--user` and
 In order, droot:
 
 1. optionally copies the host's `/etc/group`, `/etc/passwd`, `/etc/resolv.conf` and `/etc/hosts` into `ROOT_DIR` (`--cp`);
-2. mounts `proc` on `/proc`, bind mounts the host's `/sys` on `/sys` (as an rslave mount) and performs the `--bind`/`--robind`/`--bind-net-files` mounts;
-3. creates `/dev/null`, `/dev/zero`, `/dev/random`, `/dev/urandom` (unless `/dev` is a mount point, e.g. `--bind /dev`) and the `/var/lock -> ../run/lock` symlink;
+2. mounts `proc` on `/proc`, bind mounts the host's `/sys` on `/sys` (as an rslave mount) and performs the `--bind`/`--robind`/`--tmpfs` mounts (parents first) and the `--bind-net-files` mounts;
+3. creates the `/var/lock -> ../run/lock` symlink and populates `/dev` like Docker, unless `/dev` is a mount point (e.g. `--bind /dev`): the devices `null`, `zero`, `full`, `random`, `urandom` and `tty` (owned by root, mode 0666), the symlinks `fd -> /proc/self/fd`, `stdin`, `stdout`, `stderr` and `ptmx -> pts/ptmx`, a private `devpts` instance on `/dev/pts` (pseudo-terminals) and a 64 MiB tmpfs on `/dev/shm`;
 4. `chroot`s into `ROOT_DIR`;
 5. drops every capability except `CAP_CHOWN`, `CAP_DAC_OVERRIDE`, `CAP_FOWNER`, `CAP_SETGID`, `CAP_SETUID` and `CAP_NET_BIND_SERVICE` from the bounding set and empties the inheritable and ambient sets (unless `--no-dropcaps`);
 6. switches to the requested user and groups;
@@ -195,6 +195,7 @@ In order, droot:
 | `-w`, `--workdir DIR` | Working directory of `COMMAND`, an absolute path inside the container. Defaults to the image's `WORKDIR`, or `/`. It must exist. |
 | `-b`, `--bind SRC[:DEST][:OPTS]` | Bind mount the host's `SRC` (directory or file) on `DEST` (default: `SRC`) in the container. `OPTS` is a comma-separated list of `ro` (read-only), `rw` (the default) and `rbind` (also bind the mounts below `SRC`; with `ro`, they are all read-only), as in `--bind /srv/data:/data:ro` or `--bind /srv:rbind`. A last part that is not such a list belongs to `DEST` (`--bind /a:/b:c` mounts on `/b:c`). Repeatable. |
 | `--robind SRC[:DEST][:OPTS]` | Same as `--bind SRC:DEST:ro`. Repeatable. |
+| `--tmpfs PATH[:OPTS]` | Mount a new tmpfs on `PATH` in the container, e.g. `--tmpfs /tmp --tmpfs /run`. `OPTS` is a comma-separated list of mount flags — `ro`, `rw`, `nosuid`/`suid`, `nodev`/`dev`, `noexec`/`exec`, `noatime`; the default is `nosuid,nodev,noexec` — and [tmpfs options](https://man7.org/linux/man-pages/man5/tmpfs.5.html) such as `size=64m`, `mode=1777`, `uid=`, `gid=`. `--tmpfs /dev/shm:OPTS` replaces the default `/dev/shm`. Repeatable. |
 | `--cp`, `--copy-files` | Copy the host's `/etc/group`, `/etc/passwd`, `/etc/resolv.conf` and `/etc/hosts` into the container. |
 | `--bind-net-files` | Bind mount the host's `/etc/resolv.conf` and `/etc/hosts` read-only on the same paths in the container, so that `COMMAND` sees later changes to them (e.g. after a DHCP renewal) instead of the snapshot copied by `--cp`. Each run binds the current files afresh; note that a file bind mount follows changes made *in place*: a host file replaced with `rename(2)` while `COMMAND` runs (some DHCP clients, `resolvconf`) is only seen by the next run. With `--cp`, only `/etc/group` and `/etc/passwd` are copied. |
 | `-e`, `--env KEY[=VALUE]` | Set an environment variable, overriding `/.drootenv` and `--env-file`. A bare `KEY` takes its value from droot's own environment and is left out if unset, like `docker run -e KEY` (under `sudo`, keep it with `sudo --preserve-env=KEY`). Repeatable. Commas are not separators. |
@@ -209,6 +210,8 @@ Notes:
   host's file system. A bind mount target may not be `ROOT_DIR` itself nor lie
   inside `/proc` or `/sys`.
 - The supplementary groups are those listing the user in `ROOT_DIR/etc/group`.
+- Mounts left by a previous run are reused as they are: run `droot umount`
+  first to change the options of a `--tmpfs` or a `--bind`.
 - `COMMAND` is looked up in the `PATH` of the container environment (falling
   back to `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`), not in
   the `PATH` of the shell that started droot.

@@ -202,6 +202,11 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
   droot's environment), like `docker run`.
 - `droot run --bind SRC:DEST:OPTS` with the options `ro`, `rw` and `rbind`
   (recursive bind mount; read-only recursively with `ro`).
+- `droot run` populates `/dev` like Docker: `/dev/full`, `/dev/tty`, a
+  private `devpts` instance on `/dev/pts` with the `/dev/ptmx` symlink, a
+  tmpfs on `/dev/shm`, and the `/dev/fd`, `/dev/stdin`, `/dev/stdout` and
+  `/dev/stderr` symlinks, in addition to the four devices of droot 0.7.
+- `droot run --tmpfs PATH[:OPTS]`, e.g. for `/tmp` and `/run`.
 - `droot run --bind-net-files` bind mounts the host's `/etc/resolv.conf` and
   `/etc/hosts` read-only, as a live alternative to the copies of `--cp`.
 - A warning when `--user NAME` maps to uid 0 in the image.
