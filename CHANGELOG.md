@@ -1,0 +1,101 @@
+# Changelog
+
+All notable changes to this project are documented in this file. The format
+is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+Releases up to 0.7.7 are described on the
+[GitHub releases page](https://github.com/yuuki/droot/releases).
+
+## [Unreleased]
+
+Maintenance release after several years: modern Go and Docker, far fewer
+dependencies, many bug and security fixes. Planned as **v0.8.0**.
+
+### Breaking changes
+
+- Go 1.26 or later is required to build. Release binaries are statically
+  linked (`CGO_ENABLED=0`); as a consequence, host user names served only by
+  NSS (LDAP, SSSD, ...) are no longer resolved — use `--cp` or numeric IDs.
+- `--user NAME` is looked up in the container's `/etc/passwd` first and on the
+  host second (previously only on the host). When `--group` is omitted, the
+  user's primary group is used instead of droot's own group (`root` under
+  sudo), and the supplementary groups are set from the container's
+  `/etc/group` instead of being inherited from the invoking root user.
+- `CAP_DAC_READ_SEARCH` is no longer kept in the capability bounding set
+  (container escape through `open_by_handle_at(2)`).
+- Files copied by `--cp` keep the host's ownership and permissions instead of
+  being chowned to `--user`/`--group` (which let the application rewrite
+  `/etc/passwd` in the container).
+- `droot run` requires root (euid 0) and refuses `--root /`;
+  `droot umount --root /` is refused.
+- Release assets are built with GoReleaser: `droot_<version>_<os>_<arch>.tar.gz`
+  archives and bare `droot_<os>_<arch>` binaries for linux and darwin on amd64
+  and arm64. 386 builds and zip archives are no longer provided.
+- The CLI moved to urfave/cli v3: help output changed, and usage errors print
+  a short hint instead of the full help.
+
+### Fixed
+
+- `droot export` works with current Docker releases: the API version is
+  negotiated with the daemon instead of being pinned to 1.29, which recent
+  daemons reject.
+- `droot export` reads the environment from the image configuration. droot
+  0.7 used the deprecated `ContainerConfig`, which is empty for BuildKit images
+  and missing in recent API versions (droot crashed with a nil pointer
+  dereference).
+- `droot export` no longer runs the image: images without `/bin/sh`
+  (distroless, `FROM scratch`) are supported, and environment values containing
+  quotes, `$` or backquotes are preserved verbatim instead of being interpreted
+  by a shell.
+- `droot export` always removes its temporary container, including after
+  errors and Ctrl-C, and writes `-o FILE` atomically.
+- `droot run` dropped capabilities and changed credentials on one OS thread
+  only and could `exec` from another one, so the command could run with the
+  full capability bounding set. The goroutine is now locked to its thread.
+- `droot run` created `/dev/zero` with the numbers of `/dev/null` (1:3) and
+  `/dev/random` with those of `/dev/urandom` (1:9). Device permissions no longer
+  depend on the umask.
+- `droot run` looks up `COMMAND` in the container's `PATH` (from `/.drootenv`
+  or `--env`) instead of the `PATH` of the sudo environment.
+- Symbolic links in an image could make `--cp`, `--bind` and `--robind` write
+  to or mount over paths of the host. Paths are now resolved inside the root.
+- `/.drootenv` lines whose value contained `=` (e.g. `JAVA_OPTS=-Da=b`) were
+  dropped, and lines longer than 64 KiB silently truncated the environment.
+- `--robind` cleared the `nosuid`, `nodev` and `noexec` flags of the source
+  mount when remounting it read-only.
+- `--robind` failed for empty read-only source directories.
+- `droot umount --root /a/app` also unmounted `/a/app2/...`, mishandled mount
+  points containing spaces, and missed mounts when the root path contained a
+  symbolic link.
+- `--env` values containing commas are not split (urfave/cli v2+ default).
+- The test suite did not compile (`kylelemons/godebug` missing from `go.mod`)
+  and CI used an end-of-life Go version.
+
+### Added
+
+- Docker contexts (`DOCKER_CONTEXT`, `docker context use`), `DOCKER_CONFIG`,
+  `DOCKER_API_VERSION` and `https://` hosts. A clear error is printed for
+  unsupported `ssh://` hosts. Works with Docker Desktop, Colima, OrbStack and
+  Podman's Docker-compatible socket.
+- `droot export --platform` to pick a variant of a multi-platform image.
+- Temporary export containers are labeled `io.github.yuuki.droot`.
+- Bind mounting single files with `--bind`/`--robind`.
+- `droot completion bash|zsh|fish`.
+- `--debug` can be given after the subcommand.
+- Helpful error messages: missing images, a command whose ELF/script
+  interpreter is missing in the container, writing an archive to a terminal.
+- linux/arm64 and darwin/arm64 binaries.
+- Documentation: architecture, security considerations, development guide,
+  known issues and ideas.
+- CI on GitHub Actions (lint, unit tests as user and root on the minimum and
+  latest Go, end-to-end tests against Docker, cross builds), Dependabot,
+  GoReleaser release workflow.
+
+### Removed
+
+- The dependency on `github.com/docker/docker` and its transitive modules
+  (`docker/distribution`, `docker/go-connections`, `docker/go-units`,
+  `docker/libtrust`, `opencontainers/go-digest`, `sirupsen/logrus`), as well as
+  `pkg/errors` and `golang.org/x/net`. droot now depends only on
+  `github.com/urfave/cli/v3` and `golang.org/x/sys`.
+- The goxc/ghr/gobump release scripts and the Dockerfile used to build in a
+  container (cross compilation needs no cgo any more).
