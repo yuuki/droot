@@ -15,19 +15,20 @@ running on the host with a different root directory.
 | Network | Host network | Network namespace |
 | Users | Host user IDs | Host user IDs (or a user namespace) |
 | Capabilities | Bounding set reduced to CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID, NET_BIND_SERVICE | A similar, larger default set |
-| `/proc`, `/sys` | Host's, writable by root | Read-only or masked sensitive paths |
+| `/proc`, `/sys` | `/proc` shows the host's processes; sensitive files masked, `/proc/sys` and `/sys` read-only (like Docker) | Read-only or masked sensitive paths |
 | Resource limits | None | cgroups |
 | Syscall filtering, no_new_privs | `no_new_privs` with `--no-new-privileges` | seccomp profile, AppArmor/SELinux, `no-new-privileges` option |
 
 ## Recommendations
 
-- **Always run applications as an unprivileged user** with `--user`. A process
-  running as root inside droot keeps `CAP_DAC_OVERRIDE`, `CAP_CHOWN` and
-  `CAP_FOWNER`, so it can modify every file under the root directory and in
-  `--bind` mounts. Because `/proc` and `/sys` are the host's, root can also
-  change host kernel settings through files such as `/proc/sys/*`,
-  `/proc/sysrq-trigger` or sysfs attributes that are only protected by file
-  permissions.
+- **Always run applications as an unprivileged user** with `--user` (or a
+  `USER` in the image). A process running as root inside droot keeps
+  `CAP_DAC_OVERRIDE`, `CAP_CHOWN` and `CAP_FOWNER`, so it can modify every
+  file under the root directory and in `--bind` mounts; drop them with
+  `--cap-drop` if the application does not need them. `/proc` and `/sys` are
+  views of the host's kernel: droot makes the files that change its settings
+  read-only, but root can still read information about the whole host there,
+  and `--no-mask` removes the protection.
 - With images you did not build, give `--user` and `--group` as numeric IDs:
   a name is looked up in the image's `/etc/passwd`, which can map any name to
   uid 0 (droot prints a warning when it does).
@@ -67,6 +68,13 @@ running on the host with a different root directory.
 - Mount targets are never the root directory itself and are never resolved
   through kernel pseudo file systems (procfs, sysfs, cgroupfs, tracefs, ...),
   where creating a directory changes the host's kernel state.
+- Like Docker, sensitive files of `/proc` and `/sys` (`/proc/kcore`,
+  `/proc/keys`, `/proc/timer_list`, `/sys/firmware`, ...) are masked with a
+  read-only bind mount of `/dev/null` or an empty read-only tmpfs,
+  `/proc/sys`, `/proc/sysrq-trigger`, `/proc/irq`, `/proc/bus` and
+  `/proc/fs` are read-only, and so is `/sys` with every mount below it
+  (unless `--no-mask`). These mounts only hold because `CAP_SYS_ADMIN` is
+  dropped: `--cap-add SYS_ADMIN` or `--no-dropcaps` let root undo them.
 - `CAP_DAC_READ_SEARCH` is dropped: with `open_by_handle_at(2)` it allows
   reading any file of the host and escaping the chroot (the "shocker" exploit).
 - `CAP_SYS_CHROOT`, `CAP_SYS_ADMIN`, `CAP_MKNOD`, `CAP_SYS_PTRACE`, ... are

@@ -23,6 +23,9 @@ func unsupported() error {
 // MountSysProc is only supported on Linux.
 func (m *Mounter) MountSysProc() error { return unsupported() }
 
+// ProtectKernelFS is only supported on Linux.
+func (m *Mounter) ProtectKernelFS() error { return unsupported() }
+
 // BindMount is only supported on Linux.
 func (m *Mounter) BindMount(string, string, BindOptions) error { return unsupported() }
 

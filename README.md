@@ -180,10 +180,10 @@ arguments. The image's `USER` and `WORKDIR` are the defaults of `--user` and
 In order, droot:
 
 1. optionally copies the host's `/etc/group`, `/etc/passwd`, `/etc/resolv.conf` and `/etc/hosts` into `ROOT_DIR` (`--cp`);
-2. mounts `proc` on `/proc`, bind mounts the host's `/sys` on `/sys` (as an rslave mount) and performs the `--bind`/`--robind`/`--tmpfs` mounts (parents first) and the `--bind-net-files` mounts;
+2. mounts `proc` on `/proc` and bind mounts the host's `/sys` on `/sys` (as an rslave mount), masks their sensitive files and makes `/proc/sys`, `/proc/sysrq-trigger`, `/proc/irq`, `/proc/bus`, `/proc/fs` and `/sys` read-only like Docker (unless `--no-mask`), and performs the `--bind`/`--robind`/`--tmpfs` mounts (parents first) and the `--bind-net-files` mounts;
 3. creates the `/var/lock -> ../run/lock` symlink and populates `/dev` like Docker, unless `/dev` is a mount point (e.g. `--bind /dev`): the devices `null`, `zero`, `full`, `random`, `urandom` and `tty` (owned by root, mode 0666), the symlinks `fd -> /proc/self/fd`, `stdin`, `stdout`, `stderr` and `ptmx -> pts/ptmx`, a private `devpts` instance on `/dev/pts` (pseudo-terminals) and a 64 MiB tmpfs on `/dev/shm`;
 4. `chroot`s into `ROOT_DIR`;
-5. drops every capability except `CAP_CHOWN`, `CAP_DAC_OVERRIDE`, `CAP_FOWNER`, `CAP_SETGID`, `CAP_SETUID` and `CAP_NET_BIND_SERVICE` from the bounding set and empties the inheritable and ambient sets (unless `--no-dropcaps`);
+5. drops every capability except `CAP_CHOWN`, `CAP_DAC_OVERRIDE`, `CAP_FOWNER`, `CAP_SETGID`, `CAP_SETUID` and `CAP_NET_BIND_SERVICE` (adjusted by `--cap-add`/`--cap-drop`) from the bounding set and empties the inheritable and ambient sets (unless `--no-dropcaps`);
 6. switches to the requested user and groups;
 7. changes to the working directory and executes `COMMAND` with the environment of the image (the `Env` of `/.droot/config.json` overridden by `/.drootenv`), overridden by `--env-file`, then by `--env`. `PATH` (`/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`), `HOME`, `USER` and `LOGNAME` (from the user's entry in `ROOT_DIR/etc/passwd`; `HOME=/` without entry) are set when missing. droot *replaces itself* with `COMMAND`, so the exit status and signals are those of `COMMAND`.
 
@@ -200,7 +200,10 @@ In order, droot:
 | `--bind-net-files` | Bind mount the host's `/etc/resolv.conf` and `/etc/hosts` read-only on the same paths in the container, so that `COMMAND` sees later changes to them (e.g. after a DHCP renewal) instead of the snapshot copied by `--cp`. Each run binds the current files afresh; note that a file bind mount follows changes made *in place*: a host file replaced with `rename(2)` while `COMMAND` runs (some DHCP clients, `resolvconf`) is only seen by the next run. With `--cp`, only `/etc/group` and `/etc/passwd` are copied. |
 | `-e`, `--env KEY[=VALUE]` | Set an environment variable, overriding `/.drootenv` and `--env-file`. A bare `KEY` takes its value from droot's own environment and is left out if unset, like `docker run -e KEY` (under `sudo`, keep it with `sudo --preserve-env=KEY`). Repeatable. Commas are not separators. |
 | `--env-file FILE` | Read environment variables from the host's `FILE`: `KEY=VALUE` lines (the format of `/.drootenv`; `#` starts a comment line) and bare `KEY` lines, taken from droot's environment. Overrides `/.drootenv`; later files override earlier ones. Repeatable. |
+| `--cap-add CAP` | Also keep the capability `CAP` in the bounding set: a name with or without `CAP_`, in any case (`NET_RAW`, `cap_sys_ptrace`), or `ALL`. Repeatable. |
+| `--cap-drop CAP` | Drop `CAP` from the capabilities kept by default, or `ALL` of them (then `--cap-add` adds back). Repeatable. |
 | `--no-dropcaps` | Do not drop capabilities (dangerous). |
+| `--no-mask` | Leave `/proc` and `/sys` as they are: do not mask their sensitive files nor make `/proc/sys`, `/sys` and the like read-only (dangerous). Masks made by a previous run stay until `droot umount`. |
 | `--no-new-privileges` | Set the `no_new_privs` flag: setuid programs (`su`, `sudo`, ...) and file capabilities cannot grant privileges to `COMMAND`. Recommended with `--user`. |
 
 Notes:

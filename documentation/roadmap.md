@@ -13,12 +13,9 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
 ### `droot run`
 
 - **[security]** Running as root inside droot is close to running as root on
-  the host: `/proc` and `/sys` are the host's and writable (`/proc/sys/*`,
-  `/proc/sysrq-trigger`, sysfs attributes), and root keeps
-  `CAP_DAC_OVERRIDE`, `CAP_CHOWN` and `CAP_FOWNER`. Ideas: mount sysfs
-  read-only, mask sensitive `/proc` paths like Docker does
-  (`/proc/kcore`, `/proc/sysrq-trigger`, `/proc/sys` read-only, ...), or
-  offer a PID namespace.
+  the host: root keeps `CAP_DAC_OVERRIDE`, `CAP_CHOWN` and `CAP_FOWNER`
+  (unless `--cap-drop`), and `/proc` shows the host's processes. Idea: a PID
+  namespace.
 - **[security]** No seccomp filter or LSM profile, and `no_new_privs` is
   opt-in (`--no-new-privileges`): by default setuid-root binaries in the image
   regain the capabilities left in the bounding set.
@@ -67,8 +64,8 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
 - **[feature]** `--unshare` (opt-in): a private mount namespace so that mounts
   disappear with the process, optionally PID/UTS/IPC namespaces, keeping the
   default as simple as today.
-- **[feature]** `--no-new-privileges`, `--cap-add`/`--cap-drop`, an optional
-  seccomp profile, `--read-only` root.
+- **[feature]** An optional seccomp profile (e.g. Docker's default); consider
+  enabling `no_new_privs` by default (with an opt-out: it breaks `sudo`/`su`).
 - **[feature]** Bind propagation modes (`shared`, `private`, ...); droot makes
   every mount a slave mount today.
 - **[feature]** Resource limits: `--ulimit`, cgroup v2 (`--memory`, `--cpus`,

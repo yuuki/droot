@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -60,6 +61,12 @@ func runCommand() *cli.Command {
 				Usage: "read-only bind mount the host's " + strings.Join(netFiles, " and ") + " into the container, so that COMMAND sees later changes made to them in place (unlike --cp)"},
 			{Name: "no-dropcaps", Kind: cli.Bool,
 				Usage: "do not drop capabilities (dangerous)"},
+			{Name: "cap-add", Kind: cli.Strings, Placeholder: "CAP",
+				Usage: "also keep the capability CAP (e.g. NET_RAW, SYS_PTRACE, or ALL) in the bounding set"},
+			{Name: "cap-drop", Kind: cli.Strings, Placeholder: "CAP",
+				Usage: "drop the capability CAP (e.g. CHOWN, or ALL) from the ones kept by default"},
+			{Name: "no-mask", Kind: cli.Bool,
+				Usage: "do not mask the sensitive files of /proc and /sys nor make /proc/sys, /sys and the like read-only (dangerous)"},
 			{Name: "no-new-privileges", Kind: cli.Bool,
 				Usage: "set no_new_privs: setuid programs and file capabilities cannot grant privileges to COMMAND"},
 			{Name: "env", Aliases: []string{"e"}, Kind: cli.Strings, Placeholder: "KEY[=VALUE]",
@@ -88,6 +95,50 @@ var keepCaps = map[uintptr]bool{
 	6:  true, // CAP_SETGID
 	7:  true, // CAP_SETUID
 	10: true, // CAP_NET_BIND_SERVICE
+}
+
+// boundingSet returns the capabilities kept in the bounding set: keepCaps,
+// emptied by --cap-drop ALL or filled by --cap-add ALL, plus the other
+// --cap-add, minus the other --cap-drop.
+func boundingSet(add, drop []string) (map[uintptr]bool, error) {
+	parse := func(opt string, names []string) (all bool, caps []uintptr, err error) {
+		for _, n := range names {
+			if strings.EqualFold(n, "ALL") {
+				all = true
+				continue
+			}
+			c, ok := osutil.Capability(n)
+			if !ok {
+				return false, nil, fmt.Errorf("%s: unknown capability %q", opt, n)
+			}
+			caps = append(caps, c)
+		}
+		return all, caps, nil
+	}
+	addAll, adds, err := parse("--cap-add", add)
+	if err != nil {
+		return nil, err
+	}
+	dropAll, drops, err := parse("--cap-drop", drop)
+	if err != nil {
+		return nil, err
+	}
+	keep := maps.Clone(keepCaps)
+	if dropAll {
+		clear(keep)
+	}
+	if addAll {
+		for _, c := range osutil.AllCapabilities() {
+			keep[c] = true
+		}
+	}
+	for _, c := range adds {
+		keep[c] = true
+	}
+	for _, c := range drops {
+		delete(keep, c)
+	}
+	return keep, nil
 }
 
 // devices are created in ROOT_DIR/dev.
@@ -210,6 +261,13 @@ func doRun(ctx context.Context, cmd *cli.Invocation) error {
 		}
 		binds = append(binds, b)
 	}
+	if cmd.Bool("no-dropcaps") && (cmd.IsSet("cap-add") || cmd.IsSet("cap-drop")) {
+		return cmd.UsageError("--cap-add and --cap-drop cannot be used with --no-dropcaps")
+	}
+	keep, err := boundingSet(cmd.Strings("cap-add"), cmd.Strings("cap-drop"))
+	if err != nil {
+		return err
+	}
 	bindNetFiles := cmd.Bool("bind-net-files")
 	var tmpfs []tmpfsMount
 	for _, spec := range cmd.Strings("tmpfs") {
@@ -304,6 +362,11 @@ func doRun(ctx context.Context, cmd *cli.Invocation) error {
 	if err := mnt.MountSysProc(); err != nil {
 		return err
 	}
+	if !cmd.Bool("no-mask") {
+		if err := mnt.ProtectKernelFS(); err != nil {
+			return err
+		}
+	}
 	// Bind and tmpfs mounts, parents before children (like Docker), so
 	// that `--tmpfs /data --bind H:/data/x` binds H inside the tmpfs.
 	var mounts []userMount
@@ -354,6 +417,7 @@ func doRun(ctx context.Context, cmd *cli.Invocation) error {
 	return execInRoot(ctx, rootDir, argv, env, cred, execOptions{
 		workdir:         workdir,
 		dropCaps:        !cmd.Bool("no-dropcaps"),
+		keepCaps:        keep,
 		noNewPrivileges: cmd.Bool("no-new-privileges"),
 	})
 }
@@ -522,6 +586,7 @@ func defaultEnv(env []string, cred *identity.Credential) []string {
 type execOptions struct {
 	workdir         string
 	dropCaps        bool
+	keepCaps        map[uintptr]bool
 	noNewPrivileges bool
 }
 
@@ -541,7 +606,7 @@ func execInRoot(ctx context.Context, rootDir string, argv, env []string, cred *i
 	}
 
 	if opts.dropCaps {
-		if err := osutil.DropBoundingCapabilities(keepCaps); err != nil {
+		if err := osutil.DropBoundingCapabilities(opts.keepCaps); err != nil {
 			return fmt.Errorf("drop capabilities: %w", err)
 		}
 		if err := osutil.ClearInheritableCapabilities(); err != nil {

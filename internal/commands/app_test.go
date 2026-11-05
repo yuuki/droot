@@ -16,6 +16,7 @@ import (
 	"github.com/yuuki/droot/internal/cli"
 	"github.com/yuuki/droot/internal/log"
 	"github.com/yuuki/droot/internal/mounter"
+	"github.com/yuuki/droot/internal/osutil"
 )
 
 type parsedRun struct {
@@ -473,5 +474,48 @@ func TestVersion(t *testing.T) {
 		if err := app.Run(context.Background(), append([]string{"droot"}, argv...)); err != nil || out.String() != "droot version 1.2.3\n" {
 			t.Errorf("droot %q: %v, %q", argv, err, out.String())
 		}
+	}
+}
+
+func TestBoundingSet(t *testing.T) {
+	names := func(m map[uintptr]bool) []string {
+		var out []string
+		for c := range m {
+			out = append(out, osutil.CapabilityName(c))
+		}
+		slices.Sort(out)
+		return out
+	}
+	tests := []struct {
+		add, drop []string
+		want      []string
+		wantErr   bool
+	}{
+		{want: []string{"CAP_CHOWN", "CAP_DAC_OVERRIDE", "CAP_FOWNER", "CAP_NET_BIND_SERVICE", "CAP_SETGID", "CAP_SETUID"}},
+		{add: []string{"net_raw"}, drop: []string{"CAP_CHOWN", "dac_override"}, want: []string{"CAP_FOWNER", "CAP_NET_BIND_SERVICE", "CAP_NET_RAW", "CAP_SETGID", "CAP_SETUID"}},
+		{add: []string{"NET_BIND_SERVICE"}, drop: []string{"ALL"}, want: []string{"CAP_NET_BIND_SERVICE"}},
+		{drop: []string{"all"}, want: nil},
+		{add: []string{"SYS_PTRACE", "SYS_PTRACE"}, drop: []string{"SYS_PTRACE"}, want: []string{"CAP_CHOWN", "CAP_DAC_OVERRIDE", "CAP_FOWNER", "CAP_NET_BIND_SERVICE", "CAP_SETGID", "CAP_SETUID"}},
+		{add: []string{"NOPE"}, wantErr: true},
+		{drop: []string{""}, wantErr: true},
+	}
+	for _, tt := range tests {
+		got, err := boundingSet(tt.add, tt.drop)
+		if tt.wantErr {
+			if err == nil {
+				t.Errorf("add %q drop %q: want an error", tt.add, tt.drop)
+			}
+			continue
+		}
+		if err != nil || !slices.Equal(names(got), tt.want) {
+			t.Errorf("add %q drop %q: got %q, %v; want %q", tt.add, tt.drop, names(got), err, tt.want)
+		}
+	}
+	all, err := boundingSet([]string{"ALL"}, []string{"SYS_ADMIN"})
+	if err != nil || len(all) != len(osutil.AllCapabilities())-1 || all[21] {
+		t.Errorf("--cap-add ALL --cap-drop SYS_ADMIN: %d capabilities, %v", len(all), err)
+	}
+	if len(keepCaps) != 6 {
+		t.Error("boundingSet must not modify keepCaps")
 	}
 }

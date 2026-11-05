@@ -528,3 +528,74 @@ func TestBindMountReplace(t *testing.T) {
 		t.Fatalf("want exactly one mount below the root, got %q, %v", mounts, err)
 	}
 }
+
+func TestProtectKernelFS(t *testing.T) {
+	dir := privilegedDir(t)
+	r, err := osutil.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	m := NewMounter(r)
+	defer func() {
+		if _, err := m.UmountAll(); err != nil {
+			t.Error(err)
+		}
+	}()
+	if err := m.MountSysProc(); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 { // idempotent
+		if err := m.ProtectKernelFS(); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Masked files: their content is /dev/null's.
+	masked := 0
+	for _, p := range maskedPaths {
+		fi, err := os.Stat(p)
+		if err != nil || fi.IsDir() || !strings.HasPrefix(p, "/proc/") {
+			continue // not on this kernel
+		}
+		masked++
+		inRoot := filepath.Join(dir, p)
+		if b, err := os.ReadFile(inRoot); err != nil || len(b) != 0 {
+			t.Errorf("%s must be masked: %d bytes, %v", p, len(b), err)
+		}
+		if !isReadOnly(t, inRoot) {
+			t.Errorf("the mask of %s must be read-only (chmod would change the host's /dev/null)", p)
+		}
+		if err := os.Chmod(inRoot, 0o600); !errors.Is(err, unix.EROFS) {
+			t.Errorf("chmod through the mask of %s: %v, want EROFS", p, err)
+		}
+	}
+	if masked == 0 {
+		t.Error("no masked file exists on this kernel: the test checks nothing")
+	}
+	if fi, err := os.Stat("/dev/null"); err != nil || fi.Mode().Perm() != 0o666 {
+		t.Errorf("the host's /dev/null changed: %v, %v", fi.Mode(), err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "proc", "sys", "kernel", "hostname"), []byte("x"), 0o644); !errors.Is(err, unix.EROFS) {
+		t.Errorf("writing /proc/sys must fail with EROFS, got %v", err)
+	}
+	if _, err := os.Stat("/proc/sysrq-trigger"); err == nil {
+		// Writing "h" only prints the help to the kernel log, should
+		// the protection fail.
+		if err := os.WriteFile(filepath.Join(dir, "proc", "sysrq-trigger"), []byte("h"), 0o200); !errors.Is(err, unix.EROFS) {
+			t.Errorf("writing /proc/sysrq-trigger must fail with EROFS, got %v", err)
+		}
+	}
+	if !isReadOnly(t, filepath.Join(dir, "sys")) {
+		t.Error("/sys must be read-only")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "sys", "fs", "cgroup")); err == nil && !isReadOnly(t, filepath.Join(dir, "sys", "fs", "cgroup")) {
+		t.Error("the mounts below /sys must be read-only too")
+	}
+	if entries, err := os.ReadDir(filepath.Join(dir, "sys", "firmware")); err == nil && len(entries) != 0 {
+		t.Errorf("/sys/firmware must be masked, got %d entries", len(entries))
+	}
+	if isReadOnly(t, "/sys") || isReadOnly(t, "/proc/sys") {
+		t.Error("the host's /sys and /proc/sys must stay writable")
+	}
+}

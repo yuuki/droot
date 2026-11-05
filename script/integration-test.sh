@@ -116,6 +116,17 @@ assert_eq "--env-file and --env KEY take values from droot's environment" \
   "1 file p h unset"
 assert_eq "capability bounding set" \
   "$("$DROOT" run --root "$WORK/app" --user root -- awk '/^CapBnd/ {print $2}' /proc/self/status)" "00000000000004cb"
+assert_eq "--cap-drop and --cap-add" \
+  "$("$DROOT" run --root "$WORK/app" --user root --cap-drop ALL --cap-add net_raw --cap-add CAP_KILL -- awk '/^CapBnd/ {print $2}' /proc/self/status)" \
+  "0000000000002020"
+assert_eq "sensitive /proc files are masked, /proc/sys and /sys are read-only" \
+  "$("$DROOT" run --root "$WORK/app" --user root -- sh -c 'wc -c < /proc/interrupts; echo x 2>/dev/null > /proc/sys/kernel/hostname || echo ro; touch /sys/kernel/x 2>/dev/null || echo ro')" \
+  "$(printf '0\nro\nro')"
+"$DROOT" umount --root "$WORK/app"
+[[ $("$DROOT" run --root "$WORK/app" --user root --no-mask -- sh -c 'wc -c < /proc/interrupts') -gt 0 ]] ||
+  fail "--no-mask: /proc/interrupts is masked"
+echo "ok - --no-mask"
+"$DROOT" umount --root "$WORK/app"
 assert_eq "device nodes" \
   "$("$DROOT" run --root "$WORK/app" --user app -- sh -c 'stat -c "%n %t:%T %a %u" /dev/null /dev/zero /dev/full /dev/random /dev/urandom /dev/tty' | tr '\n' ' ')" \
   "/dev/null 1:3 666 0 /dev/zero 1:5 666 0 /dev/full 1:7 666 0 /dev/random 1:8 666 0 /dev/urandom 1:9 666 0 /dev/tty 5:0 666 0 "

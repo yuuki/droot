@@ -40,6 +40,11 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
 - Device nodes created by `droot run` are owned by root instead of
   `--user`/`--group` (mode 0666 as before), and none are created when `/dev`
   in the container is a mount point.
+- Like Docker, `droot run` masks the sensitive files of `/proc` and `/sys`
+  (`/proc/kcore`, `/proc/keys`, `/sys/firmware`, ...) and makes `/proc/sys`,
+  `/proc/sysrq-trigger`, `/proc/irq`, `/proc/bus`, `/proc/fs` and the whole
+  of `/sys` read-only. Applications that change kernel settings (e.g. with
+  `sysctl -w`) fail; use `--no-mask` to keep the old behavior.
 - `droot run` requires root (euid 0) and refuses `--root /`;
   `droot umount --root /` is refused.
 - `DOCKER_CERT_PATH` alone no longer enables TLS: like the docker CLI, TLS is
@@ -198,6 +203,8 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
   `droot run --root DIR` alone runs the image's `ENTRYPOINT` and `CMD`.
 - `droot run --workdir`/`-w`.
 - `droot run --no-new-privileges` sets the `no_new_privs` flag.
+- `droot run --cap-add` and `--cap-drop` adjust the capabilities kept in the
+  bounding set.
 - `droot run --env-file FILE` and `--env KEY` (without a value, taking it from
   droot's environment), like `docker run`.
 - `droot run --bind SRC:DEST:OPTS` with the options `ro`, `rw` and `rbind`

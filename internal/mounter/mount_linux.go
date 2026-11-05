@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -238,6 +239,178 @@ func (m *Mounter) MountSysProc() error {
 		return err
 	}
 	return s.Close()
+}
+
+// maskedPaths are hidden from the container, like Docker does: files are
+// covered with a read-only bind mount of /dev/null, directories with an
+// empty read-only tmpfs. Paths missing on this kernel are skipped.
+var maskedPaths = []string{
+	"/proc/acpi", "/proc/asound", "/proc/interrupts", "/proc/kcore", "/proc/keys",
+	"/proc/latency_stats", "/proc/sched_debug", "/proc/scsi", "/proc/timer_list",
+	"/proc/timer_stats", "/sys/devices/virtual/powercap", "/sys/firmware",
+}
+
+// readonlyPaths of /proc are made read-only, like Docker does. /sys is
+// read-only as a whole.
+var readonlyPaths = []string{"/proc/bus", "/proc/fs", "/proc/irq", "/proc/sys", "/proc/sysrq-trigger"}
+
+// ProtectKernelFS masks the sensitive paths of /proc and /sys, makes the
+// writable parts of /proc that change the kernel's configuration read-only,
+// and makes /sys read-only, recursively. It must be called after
+// MountSysProc. It is idempotent.
+//
+// The masks only hold as long as COMMAND cannot unmount them, i.e. without
+// CAP_SYS_ADMIN, which droot drops by default.
+func (m *Mounter) ProtectKernelFS() error {
+	proc, err := m.kernelFSRoot("/proc", unix.PROC_SUPER_MAGIC)
+	if err != nil {
+		return err
+	}
+	defer proc.Close()
+	sys, err := m.kernelFSRoot("/sys", unix.SYSFS_MAGIC)
+	if err != nil {
+		return err
+	}
+	defer sys.Close()
+
+	base := func(p string) (*os.File, string) {
+		if rel, ok := strings.CutPrefix(p, "/proc/"); ok {
+			return proc, rel
+		}
+		return sys, strings.TrimPrefix(p, "/sys/")
+	}
+	for _, p := range maskedPaths {
+		b, rel := base(p)
+		if err := maskPath(b, rel, p); err != nil {
+			return fmt.Errorf("mask %s: %w", p, err)
+		}
+	}
+	for _, p := range readonlyPaths {
+		b, rel := base(p)
+		if err := readonlyPath(b, rel, p); err != nil {
+			return fmt.Errorf("make %s read-only: %w", p, err)
+		}
+	}
+	return m.remountReadonlyRecursive(sys)
+}
+
+// kernelFSRoot opens the mount on path in the container, which must be of
+// the file system with the given magic number.
+func (m *Mounter) kernelFSRoot(path string, magic int64) (*os.File, error) {
+	f, err := m.root.OpenNoFollow(path)
+	if err != nil {
+		return nil, err
+	}
+	var st unix.Statfs_t
+	if err := unix.Fstatfs(int(f.Fd()), &st); err != nil {
+		_ = f.Close()
+		return nil, &fs.PathError{Op: "statfs", Path: f.Name(), Err: err}
+	}
+	if int64(st.Type) != magic {
+		_ = f.Close()
+		return nil, fmt.Errorf("%s is not the expected file system (type %#x)", f.Name(), st.Type)
+	}
+	return f, nil
+}
+
+// openBelow opens rel below the directory base without following any
+// symlink, and returns descriptors of it and of its parent directory. A
+// missing path gives an error satisfying errors.Is(err, fs.ErrNotExist).
+func openBelow(base *os.File, rel string) (parent, fd int, err error) {
+	parent, err = unix.FcntlInt(base.Fd(), unix.F_DUPFD_CLOEXEC, 0)
+	if err != nil {
+		return -1, -1, err
+	}
+	parts := strings.Split(rel, "/")
+	for i, part := range parts {
+		fd, err = unix.Openat(parent, part, unix.O_PATH|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		if err != nil {
+			_ = unix.Close(parent)
+			return -1, -1, err
+		}
+		var st unix.Stat_t
+		if err := unix.Fstat(fd, &st); err != nil || st.Mode&unix.S_IFMT == unix.S_IFLNK {
+			_ = unix.Close(fd)
+			_ = unix.Close(parent)
+			if err == nil {
+				err = fmt.Errorf("unexpected symbolic link %q", part)
+			}
+			return -1, -1, err
+		}
+		if i == len(parts)-1 {
+			return parent, fd, nil
+		}
+		_ = unix.Close(parent)
+		parent = fd
+	}
+	return -1, -1, unix.EINVAL
+}
+
+func maskPath(base *os.File, rel, display string) error {
+	parent, fd, err := openBelow(base, rel)
+	if errors.Is(err, unix.ENOENT) {
+		log.Debugf("not masking %s: not present", display)
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer unix.Close(parent)
+	defer unix.Close(fd)
+	if mounted, err := isMountRoot(parent, fd); err != nil || mounted {
+		return err // masked by a previous run
+	}
+	var st unix.Stat_t
+	if err := unix.Fstat(fd, &st); err != nil {
+		return err
+	}
+	ro := uintptr(unix.MS_RDONLY | unix.MS_NOSUID | unix.MS_NODEV | unix.MS_NOEXEC)
+	if st.Mode&unix.S_IFMT == unix.S_IFDIR {
+		return mount("tmpfs", osutil.FdPath(fd), "tmpfs", ro, "size=4k,mode=0555")
+	}
+	// Read-only, so that chmod/chown through the mask cannot change the
+	// host's /dev/null.
+	if err := mount("/dev/null", osutil.FdPath(fd), "", unix.MS_BIND, ""); err != nil {
+		return err
+	}
+	return remountReopened(parent, rel, display)
+}
+
+func readonlyPath(base *os.File, rel, display string) error {
+	parent, fd, err := openBelow(base, rel)
+	if errors.Is(err, unix.ENOENT) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer unix.Close(parent)
+	defer unix.Close(fd)
+	mounted, err := isMountRoot(parent, fd)
+	if err != nil {
+		return err
+	}
+	if !mounted {
+		if err := mount(osutil.FdPath(fd), osutil.FdPath(fd), "", unix.MS_BIND, ""); err != nil {
+			return err
+		}
+	}
+	return remountReopened(parent, rel, display)
+}
+
+// remountReopened makes the mount just made on the last component of rel,
+// in the directory parent, read-only.
+func remountReopened(parent int, rel, display string) error {
+	fd, err := unix.Openat(parent, path.Base(rel), unix.O_PATH|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return err
+	}
+	f := os.NewFile(uintptr(fd), display)
+	defer f.Close()
+	if ok, err := isMountRoot(parent, fd); err != nil || !ok {
+		return fmt.Errorf("mount on %s did not take effect (raced?)", display)
+	}
+	return remountReadonly(f)
 }
 
 // BindMount bind mounts hostPath (a directory or a file) on containerPath
