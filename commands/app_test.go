@@ -85,6 +85,16 @@ func TestRunFlagParsing(t *testing.T) {
 			want: parsedRun{args: []string{"echo", "--"}, root: "/c", env: []string{"A=1"}, copyFiles: true},
 		},
 		{
+			name: "a COMMAND named help",
+			argv: []string{"run", "-r", "/c", "--", "help"},
+			want: parsedRun{args: []string{"help"}, root: "/c"},
+		},
+		{
+			name: "a COMMAND named h without --",
+			argv: []string{"run", "-r", "/c", "h", "x"},
+			want: parsedRun{args: []string{"h", "x"}, root: "/c"},
+		},
+		{
 			name: "COMMAND ending in the shell completion flag",
 			argv: []string{"run", "-r", "/c", "echo", "--generate-shell-completion"},
 			want: parsedRun{args: []string{"echo", "--generate-shell-completion"}, root: "/c"},
@@ -117,6 +127,26 @@ func TestRunFlagParsing(t *testing.T) {
 				t.Fatalf("got  %+v\nwant %+v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestHelpStillWorks(t *testing.T) {
+	for _, argv := range [][]string{{"help", "run"}, {"run", "--help"}, {"run", "-h"}, {"export", "-h"}, {"--help"}} {
+		var out strings.Builder
+		app := NewApp("test")
+		app.Writer, app.ErrWriter = &out, io.Discard
+		for _, c := range app.Commands {
+			c.Action = func(context.Context, *cli.Command) error {
+				t.Errorf("droot %q ran the action instead of showing help", argv)
+				return nil
+			}
+		}
+		if err := app.Run(context.Background(), prepareArgs(app, append([]string{"droot"}, argv...))); err != nil {
+			t.Errorf("droot %q: %v", argv, err)
+		}
+		if !strings.Contains(out.String(), "USAGE") {
+			t.Errorf("droot %q printed no help: %q", argv, out.String())
+		}
 	}
 }
 

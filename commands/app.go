@@ -43,6 +43,12 @@ func NewApp(version string) *cli.Command {
 			return cli.ShowRootCommandHelp(cmd)
 		},
 	}
+	for _, c := range app.Commands {
+		// urfave/cli adds a "help" (alias "h") subcommand to every
+		// command, which would hijack `droot run -- help` or an image named
+		// "help". -h/--help and `droot help COMMAND` still work.
+		c.HideHelpCommand = true
+	}
 	for _, c := range append([]*cli.Command{app}, app.Commands...) {
 		// --env JAVA_OPTS=-Xmx1g,-Xms1g and paths may contain commas, so
 		// never split slice flags (droot <= 0.7 did not either). This is
