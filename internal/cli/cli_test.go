@@ -273,14 +273,14 @@ func TestApplyConfig(t *testing.T) {
 		t.Fatalf("a string for a repeatable flag: %+v, %v", got, err)
 	}
 	for _, bad := range []map[string]any{
-		{"nmae": "x"}, {"debug": true}, {"n": "x"},
+		{"nam": "x"}, {"debug": true}, {"n": "x"},
 		{"flag": "yes"}, {"name": true}, {"item": true},
 	} {
 		if err := run(bad); err == nil {
 			t.Errorf("ApplyConfig(%v) should fail", bad)
 		}
 	}
-	if err := run(map[string]any{"nmae": "x"}); err == nil || !strings.Contains(err.Error(), `did you mean "name"?`) {
+	if err := run(map[string]any{"nam": "x"}); err == nil || !strings.Contains(err.Error(), `did you mean "name"?`) {
 		t.Errorf("want a suggestion, got %v", err)
 	}
 }
