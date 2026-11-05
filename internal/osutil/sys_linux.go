@@ -9,7 +9,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/yuuki/droot/log"
+	"github.com/yuuki/droot/internal/log"
 )
 
 // Chroot changes the root directory of the process to rootDir and changes the

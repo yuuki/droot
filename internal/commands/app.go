@@ -9,7 +9,7 @@ import (
 
 	"github.com/urfave/cli/v3"
 
-	"github.com/yuuki/droot/log"
+	"github.com/yuuki/droot/internal/log"
 )
 
 // NewApp returns the root command of droot.

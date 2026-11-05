@@ -13,7 +13,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/yuuki/droot/osutil"
+	"github.com/yuuki/droot/internal/osutil"
 )
 
 // Mounter mounts and unmounts file systems under a container root directory.

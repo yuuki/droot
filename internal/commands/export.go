@@ -13,8 +13,8 @@ import (
 
 	"github.com/urfave/cli/v3"
 
-	"github.com/yuuki/droot/docker"
-	"github.com/yuuki/droot/osutil"
+	"github.com/yuuki/droot/internal/docker"
+	"github.com/yuuki/droot/internal/osutil"
 )
 
 func exportCommand() *cli.Command {

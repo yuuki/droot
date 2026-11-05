@@ -19,8 +19,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/yuuki/droot/log"
-	"github.com/yuuki/droot/osutil"
+	"github.com/yuuki/droot/internal/log"
+	"github.com/yuuki/droot/internal/osutil"
 )
 
 // Credential is the identity a process runs as.

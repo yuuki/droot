@@ -127,8 +127,6 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
 - **[project]** Automate the Homebrew tap with GoReleaser, or drop it.
 - **[project]** Sign releases (cosign keyless), publish an SBOM and build
   provenance (GitHub artifact attestations).
-- **[project]** Move packages under `internal/`: droot is a command, not a
-  library, and its packages carry no compatibility promise.
 - **[project]** Fuzz tests for `environ.ParseEnv`, `mounter.ParseMountInfo`,
   the path resolution of `osutil.Root` and the tar rewriting.
 - **[project]** End-to-end tests on arm64 runners and with Podman; coverage

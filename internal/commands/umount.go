@@ -5,9 +5,9 @@ import (
 
 	"github.com/urfave/cli/v3"
 
-	"github.com/yuuki/droot/log"
-	"github.com/yuuki/droot/mounter"
-	"github.com/yuuki/droot/osutil"
+	"github.com/yuuki/droot/internal/log"
+	"github.com/yuuki/droot/internal/mounter"
+	"github.com/yuuki/droot/internal/osutil"
 )
 
 func umountCommand() *cli.Command {

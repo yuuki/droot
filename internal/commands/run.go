@@ -13,11 +13,11 @@ import (
 
 	"github.com/urfave/cli/v3"
 
-	"github.com/yuuki/droot/environ"
-	"github.com/yuuki/droot/identity"
-	"github.com/yuuki/droot/log"
-	"github.com/yuuki/droot/mounter"
-	"github.com/yuuki/droot/osutil"
+	"github.com/yuuki/droot/internal/environ"
+	"github.com/yuuki/droot/internal/identity"
+	"github.com/yuuki/droot/internal/log"
+	"github.com/yuuki/droot/internal/mounter"
+	"github.com/yuuki/droot/internal/osutil"
 )
 
 func runCommand() *cli.Command {

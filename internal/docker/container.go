@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/yuuki/droot/log"
+	"github.com/yuuki/droot/internal/log"
 )
 
 // ContainerConfig is the subset of the container configuration that droot sets

@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/yuuki/droot/log"
+	"github.com/yuuki/droot/internal/log"
 )
 
 // ExistsFile reports whether path exists and is not a directory.

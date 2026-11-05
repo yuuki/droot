@@ -10,7 +10,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/yuuki/droot/osutil"
+	"github.com/yuuki/droot/internal/osutil"
 )
 
 // privilegedDir creates a scratch directory for tests that really mount

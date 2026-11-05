@@ -37,8 +37,8 @@ separately when `GOTOOLCHAIN=local` is enforced (e.g. a distribution's Go).
 
 | Level | Where | Needs |
 |---|---|---|
-| Unit | `*_test.go` | nothing; Docker is faked (`docker/export_test.go`) or served by `httptest` (`docker/client_test.go`) |
-| Privileged unit | `mounter/mount_linux_test.go`, `osutil/sys_linux_test.go` | root on Linux; skipped otherwise |
+| Unit | `*_test.go` | nothing; Docker is faked (`internal/docker/export_test.go`) or served by `httptest` (`internal/docker/client_test.go`) |
+| Privileged unit | `internal/mounter/mount_linux_test.go`, `internal/osutil/sys_linux_test.go` | root on Linux; skipped otherwise |
 | End-to-end | `script/integration-test.sh` | root, Docker, network access to pull `alpine` and `busybox` |
 
 The privileged mount tests create their scratch directory with
@@ -54,7 +54,7 @@ end-to-end tests and cross builds on every push and pull request.
 
 droot intentionally depends on as little as possible: only
 `github.com/urfave/cli/v3` and `golang.org/x/sys`. Talking to Docker is done
-with the standard library (`docker` package) instead of the Docker SDK, which
+with the standard library (`internal/docker` package) instead of the Docker SDK, which
 pulls in dozens of modules. Please keep it that way; update
 `LICENSE_OF_DEPENDENCIES.md` when adding a dependency.
 

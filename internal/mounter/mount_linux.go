@@ -12,8 +12,8 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/yuuki/droot/log"
-	"github.com/yuuki/droot/osutil"
+	"github.com/yuuki/droot/internal/log"
+	"github.com/yuuki/droot/internal/osutil"
 )
 
 // keepFile is created in empty bind mount sources (behavior inherited from

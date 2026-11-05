@@ -60,6 +60,9 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
 - When both are given, `--debug` takes precedence over `DROOT_DEBUG` (in 0.7,
   `DROOT_DEBUG=0` disabled `-D`).
 - `droot export -o -` writes to STDOUT; droot 0.7 created a file named `-`.
+- The Go packages moved under `internal/` (`internal/commands`,
+  `internal/docker`, ...): droot is a command, and its packages were never
+  meant to be imported by other modules.
 
 ### Fixed
 

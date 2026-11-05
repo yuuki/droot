@@ -11,7 +11,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/yuuki/droot/commands"
+	"github.com/yuuki/droot/internal/commands"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".

@@ -10,7 +10,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/yuuki/droot/osutil"
+	"github.com/yuuki/droot/internal/osutil"
 )
 
 func TestCreateDevices(t *testing.T) {

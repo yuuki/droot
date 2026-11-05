@@ -9,7 +9,7 @@ import (
 )
 
 func TestReadEnvFile(t *testing.T) {
-	env, err := ReadEnvFile("../testdata/drootenv")
+	env, err := ReadEnvFile("testdata/drootenv")
 	if err != nil {
 		t.Fatalf("should not be error: %v", err)
 	}

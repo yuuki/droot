@@ -15,7 +15,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/yuuki/droot/log"
+	"github.com/yuuki/droot/internal/log"
 )
 
 // maxSymlinks is the maximum number of symlinks followed while resolving a

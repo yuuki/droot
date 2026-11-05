@@ -11,8 +11,8 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/yuuki/droot/log"
-	"github.com/yuuki/droot/osutil"
+	"github.com/yuuki/droot/internal/log"
+	"github.com/yuuki/droot/internal/osutil"
 )
 
 func openRoot(t *testing.T, dir string) *osutil.Root {

@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"runtime"
 
-	"github.com/yuuki/droot/osutil"
+	"github.com/yuuki/droot/internal/osutil"
 )
 
 // ErrOtherMount is returned by the check of OnMountOf.

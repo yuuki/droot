@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yuuki/droot/environ"
-	"github.com/yuuki/droot/log"
+	"github.com/yuuki/droot/internal/environ"
+	"github.com/yuuki/droot/internal/log"
 )
 
 // API is the subset of the Docker Engine API used by ExportImage.
