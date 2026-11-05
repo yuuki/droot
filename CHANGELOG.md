@@ -14,7 +14,8 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
 
 - Go 1.26 or later is required to build. Release binaries are statically
   linked (`CGO_ENABLED=0`); as a consequence, host user names served only by
-  NSS (LDAP, SSSD, ...) are no longer resolved — use `--cp` or numeric IDs.
+  NSS (LDAP, SSSD, ...) are no longer resolved — use numeric IDs (`--cp`
+  does not help: it copies `/etc/passwd`, which lacks such users).
 - `--user NAME` is looked up in the container's `/etc/passwd` first and on the
   host second (previously only on the host). When `--group` is omitted, the
   user's primary group is used instead of droot's own group (`root` under

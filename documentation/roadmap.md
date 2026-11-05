@@ -41,7 +41,7 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
   host's `/etc/resolv.conf` or `/etc/hosts` are not reflected (a bind mount
   would be live).
 - **[compat]** Host-side lookups of user names use `/etc/passwd` only (the
-  static binary has no NSS); LDAP/SSSD users must be given by ID.
+  static binary has no NSS); LDAP/SSSD users must be given by numeric ID.
 - **[compat]** `droot run` needs real root; rootless operation with user
   namespaces is not supported.
 - **[ux]** Two concurrent `droot run` on the same root race on `--cp` copies
