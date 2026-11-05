@@ -1,123 +1,97 @@
 package osutil
 
 import (
-	"io/ioutil"
+	"errors"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
-func TestExistsFile(t *testing.T) {
-	if ExistsFile("/path/to/notexist") != false {
-		t.Error("ExistsFile(\"/path/to/notexist\") should be false")
+func mustWrite(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
 	}
-
-	tmpDir := os.TempDir()
-	tmp, _ := ioutil.TempFile(tmpDir, "droot_test")
-	defer func() {
-		tmp.Close()
-		os.Remove(tmp.Name())
-	}()
-
-	if ExistsFile(tmp.Name()) != true {
-		t.Errorf("ExistsFile(\"%v\") should be true", tmp.Name())
-	}
-	if ExistsFile(tmpDir) != false {
-		t.Errorf("ExistsFile(\"%v\") should be false", tmpDir)
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
 
-func TestIsSymlink(t *testing.T) {
-	tmpDir := os.TempDir()
-	tmp, _ := ioutil.TempFile(tmpDir, "droot_test")
-	defer func() {
-		tmp.Close()
-		os.Remove(tmp.Name())
-	}()
+func TestExistsFileAndDir(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "file")
+	mustWrite(t, file, "x")
 
-	if IsSymlink(tmp.Name()) != false {
-		t.Errorf("IsSymlink(\"%v\") should be false", tmp.Name())
+	if ExistsFile("/path/to/notexist") || ExistsDir("/path/to/notexist") {
+		t.Error("nonexistent paths should not exist")
 	}
-
-	os.Symlink(tmp.Name(), tmpDir+"/symlink")
-
-	if IsSymlink(tmpDir+"/symlink") != true {
-		t.Errorf("IsSymlink(\"%v\") should be false", tmpDir+"/symlink")
+	if !ExistsFile(file) || ExistsFile(dir) {
+		t.Error("ExistsFile is wrong")
 	}
-}
-
-func TestExistsDir(t *testing.T) {
-	if ExistsDir("/path/to/notexist") != false {
-		t.Error("ExistsDir(\"/path/to/notexist\") should be false")
-	}
-
-	tmpDir := os.TempDir()
-	tmp, _ := ioutil.TempFile(tmpDir, "droot_test")
-	defer func() {
-		tmp.Close()
-		os.Remove(tmp.Name())
-	}()
-
-	if ExistsDir(tmpDir) != true {
-		t.Errorf("ExistsDir(\"%v\") should be true", tmpDir)
-	}
-	if ExistsDir(tmp.Name()) != false {
-		t.Errorf("ExistsDir(\"%v\") should be false", tmp.Name())
+	if !ExistsDir(dir) || ExistsDir(file) {
+		t.Error("ExistsDir is wrong")
 	}
 }
 
 func TestIsDirEmpty(t *testing.T) {
-	if IsDirEmpty("/path/to/notexist") != false {
-		t.Error("IsDirEmpty(\"/path/to/notexist\") should be false")
+	dir := t.TempDir()
+	empty := filepath.Join(dir, "empty")
+	if err := os.Mkdir(empty, 0o755); err != nil {
+		t.Fatal(err)
 	}
+	mustWrite(t, filepath.Join(dir, "nonempty", "file"), "x")
 
-	tmpDir := os.TempDir()
-	os.Mkdir(tmpDir+"/empty", 0755)
-	os.Mkdir(tmpDir+"/noempty", 0755)
-	os.Create(tmpDir + "/noempty/test")
-	defer func() {
-		os.Remove(tmpDir + "/empty")
-		os.RemoveAll(tmpDir + "/noempty")
-	}()
-
-	if IsDirEmpty(tmpDir+"/empty") != true {
-		t.Errorf("IsDirEmpty(\"%v\") should be true", tmpDir+"/empty")
+	if IsDirEmpty("/path/to/notexist") {
+		t.Error("nonexistent dir should not be empty")
 	}
-	if IsDirEmpty(tmpDir+"/noempty") != false {
-		t.Errorf("IsDirEmpty(\"%v\") should be false", tmpDir+"/noempty")
+	if !IsDirEmpty(empty) {
+		t.Error("empty dir should be empty")
+	}
+	if IsDirEmpty(filepath.Join(dir, "nonempty")) {
+		t.Error("nonempty dir should not be empty")
 	}
 }
 
-func TestRunCmd(t *testing.T) {
-	err := RunCmd("/bin/ls")
-	if err != nil {
-		t.Errorf("should not be error: %v", err)
+func TestLookPath(t *testing.T) {
+	executables := map[string]bool{"/usr/local/bin/app": true, "/bin/sh": true, "/usr/bin/sh": true}
+	isExec := func(p string) error {
+		if executables[p] {
+			return nil
+		}
+		if p == "/opt/bin/noexec" {
+			return fs.ErrPermission
+		}
+		return fs.ErrNotExist
 	}
-	err = RunCmd("/bin/hoge")
-	if err == nil {
-		t.Error("should be error")
-	}
-}
 
-func TestSymlink(t *testing.T) {
-	tmpDir := os.TempDir()
-	tmp, _ := ioutil.TempFile(tmpDir, "droot_test")
-	defer func() {
-		tmp.Close()
-		os.Remove(tmp.Name())
-	}()
+	tests := []struct {
+		file, path, want string
+		wantErr          bool
+	}{
+		{file: "app", path: "/usr/bin:/usr/local/bin", want: "/usr/local/bin/app"},
+		{file: "sh", path: "/usr/bin:/bin", want: "/usr/bin/sh"},
+		{file: "sh", path: "", want: "/usr/bin/sh"},                                // DefaultPath
+		{file: "app", path: "relative:/usr/local/bin", want: "/usr/local/bin/app"}, // relative dirs ignored
+		{file: "/bin/sh", path: "/nowhere", want: "/bin/sh"},
+		{file: "./app", path: "/usr/local/bin", wantErr: true},
+		{file: "missing", path: "/bin", wantErr: true},
+		{file: "noexec", path: "/opt/bin", wantErr: true},
+	}
+	for _, tt := range tests {
+		got, err := LookPath(tt.file, tt.path, isExec)
+		if tt.wantErr {
+			if err == nil {
+				t.Errorf("LookPath(%q, %q) = %q, want error", tt.file, tt.path, got)
+			}
+			continue
+		}
+		if err != nil || got != tt.want {
+			t.Errorf("LookPath(%q, %q) = %q, %v; want %q", tt.file, tt.path, got, err, tt.want)
+		}
+	}
 
-	err := Symlink(tmp.Name(), tmp.Name()+"/symlink")
-	if err != nil {
-		t.Errorf("should not be error: %v", err)
+	if _, err := LookPath("noexec", "/opt/bin", isExec); !errors.Is(err, fs.ErrPermission) {
+		t.Errorf("want permission error to be reported, got %v", err)
 	}
-	err = Symlink(tmp.Name(), tmp.Name()+"/symlink")
-	if err != nil {
-		t.Errorf("should not be error: %v, Ignore already exist symlink file", err)
-	}
-	os.Create(tmpDir + "/droot_dummy")
-	err = Symlink(tmp.Name(), tmpDir+"/droot_dummy")
-	if err != nil {
-		t.Errorf("should not be error: %v, Ignore already exist file", err)
-	}
-	os.Remove(tmp.Name() + "/symlink")
 }

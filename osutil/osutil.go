@@ -1,128 +1,77 @@
+// Package osutil contains file system and process helpers used by droot.
 package osutil
 
 import (
-	"golang.org/x/sys/unix"
+	"errors"
+	"fmt"
 	"io"
+	"io/fs"
 	"os"
-	"os/exec"
-
-	"github.com/docker/docker/pkg/mount"
+	"path/filepath"
+	"strings"
 
 	"github.com/yuuki/droot/log"
 )
 
-func ExistsFile(file string) bool {
-	f, err := os.Stat(file)
-	return err == nil && !f.IsDir()
+// ExistsFile reports whether path exists and is not a directory.
+func ExistsFile(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && !fi.IsDir()
 }
 
-func IsSymlink(file string) bool {
-	f, err := os.Lstat(file)
-	return err == nil && f.Mode()&os.ModeSymlink == os.ModeSymlink
+// ExistsDir reports whether path exists and is a directory.
+func ExistsDir(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && fi.IsDir()
 }
 
-func ExistsDir(dir string) bool {
-	if f, err := os.Stat(dir); os.IsNotExist(err) || !f.IsDir() {
-		return false
-	}
-	return true
-}
-
+// IsDirEmpty reports whether dir is a readable, empty directory.
 func IsDirEmpty(dir string) bool {
 	f, err := os.Open(dir)
 	if err != nil {
-		log.Debugf("Failed to open %s: %s\n", dir, err)
+		log.Debugf("failed to open %s: %v", dir, err)
 		return false
 	}
 	defer f.Close()
 
 	_, err = f.Readdirnames(1)
-	if err == io.EOF {
-		return true
-	}
-	return false
+	return errors.Is(err, io.EOF)
 }
 
-func RunCmd(name string, arg ...string) error {
-	log.Debug("runcmd: ", name, arg)
-	out, err := exec.Command(name, arg...).CombinedOutput()
-	if len(out) > 0 {
-		log.Debug(string(out))
-	}
-	if err != nil {
-		log.Debugf("Failed to exec %s %s: %s", name, arg, err)
-		return err
-	}
-	return nil
-}
+// DefaultPath is the search path used when the environment has no PATH.
+const DefaultPath = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
-func Cp(from, to string) error {
-	if err := RunCmd("cp", "-p", from, to); err != nil {
-		return err
+// LookPath searches for an executable named file in the directories of
+// pathEnv (a PATH value), using isExecutable to check candidates. Unlike
+// exec.LookPath it does not consult the PATH of the current process, which
+// matters after chroot(2) where the caller's PATH is meaningless.
+// Relative directories in pathEnv are ignored for safety.
+func LookPath(file, pathEnv string, isExecutable func(string) error) (string, error) {
+	if strings.Contains(file, "/") {
+		if err := isExecutable(file); err != nil {
+			return "", &fs.PathError{Op: "exec", Path: file, Err: err}
+		}
+		return file, nil
 	}
-	return nil
-}
-
-func MountIfNotMounted(device, target, mType, options string) error {
-	mounted, err := mount.Mounted(target)
-	if err != nil {
-		return err
+	if pathEnv == "" {
+		pathEnv = DefaultPath
 	}
-
-	if !mounted {
-		log.Debug("mount", device, target, mType, options)
-		if err := mount.Mount(device, target, mType, options); err != nil {
-			return err
+	var firstErr error
+	for _, dir := range filepath.SplitList(pathEnv) {
+		if !filepath.IsAbs(dir) {
+			continue
+		}
+		candidate := filepath.Join(dir, file)
+		err := isExecutable(candidate)
+		if err == nil {
+			return candidate, nil
+		}
+		if firstErr == nil && !errors.Is(err, fs.ErrNotExist) {
+			firstErr = &fs.PathError{Op: "exec", Path: candidate, Err: err}
 		}
 	}
-
-	return nil
-}
-
-func ForceMount(device, target, mType, options string) error {
-	log.Debug("mount", device, target, mType, options)
-	if err := mount.ForceMount(device, target, mType, options); err != nil {
-		return err
+	if firstErr != nil {
+		return "", firstErr
 	}
-
-	return nil
-}
-
-// Mknod unless path does not exists.
-func Mknod(path string, mode uint32, dev int) error {
-	if ExistsFile(path) {
-		return nil
-	}
-
-	log.Debugf("mknod %s %d %d", path, mode, dev)
-	if err := unix.Mknod(path, mode, dev); err != nil {
-		return err
-	}
-	return nil
-}
-
-// Symlink, but ignore already exists file.
-func Symlink(oldname, newname string) error {
-	log.Debug("symlink", oldname, newname)
-	if err := os.Symlink(oldname, newname); err != nil {
-		// Ignore already created symlink
-		if _, ok := err.(*os.LinkError); !ok {
-			log.Debugf("Failed to symlink %s %s: %s", oldname, newname, err)
-			return err
-		}
-	}
-	return nil
-}
-
-func Chroot(rootDir string) error {
-	log.Debug("chroot", rootDir)
-
-	if err := unix.Chroot(rootDir); err != nil {
-		return err
-	}
-	if err := unix.Chdir("/"); err != nil {
-		return err
-	}
-
-	return nil
+	return "", fmt.Errorf("%s: executable file not found in PATH (%s)", file, pathEnv)
 }

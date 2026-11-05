@@ -1,244 +1,302 @@
 package commands
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
-	fp "path/filepath"
+	"os/signal"
+	"path/filepath"
+	"runtime"
 	"strings"
+	"syscall"
 
-	"golang.org/x/sys/unix"
-
-	"github.com/pkg/errors"
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v3"
 
 	"github.com/yuuki/droot/environ"
+	"github.com/yuuki/droot/identity"
 	"github.com/yuuki/droot/log"
 	"github.com/yuuki/droot/mounter"
 	"github.com/yuuki/droot/osutil"
 )
 
-var CommandArgRun = "--root ROOT_DIR [--user USER] [--group GROUP] [--bind SRC-PATH[:DEST-PATH]] [--robind SRC-PATH[:DEST-PATH]] [--no-dropcaps] -- COMMAND"
-var CommandRun = cli.Command{
-	Name:   "run",
-	Usage:  "Run command in container",
-	Action: fatalOnError(doRun),
-	Flags: []cli.Flag{
-		cli.StringFlag{Name: "root, r", Usage: "Root directory path for chrooting"},
-		cli.StringFlag{Name: "user, u", Usage: "User (ID or name) to switch before running the program"},
-		cli.StringFlag{Name: "group, g", Usage: "Group (ID or name) to switch to"},
-		cli.StringSliceFlag{
-			Name:  "bind, b",
-			Value: &cli.StringSlice{},
-			Usage: "Bind mount directory (can be specifies multiple times)",
+func runCommand() *cli.Command {
+	stopAfterCommand := 1 // everything after COMMAND belongs to COMMAND
+	return &cli.Command{
+		Name:      "run",
+		Usage:     "Run a command in a container root directory with chroot(2)",
+		ArgsUsage: "[--] COMMAND [ARG...]",
+		Description: "Mounts /proc, /sys and the requested bind mounts under ROOT_DIR, creates the\n" +
+			"basic device files, chroots into ROOT_DIR, drops capabilities from the\n" +
+			"bounding set, switches to --user/--group and executes COMMAND with the\n" +
+			"environment saved by 'droot export' (/.drootenv) plus --env.\n\n" +
+			"Mounts are left in place after COMMAND exits; remove them with 'droot umount'.\n" +
+			"Must be run as root.",
+		StopOnNthArg: &stopAfterCommand,
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "root", Aliases: []string{"r"}, Usage: "root directory `ROOT_DIR` to chroot into (required)"},
+			&cli.StringFlag{Name: "user", Aliases: []string{"u"}, Usage: "`USER` (name or ID) to run COMMAND as; names are looked up in ROOT_DIR/etc/passwd, then on the host"},
+			&cli.StringFlag{Name: "group", Aliases: []string{"g"}, Usage: "`GROUP` (name or ID) to run COMMAND as (default: the primary group of --user)"},
+			&cli.StringSliceFlag{Name: "bind", Aliases: []string{"b"}, Usage: "bind mount `SRC[:DEST]` from the host into the container (repeatable)"},
+			&cli.StringSliceFlag{Name: "robind", Usage: "read-only bind mount `SRC[:DEST]` (repeatable)"},
+			&cli.BoolFlag{Name: "copy-files", Aliases: []string{"cp"}, Usage: "copy the host's " + strings.Join(hostFiles, ", ") + " into the container"},
+			&cli.BoolFlag{Name: "no-dropcaps", Usage: "do not drop capabilities (dangerous)"},
+			&cli.BoolFlag{Name: "no-new-privileges", Usage: "set no_new_privs: setuid programs and file capabilities cannot grant privileges to COMMAND"},
+			&cli.StringSliceFlag{Name: "env", Aliases: []string{"e"}, Usage: "set environment variable `KEY=VALUE`, overriding /.drootenv (repeatable)"},
 		},
-		cli.StringSliceFlag{
-			Name:  "robind",
-			Value: &cli.StringSlice{},
-			Usage: "Readonly bind mount directory (can be specifies multiple times)",
-		},
-		cli.BoolFlag{
-			Name:  "copy-files, cp",
-			Usage: "Copy host files to container such as /etc/group, /etc/passwd, /etc/resolv.conf, /etc/hosts",
-		},
-		cli.BoolFlag{Name: "no-dropcaps", Usage: "Provide COMMAND's process in chroot with root permission (dangerous)"},
-		cli.StringSliceFlag{
-			Name:  "env, e",
-			Value: &cli.StringSlice{},
-			Usage: "Set environment variables",
-		},
-	},
+		Action: doRun,
+	}
 }
 
-var copyFiles = []string{
-	"etc/group",
-	"etc/passwd",
-	"etc/resolv.conf",
-	"etc/hosts",
-}
+// hostFiles are copied from the host by --copy-files.
+var hostFiles = []string{"/etc/group", "/etc/passwd", "/etc/resolv.conf", "/etc/hosts"}
 
-var keepCaps = map[uint]bool{
+// keepCaps are the capabilities kept in the bounding set unless --no-dropcaps
+// is given. CAP_DAC_READ_SEARCH is deliberately not kept: together with
+// open_by_handle_at(2) it allows reading any file of the host, escaping the
+// chroot (the "shocker" exploit), which is why Docker drops it too.
+var keepCaps = map[uintptr]bool{
 	0:  true, // CAP_CHOWN
 	1:  true, // CAP_DAC_OVERRIDE
-	2:  true, // CAP_DAC_READ_SEARCH
 	3:  true, // CAP_FOWNER
 	6:  true, // CAP_SETGID
 	7:  true, // CAP_SETUID
 	10: true, // CAP_NET_BIND_SERVICE
 }
 
-func doRun(c *cli.Context) error {
-	command := c.Args()
-	if len(command) < 1 {
-		cli.ShowCommandHelp(c, "run")
-		return errors.New("command required")
+// devices are created in ROOT_DIR/dev.
+var devices = []struct {
+	path         string
+	major, minor uint32
+}{
+	{"/dev/null", 1, 3},
+	{"/dev/zero", 1, 5},
+	{"/dev/random", 1, 8},
+	{"/dev/urandom", 1, 9},
+}
+
+type bindMount struct {
+	host, container string
+	readonly        bool
+}
+
+func doRun(ctx context.Context, cmd *cli.Command) error {
+	setup(cmd)
+	if runtime.GOOS != "linux" {
+		return fmt.Errorf("droot run is only supported on Linux (running on %s)", runtime.GOOS)
 	}
 
-	optRootDir := c.String("root")
-	if optRootDir == "" {
-		cli.ShowCommandHelp(c, "run")
-		return errors.New("--root option required")
+	argv := cmd.Args().Slice()
+	if len(argv) == 0 || argv[0] == "" {
+		return usageError(cmd, "a command to run is required")
+	}
+	if cmd.String("root") == "" {
+		return usageError(cmd, "--root is required")
+	}
+	if os.Geteuid() != 0 {
+		return errors.New("droot run must be run as root (it needs to mount, chroot and switch users)")
 	}
 
-	rootDir, err := mounter.ResolveRootDir(optRootDir)
+	rootDir, err := mounter.ResolveRootDir(cmd.String("root"))
 	if err != nil {
 		return err
 	}
 
-	// Check env format KEY=VALUE
-	env := c.StringSlice("env")
-	if len(env) > 0 {
-		for _, e := range env {
-			if len(strings.SplitN(e, "=", 2)) != 2 {
-				return errors.Errorf("Invalid env format: %s", e)
-			}
-		}
+	extraEnv := cmd.StringSlice("env")
+	if err := environ.Validate(extraEnv); err != nil {
+		return err
 	}
 
-	uid, gid := os.Getuid(), os.Getgid()
+	var binds []bindMount
+	for _, spec := range cmd.StringSlice("bind") {
+		b, err := parseBindOption(spec)
+		if err != nil {
+			return err
+		}
+		binds = append(binds, b)
+	}
+	for _, spec := range cmd.StringSlice("robind") {
+		b, err := parseBindOption(spec)
+		if err != nil {
+			return err
+		}
+		b.readonly = true
+		binds = append(binds, b)
+	}
 
-	if group := c.String("group"); group != "" {
-		if gid, err = osutil.LookupGroup(group); err != nil {
+	// Every path inside the container is resolved through this descriptor
+	// so that a process of a previous run cannot redirect droot to the host
+	// file system by swapping directories for symlinks.
+	root, err := osutil.OpenRoot(rootDir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+
+	// Abort between the setup steps if droot is interrupted: the signal
+	// is caught to allow cleanups, so it would otherwise go unnoticed and
+	// COMMAND would be started anyway.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if cmd.Bool("copy-files") {
+		if err := copyHostFiles(root); err != nil {
 			return err
 		}
 	}
-	if user := c.String("user"); user != "" {
-		if uid, err = osutil.LookupUser(user); err != nil {
-			return err
-		}
+
+	cred, err := identity.Resolve(root, cmd.String("user"), cmd.String("group"))
+	if err != nil {
+		return err
 	}
+	log.Debugf("running as uid=%d gid=%d groups=%v", cred.UID, cred.GID, cred.Groups)
 
-	// copy files
-	if c.Bool("copy-files") {
-		for _, f := range copyFiles {
-			srcFile, destFile := fp.Join("/", f), fp.Join(rootDir, f)
-			if err := osutil.Cp(srcFile, destFile); err != nil {
-				return errors.Wrapf(err, "Failed to copy %s", f)
-			}
-			if err := os.Lchown(destFile, uid, gid); err != nil {
-				return errors.Wrapf(err, "Failed to lchown %s", f)
-			}
-		}
+	mnt := mounter.NewMounter(root)
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-
-	mnt := mounter.NewMounter(rootDir)
-
 	if err := mnt.MountSysProc(); err != nil {
 		return err
 	}
-
-	for _, val := range c.StringSlice("bind") {
-		hostDir, containerDir, err := parseBindOption(val)
-		if err != nil {
+	for _, b := range binds {
+		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := mnt.BindMount(hostDir, containerDir); err != nil {
-			return err
-		}
-	}
-	for _, val := range c.StringSlice("robind") {
-		hostDir, containerDir, err := parseBindOption(val)
-		if err != nil {
-			return err
-		}
-		if err := mnt.RoBindMount(hostDir, containerDir); err != nil {
-			return errors.Wrapf(err, "Failed to robind mount %s", val)
+		if err := mnt.BindMount(b.host, b.container, b.readonly); err != nil {
+			return fmt.Errorf("bind mount %s on %s: %w", b.host, b.container, err)
 		}
 	}
 
-	// create symlinks
-	if err := osutil.Symlink("../run/lock", fp.Join(rootDir, "/var/lock")); err != nil {
+	linkVarLock(root)
+
+	if err := createDevices(root); err != nil {
 		return err
 	}
 
-	if err := createDevices(rootDir, uid, gid); err != nil {
-		return err
+	return execInRoot(ctx, rootDir, argv, extraEnv, cred, execOptions{
+		dropCaps:        !cmd.Bool("no-dropcaps"),
+		noNewPrivileges: cmd.Bool("no-new-privileges"),
+	})
+}
+
+// parseBindOption parses SRC[:DEST]. DEST defaults to SRC; both must be
+// absolute paths.
+func parseBindOption(spec string) (bindMount, error) {
+	host, container, _ := strings.Cut(spec, ":")
+	if container == "" {
+		container = host
 	}
+	if !filepath.IsAbs(host) {
+		return bindMount{}, fmt.Errorf("invalid bind mount %q: %s is not an absolute path", spec, host)
+	}
+	if !filepath.IsAbs(container) {
+		return bindMount{}, fmt.Errorf("invalid bind mount %q: %s is not an absolute path", spec, container)
+	}
+	return bindMount{host: filepath.Clean(host), container: filepath.Clean(container)}, nil
+}
+
+func copyHostFiles(root *osutil.Root) error {
+	for _, f := range hostFiles {
+		if err := root.CopyFileIn(f, f); err != nil {
+			return fmt.Errorf("copy %s into the container: %w", f, err)
+		}
+		log.Debugf("copied %s into %s", f, root.Path())
+	}
+	return nil
+}
+
+// linkVarLock creates the /var/lock -> ../run/lock symlink when /var exists
+// and /var/lock does not. Failures are not fatal.
+func linkVarLock(root *osutil.Root) {
+	varDir, err := root.OpenDir("/var", false, nil)
+	if err != nil {
+		return
+	}
+	_ = varDir.Close()
+	if err := root.SymlinkIfMissing("../run/lock", "/var/lock"); err != nil {
+		log.Debugf("cannot create /var/lock: %v", err)
+	}
+}
+
+// createDevices creates the device nodes, owned by root with mode 0666. If
+// /dev is not on the root's own file system (for instance a bind mount of
+// the host's /dev), nothing is created there: droot must not touch host
+// devices.
+func createDevices(root *osutil.Root) error {
+	onRoot := mounter.OnMountOf(root.Fd())
+	for _, d := range devices {
+		err := root.MknodChar(d.path, d.major, d.minor, 0o666, onRoot)
+		if errors.Is(err, mounter.ErrOtherMount) {
+			log.Warnf("not creating device nodes: /dev in the container is a mount point (e.g. a bind mount of the host's /dev)")
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type execOptions struct {
+	dropCaps        bool
+	noNewPrivileges bool
+}
+
+// execInRoot chroots into rootDir, drops privileges and executes argv. It only
+// returns on error.
+func execInRoot(ctx context.Context, rootDir string, argv, extraEnv []string, cred *identity.Credential, opts execOptions) error {
+	// The capability bounding set is a per-thread attribute and execve(2)
+	// uses the calling thread's: stay on this OS thread until exec. The
+	// thread is never unlocked; on error the process exits.
+	runtime.LockOSThread()
 
 	if err := osutil.Chroot(rootDir); err != nil {
-		return fmt.Errorf("Failed to chroot: %s", err)
+		return err
 	}
 
-	if !c.Bool("no-dropcaps") {
-		if err := osutil.DropCapabilities(keepCaps); err != nil {
-			return fmt.Errorf("Failed to drop capabilities: %s", err)
-		}
-	}
-
-	if err := osutil.Setgid(gid); err != nil {
-		return fmt.Errorf("Failed to set group %d: %s", gid, err)
-	}
-	if err := osutil.Setuid(uid); err != nil {
-		return fmt.Errorf("Failed to set user %d: %s", uid, err)
-	}
-
-	if osutil.ExistsFile(environ.DROOT_ENV_FILE_PATH) {
-		envFromFile, err := environ.GetEnvironFromEnvFile(environ.DROOT_ENV_FILE_PATH)
+	env := extraEnv
+	if osutil.ExistsFile(environ.EnvFilePath) {
+		fileEnv, err := environ.ReadEnvFile(environ.EnvFilePath)
 		if err != nil {
-			return fmt.Errorf("Failed to read environ from '%s'", environ.DROOT_ENV_FILE_PATH)
-		}
-		env, err = environ.MergeEnviron(envFromFile, env)
-		if err != nil {
-			return fmt.Errorf("Failed to merge environ: %s", err)
-		}
-	}
-	return osutil.Execv(command[0], command[0:], env)
-}
-
-func parseBindOption(bindOption string) (string, string, error) {
-	var hostDir, containerDir string
-
-	d := strings.SplitN(bindOption, ":", 2)
-	if len(d) < 2 {
-		hostDir = d[0]
-	} else {
-		hostDir, containerDir = d[0], d[1]
-	}
-	if containerDir == "" {
-		containerDir = hostDir
-	}
-
-	if !fp.IsAbs(hostDir) {
-		return hostDir, containerDir, fmt.Errorf("%s is not an absolute path", hostDir)
-	}
-	if !fp.IsAbs(containerDir) {
-		return hostDir, containerDir, fmt.Errorf("%s is not an absolute path", containerDir)
-	}
-
-	return fp.Clean(hostDir), fp.Clean(containerDir), nil
-}
-
-func createDevices(rootDir string, uid, gid int) error {
-	nullDir := fp.Join(rootDir, os.DevNull)
-	if err := osutil.Mknod(nullDir, unix.S_IFCHR|uint32(os.FileMode(0666)), 1*256+3); err != nil {
-		return err
-	}
-
-	if err := os.Lchown(nullDir, uid, gid); err != nil {
-		log.Debugf("Failed to lchown %s: %s\n", nullDir, err)
-		return err
-	}
-
-	zeroDir := fp.Join(rootDir, "/dev/zero")
-	if err := osutil.Mknod(zeroDir, unix.S_IFCHR|uint32(os.FileMode(0666)), 1*256+3); err != nil {
-		return err
-	}
-
-	if err := os.Lchown(zeroDir, uid, gid); err != nil {
-		log.Debugf("Failed to lchown %s: %s\n", zeroDir, err)
-		return err
-	}
-
-	for _, f := range []string{"/dev/random", "/dev/urandom"} {
-		randomDir := fp.Join(rootDir, f)
-		if err := osutil.Mknod(randomDir, unix.S_IFCHR|uint32(os.FileMode(0666)), 1*256+9); err != nil {
 			return err
 		}
-
-		if err := os.Lchown(randomDir, uid, gid); err != nil {
-			log.Debugf("Failed to lchown %s: %s\n", randomDir, err)
+		if env, err = environ.Merge(fileEnv, extraEnv); err != nil {
 			return err
 		}
 	}
 
-	return nil
+	if opts.dropCaps {
+		if err := osutil.DropBoundingCapabilities(keepCaps); err != nil {
+			return fmt.Errorf("drop capabilities: %w", err)
+		}
+		if err := osutil.ClearInheritableCapabilities(); err != nil {
+			return fmt.Errorf("drop capabilities: %w", err)
+		}
+	}
+	if err := osutil.SetCredentials(cred.UID, cred.GID, cred.Groups); err != nil {
+		return err
+	}
+	if opts.noNewPrivileges {
+		if err := osutil.SetNoNewPrivs(); err != nil {
+			return err
+		}
+	}
+
+	// Resolve the command with the container's PATH and the new
+	// credentials, not with the PATH of the (sudo) environment droot was
+	// started from.
+	pathEnv, _ := environ.Lookup(env, "PATH")
+	argv0, err := osutil.LookPath(argv[0], pathEnv, osutil.IsExecutable)
+	if err != nil {
+		return err
+	}
+
+	// From now on, let termination signals act normally (on droot until
+	// the exec, then on COMMAND), and check one last time whether one was
+	// caught during the setup.
+	signal.Reset(os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return osutil.Exec(argv0, argv, env)
 }
