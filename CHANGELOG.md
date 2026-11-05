@@ -25,6 +25,8 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
 - Files copied by `--cp` keep the host's ownership and permissions instead of
   being chowned to `--user`/`--group` (which let the application rewrite
   `/etc/passwd` in the container).
+- `droot umount` no longer unmounts `ROOT_DIR` itself when it is a mount
+  point (e.g. a dedicated file system), only the mounts below it.
 - Device nodes created by `droot run` are owned by root instead of
   `--user`/`--group` (mode 0666 as before), and none are created when `/dev`
   in the container is a mount point.
@@ -89,6 +91,9 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
   and make droot detach a mount of the host. Mount points are now opened
   without following symlinks and unmounted through their descriptor after
   checking their mount ID.
+- `droot umount` exited successfully while leaving mounts behind when they
+  were hidden by another mount; it now retries until nothing is left and
+  fails, listing them, if some cannot be reached.
 - `droot umount --root /a/app` also unmounted `/a/app2/...`, mishandled mount
   points containing spaces, and missed mounts when the root path contained a
   symbolic link.

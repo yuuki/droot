@@ -179,8 +179,9 @@ Notes:
 droot umount --root ROOT_DIR
 ```
 
-Lazily unmounts every mount point at or below `ROOT_DIR`, deepest first. It
-is idempotent and refuses `/`.
+Lazily unmounts every mount point below `ROOT_DIR`, deepest first, and fails
+if some cannot be unmounted. `ROOT_DIR` itself is never unmounted, so it can
+be a file system of its own. The command is idempotent and refuses `/`.
 
 ### Global options
 

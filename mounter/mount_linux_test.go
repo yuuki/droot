@@ -46,7 +46,13 @@ func privilegedDir(t *testing.T) string {
 			t.Errorf("cannot verify mounts before cleanup, leaving %s: %v", dir, err)
 			return
 		}
-		if left := mountpointsUnder(mounts, dir); len(left) > 0 {
+		var left []string
+		for _, mi := range mounts {
+			if isUnder(dir, mi.Mountpoint) {
+				left = append(left, mi.Mountpoint)
+			}
+		}
+		if len(left) > 0 {
 			for _, mp := range left {
 				_ = unix.Unmount(mp, unix.MNT_DETACH)
 			}
@@ -312,6 +318,56 @@ func TestUmountDoesNotFollowSymlinks(t *testing.T) {
 	}
 	if ok, _ := isMountpoint(hostMount); !ok {
 		t.Fatal("a mount outside the root was detached through a symlink")
+	}
+}
+
+func TestUmountAllReportsHiddenMounts(t *testing.T) {
+	dir := privilegedDir(t)
+	root := filepath.Join(dir, "app")
+	cover := filepath.Join(dir, "cover")
+	data := filepath.Join(dir, "data")
+	for _, d := range []string{root, cover, data} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m := newTestMounter(t, root)
+	if err := m.BindMount(data, "/data", false); err != nil {
+		t.Fatal(err)
+	}
+	// Something is mounted over the root itself, hiding <root>/data.
+	if err := unix.Mount(cover, root, "", unix.MS_BIND, ""); err != nil {
+		t.Fatal(err)
+	}
+	coverMounted := true
+	t.Cleanup(func() {
+		if coverMounted {
+			_ = unix.Unmount(root, unix.MNT_DETACH)
+		}
+	})
+
+	r, err := osutil.OpenRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	_, err = NewMounter(r).UmountAll()
+	if err == nil || !strings.Contains(err.Error(), filepath.Join(root, "data")) || !strings.Contains(err.Error(), "is itself a mount point") {
+		t.Fatalf("hidden mounts must be reported, got %v", err)
+	}
+	if ok, _ := isMountpoint(root); !ok {
+		t.Fatal("the root itself must not be unmounted")
+	}
+
+	if err := unix.Unmount(root, unix.MNT_DETACH); err != nil {
+		t.Fatal(err)
+	}
+	coverMounted = false
+	if _, err := m.UmountAll(); err != nil {
+		t.Fatal(err)
+	}
+	if left, _ := m.Mounts(); len(left) != 0 {
+		t.Fatalf("mounts left: %q", left)
 	}
 }
 

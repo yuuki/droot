@@ -82,19 +82,19 @@ func TestUnescape(t *testing.T) {
 	}
 }
 
-func TestMountpointsUnder(t *testing.T) {
+func TestMountpointsBelow(t *testing.T) {
 	mounts, err := ParseMountInfo(strings.NewReader(sampleMountInfo))
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := mountpointsUnder(mounts, "/var/containers/app")
+	got := mountpointsBelow(mounts, "/var/containers/app")
 	want := []string{
 		"/var/containers/app/sys/fs/cgroup",
 		"/var/containers/app/var/log with space", // the later (top) mount first
 		"/var/containers/app/var/log with space",
 		"/var/containers/app/sys",
 		"/var/containers/app/proc",
-		"/var/containers/app", // the root itself is a mount point
+		// not the root itself, although it is a mount point
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("got  %q\nwant %q", got, want)

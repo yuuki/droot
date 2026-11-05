@@ -139,13 +139,13 @@ func isUnder(root, path string) bool {
 	return path == root || strings.HasPrefix(path, root+"/")
 }
 
-// mountsUnder returns the mounts at or below root in the order they must be
-// unmounted: deepest first, and later mounts before earlier ones on the same
-// mount point.
-func mountsUnder(mounts []MountInfo, root string) []MountInfo {
+// mountsBelow returns the mounts strictly below root (not root itself) in
+// the order they must be unmounted: deepest first, and later mounts before
+// earlier ones on the same mount point.
+func mountsBelow(mounts []MountInfo, root string) []MountInfo {
 	var res []MountInfo
 	for i := len(mounts) - 1; i >= 0; i-- {
-		if isUnder(root, mounts[i].Mountpoint) {
+		if mp := mounts[i].Mountpoint; mp != root && isUnder(root, mp) {
 			res = append(res, mounts[i])
 		}
 	}
@@ -155,10 +155,10 @@ func mountsUnder(mounts []MountInfo, root string) []MountInfo {
 	return res
 }
 
-// mountpointsUnder is like mountsUnder but returns only the mount points.
-func mountpointsUnder(mounts []MountInfo, root string) []string {
+// mountpointsBelow is like mountsBelow but returns only the mount points.
+func mountpointsBelow(mounts []MountInfo, root string) []string {
 	var mps []string
-	for _, mi := range mountsUnder(mounts, root) {
+	for _, mi := range mountsBelow(mounts, root) {
 		mps = append(mps, mi.Mountpoint)
 	}
 	return mps

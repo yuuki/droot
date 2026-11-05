@@ -14,8 +14,9 @@ func umountCommand() *cli.Command {
 	return &cli.Command{
 		Name:  "umount",
 		Usage: "Unmount everything mounted under a root directory by 'droot run'",
-		Description: "Lazily unmounts (MNT_DETACH) every mount point at or below ROOT_DIR,\n" +
-			"deepest first. It is safe to run when nothing is mounted.",
+		Description: "Lazily unmounts (MNT_DETACH) every mount point below ROOT_DIR, deepest\n" +
+			"first, and fails if some cannot be unmounted. ROOT_DIR itself is never\n" +
+			"unmounted. It is safe to run when nothing is mounted.",
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "root", Aliases: []string{"r"}, Usage: "root directory `ROOT_DIR` used with 'droot run' (required)"},
 		},

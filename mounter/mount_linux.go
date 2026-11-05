@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -277,41 +278,76 @@ func lockedFlags(stFlags uint64) uintptr {
 	return flags
 }
 
-// Mounts returns the mount points at or below the root, deepest first.
+// Mounts returns the mount points below the root, deepest first.
 func (m *Mounter) Mounts() ([]string, error) {
 	mounts, err := readMountInfo()
 	if err != nil {
 		return nil, err
 	}
-	return mountpointsUnder(mounts, m.rootDir), nil
+	return mountpointsBelow(mounts, m.rootDir), nil
 }
 
-// UmountAll lazily unmounts every mount point at or below the root, deepest
-// first, and returns the mount points it unmounted.
+// maxUmountRounds bounds the rounds of UmountAll in case mounts keep
+// appearing concurrently.
+const maxUmountRounds = 64
+
+// UmountAll lazily unmounts every mount point below the root (not the root
+// itself, which may be a file system of its own), deepest first, and returns
+// the mount points it unmounted. Mount points that cannot be unmounted are
+// reported as an error.
 //
 // Mount points are taken from /proc/self/mountinfo, but unmounting by path
 // would follow symlinks: a process in the container could replace a directory
 // with a symlink to a host directory and make droot detach a host mount. So
 // each mount point is opened from the root without following any symlink,
 // and only unmounted (through its descriptor) if the descriptor belongs to
-// the very mount listed in mountinfo.
+// the very mount listed in mountinfo. Mounts that are hidden by another
+// mount become reachable once that one is gone, hence the rounds.
 func (m *Mounter) UmountAll() ([]string, error) {
-	mounts, err := readMountInfo()
-	if err != nil {
-		return nil, err
-	}
 	var unmounted []string
-	var errs []error
-	for _, mi := range mountsUnder(mounts, m.rootDir) {
-		ok, err := m.umount(mi)
+	for range maxUmountRounds {
+		mounts, err := readMountInfo()
 		if err != nil {
-			errs = append(errs, err)
+			return unmounted, err
 		}
-		if ok {
-			unmounted = append(unmounted, mi.Mountpoint)
+		todo := mountsBelow(mounts, m.rootDir)
+		if len(todo) == 0 {
+			return unmounted, nil
+		}
+
+		progress := false
+		var errs []error
+		for _, mi := range todo {
+			ok, err := m.umount(mi)
+			if err != nil {
+				errs = append(errs, err)
+			}
+			if ok {
+				progress = true
+				unmounted = append(unmounted, mi.Mountpoint)
+			}
+		}
+		if !progress {
+			return unmounted, errors.Join(append(errs, leftoverError(mounts, todo, m.rootDir))...)
 		}
 	}
-	return unmounted, errors.Join(errs...)
+	return unmounted, fmt.Errorf("mounts keep appearing below %s", m.rootDir)
+}
+
+func leftoverError(mounts, left []MountInfo, root string) error {
+	var mps []string
+	for _, mi := range left {
+		if !slices.Contains(mps, mi.Mountpoint) {
+			mps = append(mps, mi.Mountpoint)
+		}
+	}
+	err := fmt.Errorf("%d mount point(s) below %s could not be unmounted: %s", len(mps), root, strings.Join(mps, ", "))
+	for _, mi := range mounts {
+		if mi.Mountpoint == root {
+			return fmt.Errorf("%w (%s is itself a mount point and may hide them: unmount it first, e.g. `umount %s`)", err, root, root)
+		}
+	}
+	return err
 }
 
 // umount unmounts the mount mi if it is still reachable at its mount point

@@ -139,13 +139,17 @@ Nothing is undone when the command exits: the mounts stay until
 
 ## `droot umount`
 
-Reads `/proc/self/mountinfo`, selects the mount points equal to the root or
-below `root + "/"` (so `/var/containers/app2` is not affected by
-`--root /var/containers/app`) and sorts them deepest first. Each mount point
+Reads `/proc/self/mountinfo`, selects the mount points below `root + "/"` (so
+`/var/containers/app2` is not affected by `--root /var/containers/app`, and
+the root itself, which may be a file system of its own, is kept) and sorts
+them deepest first. Each mount point
 is then opened from the root with `osutil.Root` *without following any
 symlink*, and unmounted with `MNT_DETACH` through `/proc/self/fd/N` only if
 the descriptor belongs to the mount listed in mountinfo (same mount ID). A
 process in the container therefore cannot redirect the unmount to a host
 mount by replacing a directory with a symlink. Mount points already
 detached together with their parent are ignored, which makes the command
-idempotent.
+idempotent. A mount hidden by another one becomes reachable once the other
+is gone, so this is repeated until nothing is left; if some mounts cannot be
+reached (e.g. something is mounted over the root itself), the command fails
+and lists them.
