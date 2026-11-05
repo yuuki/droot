@@ -4,6 +4,8 @@ package commands
 import (
 	"context"
 	"fmt"
+	"slices"
+	"strings"
 
 	"github.com/urfave/cli/v3"
 
@@ -53,6 +55,73 @@ func NewApp(version string) *cli.Command {
 		}
 	}
 	return app
+}
+
+// Run runs droot with the command line args (os.Args).
+func Run(ctx context.Context, version string, args []string) error {
+	app := NewApp(version)
+	return app.Run(ctx, prepareArgs(app, args))
+}
+
+// completionFlag is appended by the shell completion scripts.
+const completionFlag = "--generate-shell-completion"
+
+// prepareArgs makes sure everything after COMMAND in `droot run [OPTIONS]
+// COMMAND [ARG...]` reaches COMMAND verbatim. urfave/cli handles a "--"
+// before StopOnNthArg, so `droot run -r R echo -- x` would lose the "--";
+// inserting "--" right before COMMAND avoids that (urfave/cli removes only
+// the first one). For the same reason, a COMMAND ending in the shell
+// completion flag must not be taken as a completion request.
+func prepareArgs(app *cli.Command, args []string) []string {
+	sub := -1
+	for i := 1; i < len(args); i++ {
+		if args[i] == "--" {
+			return args
+		}
+		if !strings.HasPrefix(args[i], "-") {
+			sub = i
+			break
+		}
+	}
+	if sub < 0 || args[sub] != "run" {
+		return args
+	}
+	var run *cli.Command
+	for _, c := range app.Commands {
+		if c.Name == "run" {
+			run = c
+		}
+	}
+	takesValue := map[string]bool{}
+	for _, f := range run.Flags {
+		if _, isBool := f.(*cli.BoolFlag); !isBool {
+			for _, n := range f.Names() {
+				takesValue[n] = true
+			}
+		}
+	}
+
+	dash := -1
+	for j := sub + 1; j < len(args); j++ {
+		a := args[j]
+		if a == "--" {
+			dash = j
+			break
+		}
+		if strings.HasPrefix(a, "-") && len(a) > 1 {
+			if name := strings.TrimLeft(a, "-"); !strings.Contains(name, "=") && takesValue[name] {
+				j++ // skip the value
+			}
+			continue
+		}
+		args = slices.Concat(args[:j:j], []string{"--"}, args[j:])
+		dash = j
+		break
+	}
+	if dash >= 0 && dash < len(args)-1 && args[len(args)-1] == completionFlag {
+		app.EnableShellCompletion = false
+	}
+	return args
 }
 
 // setup applies the global flags. It is called by every subcommand so that

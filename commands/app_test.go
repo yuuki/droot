@@ -44,7 +44,7 @@ func parseRun(t *testing.T, argv ...string) (parsedRun, error) {
 			}
 		}
 	}
-	err := app.Run(context.Background(), append([]string{"droot"}, argv...))
+	err := app.Run(context.Background(), prepareArgs(app, append([]string{"droot"}, argv...)))
 	return got, err
 }
 
@@ -68,6 +68,26 @@ func TestRunFlagParsing(t *testing.T) {
 			name: "without -- parsing stops at the command",
 			argv: []string{"run", "-r", "/c", "ls", "-la"},
 			want: parsedRun{args: []string{"ls", "-la"}, root: "/c"},
+		},
+		{
+			name: "-- after COMMAND is kept (droot 0.7 behavior)",
+			argv: []string{"run", "-r", "/c", "echo", "--", "x"},
+			want: parsedRun{args: []string{"echo", "--", "x"}, root: "/c"},
+		},
+		{
+			name: "-- after COMMAND with a leading --",
+			argv: []string{"run", "--root=/c", "--", "printf", "--", "-n"},
+			want: parsedRun{args: []string{"printf", "--", "-n"}, root: "/c"},
+		},
+		{
+			name: "trailing --",
+			argv: []string{"run", "-e", "A=1", "-r", "/c", "--cp", "echo", "--"},
+			want: parsedRun{args: []string{"echo", "--"}, root: "/c", env: []string{"A=1"}, copyFiles: true},
+		},
+		{
+			name: "COMMAND ending in the shell completion flag",
+			argv: []string{"run", "-r", "/c", "echo", "--generate-shell-completion"},
+			want: parsedRun{args: []string{"echo", "--generate-shell-completion"}, root: "/c"},
 		},
 		{
 			name: "repeatable flags and commas",

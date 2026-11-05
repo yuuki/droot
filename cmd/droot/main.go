@@ -42,7 +42,7 @@ func main() {
 	// by `droot run` still gets the default SIGPIPE behavior.
 	signal.Notify(make(chan os.Signal, 1), syscall.SIGPIPE)
 
-	err := commands.NewApp(getVersion()).Run(ctx, os.Args)
+	err := commands.Run(ctx, getVersion(), os.Args)
 	stop()
 	if err != nil {
 		if ctx.Err() != nil && errors.Is(err, context.Canceled) {
