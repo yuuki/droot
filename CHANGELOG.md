@@ -56,6 +56,12 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
 - `droot run` dropped capabilities and changed credentials on one OS thread
   only and could `exec` from another one, so the command could run with the
   full capability bounding set. The goroutine is now locked to its thread.
+- `droot run` only reduced the capability bounding set, which does not limit
+  inheritable capabilities: when droot was started with a non-empty
+  inheritable set (pam_cap, systemd `CapabilityInheritable=`), the command
+  kept those capabilities as root, and a `--user` gained them by executing a
+  file with `+i` file capabilities. The inheritable and ambient sets are now
+  emptied too.
 - `droot run` created `/dev/zero` with the numbers of `/dev/null` (1:3) and
   `/dev/random` with those of `/dev/urandom` (1:9). Device permissions no longer
   depend on the umask.
@@ -108,6 +114,7 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
   unsupported `ssh://` hosts. Works with Docker Desktop, Colima, OrbStack and
   Podman's Docker-compatible socket.
 - `droot export --platform` to pick a variant of a multi-platform image.
+- `droot run --no-new-privileges` sets the `no_new_privs` flag.
 - Temporary export containers are labeled `io.github.yuuki.droot`.
 - Bind mounting single files with `--bind`/`--robind`.
 - `droot completion bash|zsh|fish`.

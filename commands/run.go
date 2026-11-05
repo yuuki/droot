@@ -38,7 +38,8 @@ func runCommand() *cli.Command {
 			&cli.StringSliceFlag{Name: "bind", Aliases: []string{"b"}, Usage: "bind mount `SRC[:DEST]` from the host into the container (repeatable)"},
 			&cli.StringSliceFlag{Name: "robind", Usage: "read-only bind mount `SRC[:DEST]` (repeatable)"},
 			&cli.BoolFlag{Name: "copy-files", Aliases: []string{"cp"}, Usage: "copy the host's " + strings.Join(hostFiles, ", ") + " into the container"},
-			&cli.BoolFlag{Name: "no-dropcaps", Usage: "do not drop capabilities from the bounding set (dangerous)"},
+			&cli.BoolFlag{Name: "no-dropcaps", Usage: "do not drop capabilities (dangerous)"},
+			&cli.BoolFlag{Name: "no-new-privileges", Usage: "set no_new_privs: setuid programs and file capabilities cannot grant privileges to COMMAND"},
 			&cli.StringSliceFlag{Name: "env", Aliases: []string{"e"}, Usage: "set environment variable `KEY=VALUE`, overriding /.drootenv (repeatable)"},
 		},
 		Action: doRun,
@@ -158,7 +159,10 @@ func doRun(_ context.Context, cmd *cli.Command) error {
 		return err
 	}
 
-	return execInRoot(rootDir, argv, extraEnv, cred, !cmd.Bool("no-dropcaps"))
+	return execInRoot(rootDir, argv, extraEnv, cred, execOptions{
+		dropCaps:        !cmd.Bool("no-dropcaps"),
+		noNewPrivileges: cmd.Bool("no-new-privileges"),
+	})
 }
 
 // parseBindOption parses SRC[:DEST]. DEST defaults to SRC; both must be
@@ -219,9 +223,14 @@ func createDevices(root *osutil.Root) error {
 	return nil
 }
 
+type execOptions struct {
+	dropCaps        bool
+	noNewPrivileges bool
+}
+
 // execInRoot chroots into rootDir, drops privileges and executes argv. It only
 // returns on error.
-func execInRoot(rootDir string, argv, extraEnv []string, cred *identity.Credential, dropCaps bool) error {
+func execInRoot(rootDir string, argv, extraEnv []string, cred *identity.Credential, opts execOptions) error {
 	// The capability bounding set is a per-thread attribute and execve(2)
 	// uses the calling thread's: stay on this OS thread until exec. The
 	// thread is never unlocked; on error the process exits.
@@ -242,13 +251,21 @@ func execInRoot(rootDir string, argv, extraEnv []string, cred *identity.Credenti
 		}
 	}
 
-	if dropCaps {
+	if opts.dropCaps {
 		if err := osutil.DropBoundingCapabilities(keepCaps); err != nil {
+			return fmt.Errorf("drop capabilities: %w", err)
+		}
+		if err := osutil.ClearInheritableCapabilities(); err != nil {
 			return fmt.Errorf("drop capabilities: %w", err)
 		}
 	}
 	if err := osutil.SetCredentials(cred.UID, cred.GID, cred.Groups); err != nil {
 		return err
+	}
+	if opts.noNewPrivileges {
+		if err := osutil.SetNoNewPrivs(); err != nil {
+			return err
+		}
 	}
 
 	// Resolve the command with the container's PATH and the new

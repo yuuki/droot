@@ -17,6 +17,12 @@ func Chroot(string) error { return unsupported("chroot") }
 // DropBoundingCapabilities is only supported on Linux.
 func DropBoundingCapabilities(map[uintptr]bool) error { return unsupported("dropping capabilities") }
 
+// ClearInheritableCapabilities is only supported on Linux.
+func ClearInheritableCapabilities() error { return unsupported("dropping capabilities") }
+
+// SetNoNewPrivs is only supported on Linux.
+func SetNoNewPrivs() error { return unsupported("no_new_privs") }
+
 // SetCredentials is only supported on Linux.
 func SetCredentials(int, int, []int) error { return unsupported("changing credentials") }
 

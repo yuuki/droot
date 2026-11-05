@@ -19,8 +19,9 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
   read-only, mask sensitive `/proc` paths like Docker does
   (`/proc/kcore`, `/proc/sysrq-trigger`, `/proc/sys` read-only, ...), or
   offer a PID namespace.
-- **[security]** No `no_new_privs`, seccomp filter or LSM profile: setuid-root
-  binaries in the image regain the capabilities left in the bounding set.
+- **[security]** No seccomp filter or LSM profile, and `no_new_privs` is
+  opt-in (`--no-new-privileges`): by default setuid-root binaries in the image
+  regain the capabilities left in the bounding set.
 - **[bug]** Mounts are made in the host's mount namespace and persist after
   the command exits; a failure halfway leaves the mounts already made. Users
   must remember `droot umount`, and concurrent runs share mounts.

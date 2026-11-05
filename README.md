@@ -146,7 +146,7 @@ Runs `COMMAND` inside `ROOT_DIR` (an extracted archive). In order, droot:
 2. mounts `proc` on `/proc`, bind mounts the host's `/sys` on `/sys` (as an rslave mount) and performs the `--bind`/`--robind` mounts;
 3. creates `/dev/null`, `/dev/zero`, `/dev/random`, `/dev/urandom` (unless `/dev` is a mount point, e.g. `--bind /dev`) and the `/var/lock -> ../run/lock` symlink;
 4. `chroot`s into `ROOT_DIR`;
-5. drops every capability except `CAP_CHOWN`, `CAP_DAC_OVERRIDE`, `CAP_FOWNER`, `CAP_SETGID`, `CAP_SETUID` and `CAP_NET_BIND_SERVICE` from the bounding set (unless `--no-dropcaps`);
+5. drops every capability except `CAP_CHOWN`, `CAP_DAC_OVERRIDE`, `CAP_FOWNER`, `CAP_SETGID`, `CAP_SETUID` and `CAP_NET_BIND_SERVICE` from the bounding set and empties the inheritable and ambient sets (unless `--no-dropcaps`);
 6. switches to the requested user and groups;
 7. executes `COMMAND` with the environment of `/.drootenv` overridden by `--env`. droot *replaces itself* with `COMMAND`, so the exit status and signals are those of `COMMAND`.
 
@@ -159,7 +159,8 @@ Runs `COMMAND` inside `ROOT_DIR` (an extracted archive). In order, droot:
 | `--robind SRC[:DEST]` | Same as `--bind`, but read-only. Repeatable. |
 | `--cp`, `--copy-files` | Copy the host's `/etc/group`, `/etc/passwd`, `/etc/resolv.conf` and `/etc/hosts` into the container. |
 | `-e`, `--env KEY=VALUE` | Set an environment variable, overriding `/.drootenv`. Repeatable. Commas are not separators. |
-| `--no-dropcaps` | Do not drop capabilities from the bounding set (dangerous). |
+| `--no-dropcaps` | Do not drop capabilities (dangerous). |
+| `--no-new-privileges` | Set the `no_new_privs` flag: setuid programs (`su`, `sudo`, ...) and file capabilities cannot grant privileges to `COMMAND`. Recommended with `--user`. |
 
 Notes:
 

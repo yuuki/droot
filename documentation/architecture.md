@@ -127,8 +127,12 @@ setuid bits are preserved.
 7. `chroot(2)` into the root and `chdir("/")`.
 8. Read `/.drootenv` (now inside the root) and merge `--env` over it.
 9. Drop every capability not in the keep list from the bounding set with
-   `prctl(PR_CAPBSET_DROP)`.
-10. `setgroups`, `setgid`, `setuid` (applied to all threads by the Go runtime).
+   `prctl(PR_CAPBSET_DROP)`, and empty the inheritable and ambient sets: the
+   bounding set does not limit inheritable capabilities, which root keeps
+   across `execve(2)` and which files with `+i` capabilities grant to any
+   user.
+10. `setgroups`, `setgid`, `setuid` (applied to all threads by the Go runtime),
+    then `prctl(PR_SET_NO_NEW_PRIVS)` with `--no-new-privileges`.
 11. Look up the command in the container's `PATH` with `access(X_OK)` checks
     done as the target user, and `execve(2)` it. droot is replaced by the
     command: no droot process remains, and exit codes and signals belong to

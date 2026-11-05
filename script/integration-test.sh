@@ -90,6 +90,13 @@ assert_eq "a bind mounted /dev is left alone" "$(ls -A "$WORK/hostdev")" ""
 assert_eq "read-only bind mount" \
   "$("$DROOT" run --root "$WORK/app" --robind "$WORK/data:/mnt/data" -- sh -c 'cat /mnt/data/file; touch /mnt/data/x 2>/dev/null || echo ro')" \
   "$(printf 'secret\nro')"
+assert_eq "--no-new-privileges" \
+  "$("$DROOT" run --root "$WORK/app" --user app --no-new-privileges -- awk '/^NoNewPrivs/ {print $2}' /proc/self/status)" "1"
+if command -v capsh >/dev/null; then
+  assert_eq "inheritable capabilities of the caller are dropped" \
+    "$(capsh --inh=cap_sys_admin -- -c "\"$DROOT\" run --root \"$WORK/app\" -- awk '/^Cap(Inh|Eff)/ {print \$2}' /proc/self/status" | tr '\n' ' ')" \
+    "0000000000000000 00000000000004cb "
+fi
 set +e
 "$DROOT" run --root "$WORK/app" -- sh -c 'exit 42'
 code=$?

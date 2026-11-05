@@ -17,7 +17,7 @@ running on the host with a different root directory.
 | Capabilities | Bounding set reduced to CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID, NET_BIND_SERVICE | A similar, larger default set |
 | `/proc`, `/sys` | Host's, writable by root | Read-only or masked sensitive paths |
 | Resource limits | None | cgroups |
-| Syscall filtering, no_new_privs | None | seccomp profile, AppArmor/SELinux |
+| Syscall filtering, no_new_privs | `no_new_privs` with `--no-new-privileges` | seccomp profile, AppArmor/SELinux, `no-new-privileges` option |
 
 ## Recommendations
 
@@ -30,7 +30,8 @@ running on the host with a different root directory.
   permissions.
 - Only run **trusted images**. setuid-root programs in the image (`su`,
   `sudo`, `ping`, ...) let an unprivileged user regain the capabilities left in
-  the bounding set. Remove them from production images when possible.
+  the bounding set: use `--no-new-privileges` (or remove them from production
+  images).
 - Prefer `--robind` over `--bind` for data the application does not need to
   write.
 - Do not give the application user write access to `ROOT_DIR` itself. droot
@@ -68,6 +69,9 @@ running on the host with a different root directory.
 - `CAP_SYS_CHROOT`, `CAP_SYS_ADMIN`, `CAP_MKNOD`, `CAP_SYS_PTRACE`, ... are
   dropped from the bounding set, so not even setuid-root programs can regain
   them.
+- The inheritable and ambient capability sets are emptied, so capabilities
+  inherited from the invoking environment (pam_cap, systemd
+  `CapabilityInheritable=`/`AmbientCapabilities=`) do not survive `execve(2)`.
 - The capability bounding set and the credentials are changed on the thread
   that calls `execve(2)` (see [architecture](architecture.md#droot-run)).
 - Supplementary groups are reset to the groups of `--user` in the container,

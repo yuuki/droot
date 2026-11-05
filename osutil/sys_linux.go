@@ -53,6 +53,43 @@ func DropBoundingCapabilities(keep map[uintptr]bool) error {
 	return nil
 }
 
+// ClearInheritableCapabilities empties the inheritable and ambient
+// capability sets of the calling thread. The bounding set only limits what
+// file capabilities and setuid-root programs can grant: capabilities in the
+// inheritable set (e.g. set by pam_cap or systemd's CapabilityInheritable=)
+// survive execve(2) for root regardless of the bounding set, and an
+// unprivileged user gains them by executing a file with +i capabilities.
+//
+// Like DropBoundingCapabilities, it must run on the thread that execs.
+func ClearInheritableCapabilities() error {
+	// PR_CAP_AMBIENT is not supported before Linux 4.3 (EINVAL).
+	if err := unix.Prctl(unix.PR_CAP_AMBIENT, unix.PR_CAP_AMBIENT_CLEAR_ALL, 0, 0, 0); err != nil && !errors.Is(err, unix.EINVAL) {
+		return fmt.Errorf("prctl(PR_CAP_AMBIENT_CLEAR_ALL): %w", err)
+	}
+	hdr := unix.CapUserHeader{Version: unix.LINUX_CAPABILITY_VERSION_3}
+	var data [2]unix.CapUserData
+	if err := unix.Capget(&hdr, &data[0]); err != nil {
+		return fmt.Errorf("capget: %w", err)
+	}
+	if data[0].Inheritable == 0 && data[1].Inheritable == 0 {
+		return nil
+	}
+	data[0].Inheritable, data[1].Inheritable = 0, 0
+	if err := unix.Capset(&hdr, &data[0]); err != nil {
+		return fmt.Errorf("capset: %w", err)
+	}
+	return nil
+}
+
+// SetNoNewPrivs sets the no_new_privs flag: setuid/setgid programs and file
+// capabilities can no longer grant privileges to the programs executed next.
+func SetNoNewPrivs() error {
+	if err := unix.Prctl(unix.PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0); err != nil {
+		return fmt.Errorf("prctl(PR_SET_NO_NEW_PRIVS): %w", err)
+	}
+	return nil
+}
+
 // lastCap returns the highest capability number supported by the kernel.
 func lastCap() (uintptr, error) {
 	// Probe with PR_CAPBSET_READ, which fails with EINVAL past the last
