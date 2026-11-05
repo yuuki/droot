@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"syscall"
 
@@ -40,18 +41,22 @@ func runCommand() *cli.Command {
 				Usage: "user (name or ID) to run COMMAND as; names are looked up in ROOT_DIR/etc/passwd, then on the host"},
 			{Name: "group", Aliases: []string{"g"}, Kind: cli.String, Placeholder: "GROUP", Complete: "group",
 				Usage: "group (name or ID) to run COMMAND as (default: the primary group of --user)"},
-			{Name: "bind", Aliases: []string{"b"}, Kind: cli.Strings, Placeholder: "SRC[:DEST]", Complete: "file",
-				Usage: "bind mount SRC from the host on DEST (default: SRC) in the container"},
-			{Name: "robind", Kind: cli.Strings, Placeholder: "SRC[:DEST]", Complete: "file",
-				Usage: "read-only bind mount"},
+			{Name: "bind", Aliases: []string{"b"}, Kind: cli.Strings, Placeholder: "SRC[:DEST][:OPTS]", Complete: "file",
+				Usage: "bind mount SRC from the host on DEST (default: SRC) in the container; OPTS is a comma-separated list of ro, rw and rbind (recursive)"},
+			{Name: "robind", Kind: cli.Strings, Placeholder: "SRC[:DEST][:OPTS]", Complete: "file",
+				Usage: "read-only bind mount (same as --bind SRC:DEST:ro)"},
 			{Name: "copy-files", Aliases: []string{"cp"}, Kind: cli.Bool,
 				Usage: "copy the host's " + strings.Join(hostFiles, ", ") + " into the container"},
+			{Name: "bind-net-files", Kind: cli.Bool,
+				Usage: "read-only bind mount the host's " + strings.Join(netFiles, " and ") + " into the container, so that COMMAND sees later changes made to them in place (unlike --cp)"},
 			{Name: "no-dropcaps", Kind: cli.Bool,
 				Usage: "do not drop capabilities (dangerous)"},
 			{Name: "no-new-privileges", Kind: cli.Bool,
 				Usage: "set no_new_privs: setuid programs and file capabilities cannot grant privileges to COMMAND"},
-			{Name: "env", Aliases: []string{"e"}, Kind: cli.Strings, Placeholder: "KEY=VALUE",
-				Usage: "set an environment variable, overriding /.drootenv"},
+			{Name: "env", Aliases: []string{"e"}, Kind: cli.Strings, Placeholder: "KEY[=VALUE]",
+				Usage: "set an environment variable, overriding /.drootenv and --env-file; a bare KEY takes its value from droot's own environment"},
+			{Name: "env-file", Kind: cli.Strings, Placeholder: "FILE", Complete: "file",
+				Usage: "read KEY=VALUE lines from the host's FILE, overriding /.drootenv; a bare KEY takes its value from droot's own environment"},
 		},
 		Action: doRun,
 	}
@@ -59,6 +64,9 @@ func runCommand() *cli.Command {
 
 // hostFiles are copied from the host by --copy-files.
 var hostFiles = []string{"/etc/group", "/etc/passwd", "/etc/resolv.conf", "/etc/hosts"}
+
+// netFiles are bind mounted from the host by --bind-net-files.
+var netFiles = []string{"/etc/resolv.conf", "/etc/hosts"}
 
 // keepCaps are the capabilities kept in the bounding set unless --no-dropcaps
 // is given. CAP_DAC_READ_SEARCH is deliberately not kept: together with
@@ -86,7 +94,7 @@ var devices = []struct {
 
 type bindMount struct {
 	host, container string
-	readonly        bool
+	opts            mounter.BindOptions
 }
 
 func doRun(ctx context.Context, cmd *cli.Invocation) error {
@@ -111,27 +119,42 @@ func doRun(ctx context.Context, cmd *cli.Invocation) error {
 		return err
 	}
 
-	extraEnv := cmd.Strings("env")
+	// The environment given on the command line, in increasing order of
+	// precedence: --env-file, then --env. Files and values are read on the
+	// host, before the chroot.
+	var extraEnv []string
+	for _, file := range cmd.Strings("env-file") {
+		env, err := environ.ReadEnvFileFrom(file, os.LookupEnv)
+		if err != nil {
+			return fmt.Errorf("--env-file: %w", err)
+		}
+		extraEnv = append(extraEnv, env...)
+	}
+	cliEnv, err := environ.ExpandBare(cmd.Strings("env"), os.LookupEnv)
+	if err != nil {
+		return err
+	}
+	extraEnv = append(extraEnv, cliEnv...)
 	if err := environ.Validate(extraEnv); err != nil {
 		return err
 	}
 
 	var binds []bindMount
 	for _, spec := range cmd.Strings("bind") {
-		b, err := parseBindOption(spec)
+		b, err := parseBindOption(spec, false)
 		if err != nil {
 			return err
 		}
 		binds = append(binds, b)
 	}
 	for _, spec := range cmd.Strings("robind") {
-		b, err := parseBindOption(spec)
+		b, err := parseBindOption(spec, true)
 		if err != nil {
 			return err
 		}
-		b.readonly = true
 		binds = append(binds, b)
 	}
+	bindNetFiles := cmd.Bool("bind-net-files")
 
 	// Every path inside the container is resolved through this descriptor
 	// so that a process of a previous run cannot redirect droot to the host
@@ -149,7 +172,11 @@ func doRun(ctx context.Context, cmd *cli.Invocation) error {
 		return err
 	}
 	if cmd.Bool("copy-files") {
-		if err := copyHostFiles(root); err != nil {
+		files := hostFiles
+		if bindNetFiles {
+			files = slices.DeleteFunc(slices.Clone(files), func(f string) bool { return slices.Contains(netFiles, f) })
+		}
+		if err := copyHostFiles(root, files); err != nil {
 			return err
 		}
 	}
@@ -171,8 +198,17 @@ func doRun(ctx context.Context, cmd *cli.Invocation) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := mnt.BindMount(b.host, b.container, b.readonly); err != nil {
+		if err := mnt.BindMount(b.host, b.container, b.opts); err != nil {
 			return fmt.Errorf("bind mount %s on %s: %w", b.host, b.container, err)
+		}
+	}
+	if bindNetFiles {
+		for _, f := range netFiles {
+			// Replace the mount of a previous run: the host may have
+			// replaced the file since (e.g. with rename(2)).
+			if err := mnt.BindMount(f, f, mounter.BindOptions{ReadOnly: true, Replace: true}); err != nil {
+				return fmt.Errorf("bind mount %s: %w", f, err)
+			}
 		}
 	}
 
@@ -188,10 +224,21 @@ func doRun(ctx context.Context, cmd *cli.Invocation) error {
 	})
 }
 
-// parseBindOption parses SRC[:DEST]. DEST defaults to SRC; both must be
-// absolute paths.
-func parseBindOption(spec string) (bindMount, error) {
+// bindOptions are the options accepted after SRC:DEST.
+var bindOptions = []string{"ro", "rw", "rbind"}
+
+// parseBindOption parses SRC[:DEST][:OPTS]. DEST defaults to SRC; both must
+// be absolute paths. OPTS is a comma-separated list of bindOptions. The last
+// part is only taken as OPTS if every item is a known option, so that a DEST
+// containing ':' (accepted by droot <= 0.7) keeps working, e.g. /a:/b:c.
+func parseBindOption(spec string, readonly bool) (bindMount, error) {
 	host, container, _ := strings.Cut(spec, ":")
+	var opts string
+	if i := strings.LastIndex(container, ":"); i >= 0 && isBindOptions(container[i+1:]) {
+		container, opts = container[:i], container[i+1:]
+	} else if isBindOptions(container) {
+		container, opts = "", container // SRC:OPTS
+	}
 	if container == "" {
 		container = host
 	}
@@ -201,11 +248,43 @@ func parseBindOption(spec string) (bindMount, error) {
 	if !filepath.IsAbs(container) {
 		return bindMount{}, fmt.Errorf("invalid bind mount %q: %s is not an absolute path", spec, container)
 	}
-	return bindMount{host: filepath.Clean(host), container: filepath.Clean(container)}, nil
+	b := bindMount{host: filepath.Clean(host), container: filepath.Clean(container), opts: mounter.BindOptions{ReadOnly: readonly}}
+	var ro, rw bool
+	for o := range strings.SplitSeq(opts, ",") {
+		switch o {
+		case "ro":
+			ro = true
+		case "rw":
+			rw = true
+		case "rbind":
+			b.opts.Recursive = true
+		}
+	}
+	switch {
+	case ro && rw:
+		return bindMount{}, fmt.Errorf("invalid bind mount %q: both ro and rw", spec)
+	case rw && readonly:
+		return bindMount{}, fmt.Errorf("invalid bind mount %q: --robind is read-only", spec)
+	case ro:
+		b.opts.ReadOnly = true
+	}
+	return b, nil
 }
 
-func copyHostFiles(root *osutil.Root) error {
-	for _, f := range hostFiles {
+func isBindOptions(s string) bool {
+	if s == "" {
+		return false
+	}
+	for o := range strings.SplitSeq(s, ",") {
+		if !slices.Contains(bindOptions, o) {
+			return false
+		}
+	}
+	return true
+}
+
+func copyHostFiles(root *osutil.Root, files []string) error {
+	for _, f := range files {
 		if err := root.CopyFileIn(f, f); err != nil {
 			return fmt.Errorf("copy %s into the container: %w", f, err)
 		}

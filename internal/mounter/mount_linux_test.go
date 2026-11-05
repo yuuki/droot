@@ -123,19 +123,19 @@ func TestMounterLifecycle(t *testing.T) {
 	if err := m.MountSysProc(); err != nil { // idempotent
 		t.Fatal(err)
 	}
-	if err := m.BindMount(hostData, "/data", false); err != nil {
+	if err := m.BindMount(hostData, "/data", BindOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.BindMount(hostData, "/ro/data", true); err != nil {
+	if err := m.BindMount(hostData, "/ro/data", BindOptions{ReadOnly: true}); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.BindMount(hostEmpty, "/empty", false); err != nil {
+	if err := m.BindMount(hostEmpty, "/empty", BindOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.BindMount(hostFile, "/etc/app/config.yml", true); err != nil {
+	if err := m.BindMount(hostFile, "/etc/app/config.yml", BindOptions{ReadOnly: true}); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.BindMount(hostData, "/evil/escaped", false); err != nil {
+	if err := m.BindMount(hostData, "/evil/escaped", BindOptions{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -222,7 +222,7 @@ func TestBindMountRefusesDangerousTargets(t *testing.T) {
 		"/toroot":     osutil.ErrIsRoot.Error(),
 		"/":           osutil.ErrIsRoot.Error(),
 	} {
-		err := m.BindMount(host, target, false)
+		err := m.BindMount(host, target, BindOptions{})
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("BindMount(%s) = %v, want an error mentioning %q", target, err, want)
 		}
@@ -260,10 +260,10 @@ func TestBindMountsDoNotPropagateToTheHost(t *testing.T) {
 	}
 
 	m := newTestMounter(t, root)
-	if err := m.BindMount(hostApp, "/app", false); err != nil {
+	if err := m.BindMount(hostApp, "/app", BindOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.BindMount(secret, "/app/secrets", true); err != nil {
+	if err := m.BindMount(secret, "/app/secrets", BindOptions{ReadOnly: true}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -332,7 +332,7 @@ func TestUmountAllReportsHiddenMounts(t *testing.T) {
 		}
 	}
 	m := newTestMounter(t, root)
-	if err := m.BindMount(data, "/data", false); err != nil {
+	if err := m.BindMount(data, "/data", BindOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	// Something is mounted over the root itself, hiding <root>/data.
@@ -392,7 +392,7 @@ func TestRemountReadonlyKeepsFlags(t *testing.T) {
 	}
 	defer r.Close()
 	m := NewMounter(r)
-	if err := m.BindMount(src, "/dst", true); err != nil {
+	if err := m.BindMount(src, "/dst", BindOptions{ReadOnly: true}); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = unix.Unmount(dst, unix.MNT_DETACH) })
@@ -405,5 +405,126 @@ func TestRemountReadonlyKeepsFlags(t *testing.T) {
 		if uint64(st.Flags)&flag == 0 {
 			t.Errorf("read-only bind mount lost the %s flag", name)
 		}
+	}
+}
+
+func isReadOnly(t *testing.T, path string) bool {
+	t.Helper()
+	var st unix.Statfs_t
+	if err := unix.Statfs(path, &st); err != nil {
+		t.Fatal(err)
+	}
+	return uint64(st.Flags)&unix.ST_RDONLY != 0
+}
+
+func TestBindMountRecursiveReadOnly(t *testing.T) {
+	for _, fallback := range []bool{false, true} {
+		t.Run(map[bool]string{false: "mount_setattr", true: "fallback"}[fallback], func(t *testing.T) {
+			if fallback {
+				orig := mountSetattr
+				mountSetattr = func(int, string, uint, *unix.MountAttr) error { return unix.ENOSYS }
+				t.Cleanup(func() { mountSetattr = orig })
+			}
+			dir := privilegedDir(t)
+			src := filepath.Join(dir, "src")
+			sub := filepath.Join(src, "sub")
+			if err := os.MkdirAll(sub, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := unix.Mount("tmpfs", sub, "tmpfs", unix.MS_NOSUID, "size=1m"); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = unix.Unmount(sub, unix.MNT_DETACH) })
+			root := filepath.Join(dir, "root")
+			if err := os.Mkdir(root, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			r, err := osutil.OpenRoot(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer r.Close()
+			m := NewMounter(r)
+			if err := m.BindMount(src, "/dst", BindOptions{ReadOnly: true, Recursive: true}); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = unix.Unmount(filepath.Join(root, "dst"), unix.MNT_DETACH) })
+
+			if !isReadOnly(t, filepath.Join(root, "dst")) || !isReadOnly(t, filepath.Join(root, "dst", "sub")) {
+				t.Error("the bind mount and its submount must be read-only")
+			}
+			if isReadOnly(t, sub) || isReadOnly(t, src) {
+				t.Error("the host's mounts must stay writable")
+			}
+			if fallback {
+				var st unix.Statfs_t
+				if err := unix.Statfs(filepath.Join(root, "dst", "sub"), &st); err != nil || uint64(st.Flags)&unix.ST_NOSUID == 0 {
+					t.Errorf("the submount lost its nosuid flag: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestBindMountReplace(t *testing.T) {
+	dir := privilegedDir(t)
+	host := filepath.Join(dir, "resolv.conf")
+	if err := os.WriteFile(host, []byte("old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(dir, "root")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r, err := osutil.OpenRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	m := NewMounter(r)
+	target := filepath.Join(root, "etc", "resolv.conf")
+	t.Cleanup(func() {
+		for range 3 {
+			_ = unix.Unmount(target, unix.MNT_DETACH)
+		}
+	})
+	read := func() string {
+		b, err := os.ReadFile(target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+
+	opts := BindOptions{ReadOnly: true, Replace: true}
+	if err := m.BindMount(host, "/etc/resolv.conf", opts); err != nil {
+		t.Fatal(err)
+	}
+	// Replace the host file like resolvconf does: write and rename.
+	tmp := host + ".new"
+	if err := os.WriteFile(tmp, []byte("new\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(tmp, host); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(); got != "old\n" {
+		t.Fatalf("a file bind mount keeps the old inode, got %q", got)
+	}
+	if err := m.BindMount(host, "/etc/resolv.conf", BindOptions{ReadOnly: true}); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(); got != "old\n" {
+		t.Fatalf("without Replace the existing mount is reused, got %q", got)
+	}
+	if err := m.BindMount(host, "/etc/resolv.conf", opts); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(); got != "new\n" {
+		t.Fatalf("Replace must bind the current file, got %q", got)
+	}
+	mounts, err := m.Mounts()
+	if err != nil || len(mounts) != 1 {
+		t.Fatalf("want exactly one mount below the root, got %q, %v", mounts, err)
 	}
 }

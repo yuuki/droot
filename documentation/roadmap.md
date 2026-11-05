@@ -37,9 +37,6 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
   `/dev/std{in,out,err}` are missing, and `/tmp`/`/run` are not tmpfs.
 - **[ux]** Inherited behavior whose purpose is unclear: `--bind` creates a
   `.droot.keep` file in empty host directories. Decide whether to keep it.
-- **[compat]** `--cp` copies snapshots of the host files: later changes to the
-  host's `/etc/resolv.conf` or `/etc/hosts` are not reflected (a bind mount
-  would be live).
 - **[compat]** `droot run` needs real root; rootless operation with user
   namespaces is not supported.
 - **[ux]** Two concurrent `droot run` on the same root race on `--cp` copies
@@ -78,16 +75,13 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
 - **[feature]** Save the image config (`Entrypoint`, `Cmd`, `WorkingDir`,
   `User`, `StopSignal`) as `/.droot/config.json` at export time and use it as
   defaults in `droot run` (so `droot run --root DIR` alone works).
-- **[feature]** `--workdir`/`-w`, `--env-file`, `--env KEY` (take the value from
-  droot's environment), automatic `HOME`/`USER`.
+- **[feature]** `--workdir`/`-w`, automatic `HOME`/`USER`.
 - **[feature]** `--no-new-privileges`, `--cap-add`/`--cap-drop`, an optional
   seccomp profile, `--read-only` root.
 - **[feature]** `--tmpfs PATH`, `/dev/shm`, `/dev/pts` and the other common
   devices and symlinks.
-- **[feature]** Docker-style bind options: `--bind SRC:DEST:ro`, recursive binds,
-  propagation modes.
-- **[feature]** Live `/etc/resolv.conf`/`/etc/hosts` via bind mounts as an
-  alternative to `--cp`.
+- **[feature]** Bind propagation modes (`shared`, `private`, ...); droot makes
+  every mount a slave mount today.
 - **[feature]** Resource limits: `--ulimit`, cgroup v2 (`--memory`, `--cpus`,
   `--pids-limit`), or documented `systemd-run --scope` integration.
 - **[feature]** `droot status --root DIR` (mounts and processes using a root)

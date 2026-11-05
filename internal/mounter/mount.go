@@ -29,6 +29,18 @@ func NewMounter(root *osutil.Root) *Mounter {
 	return &Mounter{rootDir: root.Path(), root: root}
 }
 
+// BindOptions are the options of BindMount.
+type BindOptions struct {
+	// ReadOnly makes the mount read-only (with Recursive, every submount
+	// too).
+	ReadOnly bool
+	// Recursive also binds the mounts below hostPath (MS_REC).
+	Recursive bool
+	// Replace unmounts what is already mounted on the target instead of
+	// reusing it, so that the current hostPath is bound.
+	Replace bool
+}
+
 // RootDir returns the container root directory.
 func (m *Mounter) RootDir() string { return m.rootDir }
 

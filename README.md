@@ -170,22 +170,24 @@ droot run --root ROOT_DIR [OPTIONS] [--] COMMAND [ARG...]
 Runs `COMMAND` inside `ROOT_DIR` (an extracted archive). In order, droot:
 
 1. optionally copies the host's `/etc/group`, `/etc/passwd`, `/etc/resolv.conf` and `/etc/hosts` into `ROOT_DIR` (`--cp`);
-2. mounts `proc` on `/proc`, bind mounts the host's `/sys` on `/sys` (as an rslave mount) and performs the `--bind`/`--robind` mounts;
+2. mounts `proc` on `/proc`, bind mounts the host's `/sys` on `/sys` (as an rslave mount) and performs the `--bind`/`--robind`/`--bind-net-files` mounts;
 3. creates `/dev/null`, `/dev/zero`, `/dev/random`, `/dev/urandom` (unless `/dev` is a mount point, e.g. `--bind /dev`) and the `/var/lock -> ../run/lock` symlink;
 4. `chroot`s into `ROOT_DIR`;
 5. drops every capability except `CAP_CHOWN`, `CAP_DAC_OVERRIDE`, `CAP_FOWNER`, `CAP_SETGID`, `CAP_SETUID` and `CAP_NET_BIND_SERVICE` from the bounding set and empties the inheritable and ambient sets (unless `--no-dropcaps`);
 6. switches to the requested user and groups;
-7. executes `COMMAND` with the environment of `/.drootenv` overridden by `--env`. droot *replaces itself* with `COMMAND`, so the exit status and signals are those of `COMMAND`.
+7. executes `COMMAND` with the environment of `/.drootenv` overridden by `--env-file`, then by `--env`. droot *replaces itself* with `COMMAND`, so the exit status and signals are those of `COMMAND`.
 
 | Option | Description |
 |---|---|
 | `-r`, `--root ROOT_DIR` | Root directory to chroot into (required). |
 | `-u`, `--user USER` | User name or ID to run as. Names are looked up in `ROOT_DIR/etc/passwd` first, then on the host (`/etc/passwd`, then `getent passwd` for users served by NSS such as LDAP or SSSD), so the image decides what a name maps to (droot warns when a name other than `root` maps to uid 0); numeric IDs do not depend on the image. Unknown numeric IDs are accepted. |
 | `-g`, `--group GROUP` | Group name or ID to run as, looked up like `--user` (`ROOT_DIR/etc/group`, the host's `/etc/group`, `getent group`). Defaults to the primary group of `--user`; for a numeric `--user` without an entry in `ROOT_DIR/etc/passwd`, to droot's own group (usually 0, with a warning), like Docker. |
-| `-b`, `--bind SRC[:DEST]` | Bind mount the host's `SRC` (directory or file) on `DEST` (default: `SRC`) in the container. Repeatable. |
-| `--robind SRC[:DEST]` | Same as `--bind`, but read-only. Repeatable. |
+| `-b`, `--bind SRC[:DEST][:OPTS]` | Bind mount the host's `SRC` (directory or file) on `DEST` (default: `SRC`) in the container. `OPTS` is a comma-separated list of `ro` (read-only), `rw` (the default) and `rbind` (also bind the mounts below `SRC`; with `ro`, they are all read-only), as in `--bind /srv/data:/data:ro` or `--bind /srv:rbind`. A last part that is not such a list belongs to `DEST` (`--bind /a:/b:c` mounts on `/b:c`). Repeatable. |
+| `--robind SRC[:DEST][:OPTS]` | Same as `--bind SRC:DEST:ro`. Repeatable. |
 | `--cp`, `--copy-files` | Copy the host's `/etc/group`, `/etc/passwd`, `/etc/resolv.conf` and `/etc/hosts` into the container. |
-| `-e`, `--env KEY=VALUE` | Set an environment variable, overriding `/.drootenv`. Repeatable. Commas are not separators. |
+| `--bind-net-files` | Bind mount the host's `/etc/resolv.conf` and `/etc/hosts` read-only on the same paths in the container, so that `COMMAND` sees later changes to them (e.g. after a DHCP renewal) instead of the snapshot copied by `--cp`. Each run binds the current files afresh; note that a file bind mount follows changes made *in place*: a host file replaced with `rename(2)` while `COMMAND` runs (some DHCP clients, `resolvconf`) is only seen by the next run. With `--cp`, only `/etc/group` and `/etc/passwd` are copied. |
+| `-e`, `--env KEY[=VALUE]` | Set an environment variable, overriding `/.drootenv` and `--env-file`. A bare `KEY` takes its value from droot's own environment and is left out if unset, like `docker run -e KEY` (under `sudo`, keep it with `sudo --preserve-env=KEY`). Repeatable. Commas are not separators. |
+| `--env-file FILE` | Read environment variables from the host's `FILE`: `KEY=VALUE` lines (the format of `/.drootenv`; `#` starts a comment line) and bare `KEY` lines, taken from droot's environment. Overrides `/.drootenv`; later files override earlier ones. Repeatable. |
 | `--no-dropcaps` | Do not drop capabilities (dangerous). |
 | `--no-new-privileges` | Set the `no_new_privs` flag: setuid programs (`su`, `sudo`, ...) and file capabilities cannot grant privileges to `COMMAND`. Recommended with `--user`. |
 

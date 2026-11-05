@@ -38,6 +38,18 @@ func ReadEnvFile(path string) ([]string, error) {
 // lines without '=' or with an empty key are ignored. Everything after the
 // first '=' is the value, so values may themselves contain '='.
 func ParseEnv(r io.Reader) ([]string, error) {
+	return parse(r, nil)
+}
+
+// ParseEnvFile parses a file given to `droot run --env-file`: the format
+// of ParseEnv, plus lines holding a bare KEY, which take their value from
+// lookup (droot's own environment) and are left out when lookup does not
+// find them, like Docker's --env-file.
+func ParseEnvFile(r io.Reader, lookup func(string) (string, bool)) ([]string, error) {
+	return parse(r, lookup)
+}
+
+func parse(r io.Reader, lookup func(string) (string, bool)) ([]string, error) {
 	var env []string
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), maxLineSize)
@@ -49,6 +61,12 @@ func ParseEnv(r io.Reader) ([]string, error) {
 		}
 		key, value, ok := strings.Cut(line, "=")
 		key = strings.TrimSpace(key)
+		if !ok && lookup != nil {
+			if v, found := lookup(key); found {
+				env = append(env, key+"="+v)
+			}
+			continue
+		}
 		if !ok || key == "" {
 			continue
 		}
@@ -58,6 +76,40 @@ func ParseEnv(r io.Reader) ([]string, error) {
 		return nil, err
 	}
 	return env, nil
+}
+
+// ReadEnvFileFrom reads a file given to `droot run --env-file` (see
+// ParseEnvFile).
+func ReadEnvFileFrom(path string, lookup func(string) (string, bool)) ([]string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	env, err := ParseEnvFile(f, lookup)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", path, err)
+	}
+	return env, nil
+}
+
+// ExpandBare replaces the items of env that are a bare KEY (without '=')
+// with KEY=VALUE, VALUE coming from lookup, and leaves them out when lookup
+// does not find them, like `docker run -e KEY`. An empty key is an error.
+func ExpandBare(env []string, lookup func(string) (string, bool)) ([]string, error) {
+	out := make([]string, 0, len(env))
+	for _, e := range env {
+		k, _, ok := strings.Cut(e, "=")
+		if k == "" {
+			return nil, fmt.Errorf("invalid environment variable %q: must be KEY=VALUE or KEY", e)
+		}
+		if ok {
+			out = append(out, e)
+		} else if v, found := lookup(k); found {
+			out = append(out, k+"="+v)
+		}
+	}
+	return out, nil
 }
 
 // Validate returns an error unless every item of env is in KEY=VALUE format

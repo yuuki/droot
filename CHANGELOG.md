@@ -186,6 +186,12 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
   Podman's Docker-compatible socket.
 - `droot export --platform` to pick a variant of a multi-platform image.
 - `droot run --no-new-privileges` sets the `no_new_privs` flag.
+- `droot run --env-file FILE` and `--env KEY` (without a value, taking it from
+  droot's environment), like `docker run`.
+- `droot run --bind SRC:DEST:OPTS` with the options `ro`, `rw` and `rbind`
+  (recursive bind mount; read-only recursively with `ro`).
+- `droot run --bind-net-files` bind mounts the host's `/etc/resolv.conf` and
+  `/etc/hosts` read-only, as a live alternative to the copies of `--cp`.
 - A warning when `--user NAME` maps to uid 0 in the image.
 - Temporary export containers are labeled `io.github.yuuki.droot`.
 - Bind mounting single files with `--bind`/`--robind`.

@@ -146,3 +146,42 @@ func TestLookup(t *testing.T) {
 		t.Fatal("Lookup(MISSING) should not be found")
 	}
 }
+
+func TestParseEnvFile(t *testing.T) {
+	lookup := func(k string) (string, bool) {
+		v, ok := map[string]string{"FROM_HOST": "h=1", "EMPTY": ""}[k]
+		return v, ok
+	}
+	in := "# comment\nA=1\n  FROM_HOST  \nMISSING\nEMPTY\nB= spaced \n=novalue\n\n"
+	got, err := ParseEnvFile(strings.NewReader(in), lookup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"A=1", "FROM_HOST=h=1", "EMPTY=", "B= spaced "}
+	if !slices.Equal(got, want) {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	// /.drootenv keeps ignoring bare keys.
+	got, err = ParseEnv(strings.NewReader(in))
+	if err != nil || !slices.Equal(got, []string{"A=1", "B= spaced "}) {
+		t.Fatalf("ParseEnv: %q, %v", got, err)
+	}
+}
+
+func TestExpandBare(t *testing.T) {
+	lookup := func(k string) (string, bool) {
+		if k == "SET" {
+			return "v", true
+		}
+		return "", false
+	}
+	got, err := ExpandBare([]string{"A=1", "SET", "UNSET", "B="}, lookup)
+	if err != nil || !slices.Equal(got, []string{"A=1", "SET=v", "B="}) {
+		t.Fatalf("got %q, %v", got, err)
+	}
+	for _, bad := range []string{"", "=x"} {
+		if _, err := ExpandBare([]string{bad}, lookup); err == nil {
+			t.Errorf("%q should be refused", bad)
+		}
+	}
+}

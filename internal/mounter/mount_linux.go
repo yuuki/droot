@@ -118,20 +118,46 @@ func mount(source, target, fstype string, flags uintptr, data string) error {
 }
 
 // mountOn mounts on the target unless something is already mounted there
-// and returns a descriptor of the (new or existing) mount.
+// and returns a descriptor of the (new or existing) mount. With replace, an
+// existing mount is unmounted first, so that the mount is made afresh.
 //
 // The mount is made a slave mount: a bind mount of a directory living on a
 // shared mount (the default for / on systemd hosts) would otherwise join the
 // host's peer group, and the mounts made under it in the container (e.g. a
 // read-only bind inside a read-write one) would propagate back to the host's
 // directory — without the read-only flag, which does not propagate.
-func mountOn(t *osutil.MountTarget, source, fstype string, flags uintptr) (*os.File, error) {
-	mounted, err := isMountRoot(t.ParentFd(), int(t.File.Fd()))
+func mountOn(t *osutil.MountTarget, source, fstype string, flags uintptr, replace bool) (*os.File, error) {
+	target := t.File
+	mounted, err := isMountRoot(t.ParentFd(), int(target.Fd()))
 	if err != nil {
 		return nil, err
 	}
+	for i := 0; mounted && replace; i++ {
+		if i == maxUmountRounds {
+			return nil, fmt.Errorf("mounts keep appearing on %s", t.File.Name())
+		}
+		// The descriptor refers to the top-most mount on the target.
+		if err := unix.Unmount(osutil.FdPath(int(target.Fd())), unix.MNT_DETACH); err != nil {
+			return nil, &fs.PathError{Op: "umount", Path: t.File.Name(), Err: err}
+		}
+		log.Debugf("umount %s (to mount it afresh)", t.File.Name())
+		f, err := t.Reopen()
+		if err != nil {
+			return nil, err
+		}
+		if target != t.File {
+			_ = target.Close()
+		}
+		target = f
+		if mounted, err = isMountRoot(t.ParentFd(), int(target.Fd())); err != nil {
+			return nil, err
+		}
+	}
+	if target != t.File {
+		defer target.Close()
+	}
 	if !mounted {
-		if err := mount(source, osutil.FdPath(int(t.File.Fd())), fstype, flags, ""); err != nil {
+		if err := mount(source, osutil.FdPath(int(target.Fd())), fstype, flags, ""); err != nil {
 			return nil, fmt.Errorf("mount %s on %s: %w", source, t.File.Name(), err)
 		}
 	}
@@ -196,7 +222,7 @@ func (m *Mounter) MountSysProc() error {
 		return err
 	}
 	defer proc.Close()
-	p, err := mountOn(proc, "proc", "proc", unix.MS_NOSUID|unix.MS_NODEV|unix.MS_NOEXEC)
+	p, err := mountOn(proc, "proc", "proc", unix.MS_NOSUID|unix.MS_NODEV|unix.MS_NOEXEC, false)
 	if err != nil {
 		return err
 	}
@@ -207,7 +233,7 @@ func (m *Mounter) MountSysProc() error {
 		return err
 	}
 	defer sys.Close()
-	s, err := mountOn(sys, "/sys", "", unix.MS_BIND|unix.MS_REC) // made an rslave mount
+	s, err := mountOn(sys, "/sys", "", unix.MS_BIND|unix.MS_REC, false) // made an rslave mount
 	if err != nil {
 		return err
 	}
@@ -215,9 +241,9 @@ func (m *Mounter) MountSysProc() error {
 }
 
 // BindMount bind mounts hostPath (a directory or a file) on containerPath
-// inside the root, read-only if readonly is set. The mount point is created
-// if needed; an existing mount is reused.
-func (m *Mounter) BindMount(hostPath, containerPath string, readonly bool) error {
+// inside the root. The mount point is created if needed; an existing mount
+// is reused unless opts.Replace is set.
+func (m *Mounter) BindMount(hostPath, containerPath string, opts BindOptions) error {
 	fi, err := os.Stat(hostPath)
 	if err != nil {
 		return fmt.Errorf("bind mount source: %w", err)
@@ -237,15 +263,90 @@ func (m *Mounter) BindMount(hostPath, containerPath string, readonly bool) error
 		return err
 	}
 	defer t.Close()
-	mnt, err := mountOn(t, hostPath, "", unix.MS_BIND)
+	flags := uintptr(unix.MS_BIND)
+	if opts.Recursive {
+		flags |= unix.MS_REC
+	}
+	mnt, err := mountOn(t, hostPath, "", flags, opts.Replace)
 	if err != nil {
 		return err
 	}
 	defer mnt.Close()
-	if readonly {
+	switch {
+	case opts.ReadOnly && opts.Recursive:
+		return m.remountReadonlyRecursive(mnt)
+	case opts.ReadOnly:
 		return remountReadonly(mnt)
 	}
 	return nil
+}
+
+// remountReadonlyRecursive makes the mount open as mnt and every mount below
+// it read-only, preserving their other flags.
+func (m *Mounter) remountReadonlyRecursive(mnt *os.File) error {
+	// Linux 5.12 and later do it atomically.
+	attr := unix.MountAttr{Attr_set: unix.MOUNT_ATTR_RDONLY}
+	err := mountSetattr(int(mnt.Fd()), "", unix.AT_EMPTY_PATH|unix.AT_RECURSIVE, &attr)
+	if err == nil {
+		log.Debugf("mount_setattr %s: recursively read-only", mnt.Name())
+		return nil
+	}
+	if !errors.Is(err, unix.ENOSYS) {
+		return &fs.PathError{Op: "mount_setattr", Path: mnt.Name(), Err: err}
+	}
+
+	// Older kernels: remount the mount, then each mount below it, found in
+	// mountinfo and opened from the root without following symlinks.
+	if err := remountReadonly(mnt); err != nil {
+		return err
+	}
+	top, err := mountID(int(mnt.Fd()))
+	if err != nil {
+		return fmt.Errorf("make the mounts below %s read-only: %w", mnt.Name(), err)
+	}
+	mounts, err := readMountInfo()
+	if err != nil {
+		return err
+	}
+	for _, mi := range descendants(mounts, top) {
+		f, err := m.root.OpenNoFollow(strings.TrimPrefix(mi.Mountpoint, m.rootDir))
+		if err != nil {
+			return fmt.Errorf("make %s read-only: %w", mi.Mountpoint, err)
+		}
+		id, err := mountID(int(f.Fd()))
+		if err == nil && id != mi.ID {
+			err = fmt.Errorf("mount %d is not reachable there (found mount %d)", mi.ID, id)
+		}
+		if err == nil {
+			err = remountReadonly(f)
+		}
+		_ = f.Close()
+		if err != nil {
+			return fmt.Errorf("make %s read-only: %w", mi.Mountpoint, err)
+		}
+	}
+	return nil
+}
+
+// mountSetattr is replaced by tests to exercise the fallback for kernels
+// older than 5.12.
+var mountSetattr = unix.MountSetattr
+
+// descendants returns the mounts below the mount with ID top, parents first.
+func descendants(mounts []MountInfo, top int) []MountInfo {
+	var out []MountInfo
+	parents := map[int]bool{top: true}
+	for changed := true; changed; {
+		changed = false
+		for _, mi := range mounts {
+			if parents[mi.Parent] && !parents[mi.ID] {
+				parents[mi.ID] = true
+				out = append(out, mi)
+				changed = true
+			}
+		}
+	}
+	return out
 }
 
 // remountReadonly makes a bind mount read-only while preserving its

@@ -96,6 +96,11 @@ assert_eq "commands are looked up with the image's PATH" \
 assert_eq "environment from .drootenv and --env" \
   "$("$DROOT" run --root "$WORK/app" -e JAVA_OPTS=-Xmx1g,-Xms1g -e NEW=1 -- sh -c 'echo "$JAVA_OPTS $NEW"')" \
   "-Xmx1g,-Xms1g 1"
+printf 'FROM_FILE=1\nJAVA_OPTS=file\nPASSED\n' > "$WORK/app.env"
+assert_eq "--env-file and --env KEY take values from droot's environment" \
+  "$(PASSED=p FROM_HOST=h "$DROOT" run --root "$WORK/app" --env-file "$WORK/app.env" -e FROM_HOST -e UNSET_VAR -- \
+      sh -c 'echo "$FROM_FILE $JAVA_OPTS $PASSED $FROM_HOST ${UNSET_VAR-unset}"')" \
+  "1 file p h unset"
 assert_eq "capability bounding set" \
   "$("$DROOT" run --root "$WORK/app" -- awk '/^CapBnd/ {print $2}' /proc/self/status)" "00000000000004cb"
 assert_eq "device nodes" \
@@ -109,6 +114,13 @@ assert_eq "a bind mounted /dev is left alone" "$(ls -A "$WORK/hostdev")" "marker
 assert_eq "read-only bind mount" \
   "$("$DROOT" run --root "$WORK/app" --robind "$WORK/data:/mnt/data" -- sh -c 'cat /mnt/data/file; touch /mnt/data/x 2>/dev/null || echo ro')" \
   "$(printf 'secret\nro')"
+assert_eq "--bind SRC:DEST:ro" \
+  "$("$DROOT" run --root "$WORK/app" --bind "$WORK/data:/mnt/data2:ro" -- sh -c 'cat /mnt/data2/file; touch /mnt/data2/x 2>/dev/null || echo ro')" \
+  "$(printf 'secret\nro')"
+assert_eq "--bind-net-files" \
+  "$("$DROOT" run --root "$WORK/app" --bind-net-files -- sh -c 'cat /etc/resolv.conf /etc/hosts; touch /etc/hosts 2>/dev/null || echo ro')" \
+  "$(cat /etc/resolv.conf /etc/hosts; echo ro)"
+"$DROOT" umount --root "$WORK/app"
 assert_eq "--no-new-privileges" \
   "$("$DROOT" run --root "$WORK/app" --user app --no-new-privileges -- awk '/^NoNewPrivs/ {print $2}' /proc/self/status)" "1"
 if command -v capsh >/dev/null; then

@@ -15,6 +15,7 @@ import (
 
 	"github.com/yuuki/droot/internal/cli"
 	"github.com/yuuki/droot/internal/log"
+	"github.com/yuuki/droot/internal/mounter"
 )
 
 type parsedRun struct {
@@ -202,30 +203,44 @@ func TestUmountRefusesRoot(t *testing.T) {
 }
 
 func TestParseBindOption(t *testing.T) {
+	ro := mounter.BindOptions{ReadOnly: true}
 	tests := []struct {
-		spec    string
-		want    bindMount
-		wantErr bool
+		spec     string
+		readonly bool
+		want     bindMount
+		wantErr  bool
 	}{
 		{spec: "/var/log/app", want: bindMount{host: "/var/log/app", container: "/var/log/app"}},
 		{spec: "/var/log/app/", want: bindMount{host: "/var/log/app", container: "/var/log/app"}},
 		{spec: "/srv/data:/data", want: bindMount{host: "/srv/data", container: "/data"}},
 		{spec: "/srv/data:", want: bindMount{host: "/srv/data", container: "/srv/data"}},
 		{spec: "/a:/b:c", want: bindMount{host: "/a", container: "/b:c"}},
+		{spec: "/a:/b:c:ro", want: bindMount{host: "/a", container: "/b:c", opts: ro}},
+		{spec: "/a:/b:ro", want: bindMount{host: "/a", container: "/b", opts: ro}},
+		{spec: "/a:/b:rw", want: bindMount{host: "/a", container: "/b"}},
+		{spec: "/a:/b:rbind,ro", want: bindMount{host: "/a", container: "/b", opts: mounter.BindOptions{ReadOnly: true, Recursive: true}}},
+		{spec: "/a:ro", want: bindMount{host: "/a", container: "/a", opts: ro}},
+		{spec: "/a::ro", want: bindMount{host: "/a", container: "/a", opts: ro}},
+		{spec: "/a:/b:rox", want: bindMount{host: "/a", container: "/b:rox"}},
+		{spec: "/a:/b", readonly: true, want: bindMount{host: "/a", container: "/b", opts: ro}},
+		{spec: "/a:/b:rbind", readonly: true, want: bindMount{host: "/a", container: "/b", opts: mounter.BindOptions{ReadOnly: true, Recursive: true}}},
+		{spec: "/a:/b:rw", readonly: true, wantErr: true},
+		{spec: "/a:/b:ro,rw", wantErr: true},
+		{spec: "/a:rbind:ro", wantErr: true}, // DEST "rbind" is not absolute
 		{spec: "relative", wantErr: true},
 		{spec: "/abs:relative", wantErr: true},
 		{spec: "", wantErr: true},
 	}
 	for _, tt := range tests {
-		got, err := parseBindOption(tt.spec)
+		got, err := parseBindOption(tt.spec, tt.readonly)
 		if tt.wantErr {
 			if err == nil {
-				t.Errorf("parseBindOption(%q) should fail", tt.spec)
+				t.Errorf("parseBindOption(%q, %v) should fail, got %+v", tt.spec, tt.readonly, got)
 			}
 			continue
 		}
 		if err != nil || got != tt.want {
-			t.Errorf("parseBindOption(%q) = %+v, %v; want %+v", tt.spec, got, err, tt.want)
+			t.Errorf("parseBindOption(%q, %v) = %+v, %v; want %+v", tt.spec, tt.readonly, got, err, tt.want)
 		}
 	}
 }

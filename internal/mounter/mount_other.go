@@ -24,7 +24,7 @@ func unsupported() error {
 func (m *Mounter) MountSysProc() error { return unsupported() }
 
 // BindMount is only supported on Linux.
-func (m *Mounter) BindMount(string, string, bool) error { return unsupported() }
+func (m *Mounter) BindMount(string, string, BindOptions) error { return unsupported() }
 
 // Mounts is only supported on Linux.
 func (m *Mounter) Mounts() ([]string, error) { return nil, unsupported() }
