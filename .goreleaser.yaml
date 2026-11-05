@@ -1,4 +1,4 @@
-# Release configuration. See docs/development.md#releasing.
+# Release configuration. See documentation/development.md#releasing.
 version: 2
 
 project_name: droot

@@ -114,10 +114,9 @@ setuid bits are preserved.
    Mount points are resolved with `osutil.Root`, created if missing (as a
    directory, or as an empty file for file bind mounts) and mounted on through
    `/proc/self/fd/N`, so the mount lands on the very directory that was
-   resolved. Existing mounts are
-   reused, so `run` can be repeated without `umount`. Every mount is made a
-   slave mount, so mounts made inside the container never propagate back to
-   the host. Read-only bind mounts are
+   resolved. Existing mounts are reused, so `run` can be repeated without
+   `umount`. Every mount is made a slave mount, so mounts made inside the
+   container never propagate back to the host. Read-only bind mounts are
    remounted with `MS_RDONLY` *plus* the nosuid/nodev/noexec/atime flags of
    the source, which a plain remount would clear.
 5. Create `/var/lock -> ../run/lock` if missing, and the device nodes

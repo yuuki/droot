@@ -88,12 +88,13 @@ $ docker build -t dockerfiles/app .
 $ droot export dockerfiles/app | gzip -c | aws s3 cp - s3://drootexamples/app.tar.gz
 ```
 
-Deploy and run it on a server:
+Deploy and run it on a server (extract as root so that file ownership and
+setuid bits are preserved):
 
 ```console
 $ sudo droot umount --root /var/containers/app   # it is safe to umount before run if you use --bind
-$ mkdir -p /tmp/app /var/containers/app
-$ aws s3 cp s3://drootexamples/app.tar.gz - | tar -xpzf - -C /tmp/app
+$ sudo mkdir -p /tmp/app /var/containers/app
+$ aws s3 cp s3://drootexamples/app.tar.gz - | sudo tar -xpzf - -C /tmp/app
 $ sudo mv -T /tmp/app /var/containers/app
 $ sudo droot run --cp --user appuser --group appgroup --bind /var/log/app --root /var/containers/app -- command
 ```
@@ -111,8 +112,8 @@ $ sudo droot umount --root /var/containers/app
 directory layout and keeps the last releases:
 
 ```console
-$ aws s3 cp s3://drootexamples/app.tar.gz - | tar -xpzf - -C /tmp/app
-$ capze --keep 5 /tmp/app /var/containers/app
+$ aws s3 cp s3://drootexamples/app.tar.gz - | sudo tar -xpzf - -C /tmp/app
+$ sudo capze --keep 5 /tmp/app /var/containers/app
 ```
 
 ## Commands
@@ -196,7 +197,11 @@ be a file system of its own. The command is idempotent and refuses `/`.
 |---|---|
 | `-D`, `--debug` | Print debug messages to STDERR. Also enabled by `DROOT_DEBUG=1`. |
 | `-v`, `--version` | Print the version. |
-| `completion bash\|zsh\|fish` | Print a shell completion script, e.g. `source <(droot completion bash)`. |
+
+### Shell completion
+
+`droot completion bash|zsh|fish` prints a completion script, e.g.
+`source <(droot completion bash)`.
 
 ## Choosing the Docker daemon
 
