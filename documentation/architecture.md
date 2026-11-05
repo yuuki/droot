@@ -95,17 +95,21 @@ setuid bits are preserved.
 1. Validate the options and resolve `--root` to an absolute path without
    symlinks (which is how `/proc/self/mountinfo` reports mount points).
 2. `--cp`: copy the host's `/etc/{group,passwd,resolv.conf,hosts}` into the
-   root. Each destination is resolved with `osutil.SecureJoin`, which follows
-   symlinks *as if the root were `/`*, and written to a temporary file that is
-   renamed into place, so a malicious image cannot redirect the copy to a host
-   file.
+   root. Each destination is resolved with `osutil.Root`, which opens every
+   path component with `openat(2)` and `O_NOFOLLOW` from the descriptor of its
+   parent and follows symlinks *as if the root were `/`*. The file is written to
+   a temporary file created in the resolved directory and renamed into place,
+   so a malicious image — or a process of a container still running — cannot
+   redirect the copy to a host file.
 3. Resolve `--user`/`--group` with the root's `/etc/passwd` and `/etc/group`
    (then the host's). The primary group of the user is the default group and
    the supplementary groups are taken from the root's `/etc/group`.
 4. Mount `proc` (nosuid, nodev, noexec) on `/proc`; recursively bind mount
    the host's `/sys` and make it an rslave mount; perform the bind mounts.
-   Mount points are resolved with `SecureJoin` and created if missing (as a
-   directory, or as an empty file for file bind mounts). Existing mounts are
+   Mount points are resolved with `osutil.Root`, created if missing (as a
+   directory, or as an empty file for file bind mounts) and mounted on through
+   `/proc/self/fd/N`, so the mount lands on the very directory that was
+   resolved. Existing mounts are
    reused, so `run` can be repeated without `umount`. Read-only bind mounts are
    remounted with `MS_RDONLY` *plus* the nosuid/nodev/noexec/atime flags of
    the source, which a plain remount would clear.

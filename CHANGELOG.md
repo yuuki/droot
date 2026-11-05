@@ -57,7 +57,11 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
 - `droot run` looks up `COMMAND` in the container's `PATH` (from `/.drootenv`
   or `--env`) instead of the `PATH` of the sudo environment.
 - Symbolic links in an image could make `--cp`, `--bind` and `--robind` write
-  to or mount over paths of the host. Paths are now resolved inside the root.
+  to or mount over paths of the host. Paths inside the root are now resolved
+  with file descriptors (`openat(2)` with `O_NOFOLLOW`, component by
+  component) and every operation is done relative to the resolved directory,
+  which also resists a running container swapping directories for symlinks
+  while droot works.
 - `/.drootenv` lines whose value contained `=` (e.g. `JAVA_OPTS=-Da=b`) were
   dropped, and lines longer than 64 KiB silently truncated the environment.
 - `--robind` cleared the `nosuid`, `nodev` and `noexec` flags of the source

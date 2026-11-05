@@ -12,17 +12,21 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/yuuki/droot/osutil"
 )
 
 // Mounter mounts and unmounts file systems under a container root directory.
 type Mounter struct {
 	rootDir string
+	root    *osutil.Root
 }
 
-// NewMounter returns a Mounter for rootDir, which must have been resolved with
-// ResolveRootDir.
-func NewMounter(rootDir string) *Mounter {
-	return &Mounter{rootDir: rootDir}
+// NewMounter returns a Mounter for root, whose path must have been resolved
+// with ResolveRootDir. All mount targets are resolved through root, so that
+// symlinks in the container cannot redirect a mount outside of it.
+func NewMounter(root *osutil.Root) *Mounter {
+	return &Mounter{rootDir: root.Path(), root: root}
 }
 
 // RootDir returns the container root directory.

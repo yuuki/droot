@@ -7,6 +7,7 @@ import (
 
 	"github.com/yuuki/droot/log"
 	"github.com/yuuki/droot/mounter"
+	"github.com/yuuki/droot/osutil"
 )
 
 func umountCommand() *cli.Command {
@@ -34,7 +35,12 @@ func doUmount(_ context.Context, cmd *cli.Command) error {
 	if err != nil {
 		return err
 	}
-	unmounted, err := mounter.NewMounter(rootDir).UmountAll()
+	root, err := osutil.OpenRoot(rootDir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	unmounted, err := mounter.NewMounter(root).UmountAll()
 	log.Debugf("unmounted %d mount point(s) under %s", len(unmounted), rootDir)
 	return err
 }

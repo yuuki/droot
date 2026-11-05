@@ -33,9 +33,9 @@ running on the host with a different root directory.
   the bounding set. Remove them from production images when possible.
 - Prefer `--robind` over `--bind` for data the application does not need to
   write.
-- Do not give the application user write access to `ROOT_DIR` itself: it
-  could replace directories with symlinks between two `droot run`
-  invocations.
+- Do not give the application user write access to `ROOT_DIR` itself. droot
+  resolves paths safely even if directories are swapped for symlinks, but the
+  application could still, for instance, replace the binaries run next time.
 - Wrap `droot run` with the sandboxing of your service manager when you need
   more isolation, e.g. systemd's `ProtectSystem=`, `ProtectKernelTunables=`,
   `PrivateTmp=`, `NoNewPrivileges=` (which also prevents the application from
@@ -45,11 +45,15 @@ running on the host with a different root directory.
 
 ## Hardening done by droot
 
-- Mount targets, `--cp` destinations and device paths are resolved inside the
-  root (`osutil.SecureJoin`): symlinks in an image cannot make droot mount on
-  or write to host paths. This resolution happens in user space and is
-  therefore subject to races if the root directory is modified concurrently
-  (see [roadmap](roadmap.md)).
+- Mount targets, `--cp` destinations, device nodes and the files read from
+  the container are resolved inside the root with file descriptors
+  (`osutil.Root`): every component is opened with `openat(2)` and
+  `O_NOFOLLOW` from the descriptor of its parent, symlinks are followed by
+  droot as if the root were `/`, and the final operation uses the descriptor
+  of the resolved directory (`mknodat`, `renameat`, mounting on
+  `/proc/self/fd/N`, ...). Symlinks in an image cannot make droot mount on or
+  write to host paths, even if a process of a running container swaps
+  directories for symlinks while droot works.
 - `CAP_DAC_READ_SEARCH` is dropped: with `open_by_handle_at(2)` it allows
   reading any file of the host and escaping the chroot (the "shocker" exploit).
 - `CAP_SYS_CHROOT`, `CAP_SYS_ADMIN`, `CAP_MKNOD`, `CAP_SYS_PTRACE`, ... are

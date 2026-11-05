@@ -4,7 +4,6 @@ package osutil
 
 import (
 	"fmt"
-	"os"
 	"runtime"
 )
 
@@ -14,9 +13,6 @@ func unsupported(op string) error {
 
 // Chroot is only supported on Linux.
 func Chroot(string) error { return unsupported("chroot") }
-
-// MknodChar is only supported on Linux.
-func MknodChar(string, uint32, uint32, os.FileMode) error { return unsupported("mknod") }
 
 // DropBoundingCapabilities is only supported on Linux.
 func DropBoundingCapabilities(map[uintptr]bool) error { return unsupported("dropping capabilities") }

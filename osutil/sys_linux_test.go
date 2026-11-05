@@ -8,36 +8,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func TestMknodChar(t *testing.T) {
-	if os.Geteuid() != 0 {
-		t.Skip("mknod requires root")
-	}
-	old := unix.Umask(0o077) // make sure the mode does not depend on the umask
-	defer unix.Umask(old)
-
-	dir := t.TempDir()
-	null := filepath.Join(dir, "null")
-	// A stale regular file must be replaced by the device.
-	mustWrite(t, null, "not a device")
-
-	for range 2 { // idempotent
-		if err := MknodChar(null, 1, 3, 0o666); err != nil {
-			if os.IsPermission(err) {
-				t.Skipf("mknod not permitted here: %v", err)
-			}
-			t.Fatal(err)
-		}
-	}
-
-	var st unix.Stat_t
-	if err := unix.Lstat(null, &st); err != nil {
-		t.Fatal(err)
-	}
-	if st.Mode&unix.S_IFMT != unix.S_IFCHR || unix.Major(st.Rdev) != 1 || unix.Minor(st.Rdev) != 3 || st.Mode&0o777 != 0o666 {
-		t.Fatalf("unexpected device: mode=%o rdev=%d:%d", st.Mode, unix.Major(st.Rdev), unix.Minor(st.Rdev))
-	}
-}
-
 func TestLastCap(t *testing.T) {
 	last, err := lastCap()
 	if err != nil {

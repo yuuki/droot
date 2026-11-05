@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -122,8 +121,17 @@ func doRun(_ context.Context, cmd *cli.Command) error {
 		binds = append(binds, b)
 	}
 
+	// Every path inside the container is resolved through this descriptor
+	// so that a process of a previous run cannot redirect droot to the host
+	// file system by swapping directories for symlinks.
+	root, err := osutil.OpenRoot(rootDir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+
 	if cmd.Bool("copy-files") {
-		if err := copyHostFiles(rootDir); err != nil {
+		if err := copyHostFiles(root); err != nil {
 			return err
 		}
 	}
@@ -134,7 +142,7 @@ func doRun(_ context.Context, cmd *cli.Command) error {
 	}
 	log.Debugf("running as uid=%d gid=%d groups=%v", cred.UID, cred.GID, cred.Groups)
 
-	mnt := mounter.NewMounter(rootDir)
+	mnt := mounter.NewMounter(root)
 	if err := mnt.MountSysProc(); err != nil {
 		return err
 	}
@@ -144,9 +152,9 @@ func doRun(_ context.Context, cmd *cli.Command) error {
 		}
 	}
 
-	linkVarLock(rootDir)
+	linkVarLock(root)
 
-	if err := createDevices(rootDir, cred.UID, cred.GID); err != nil {
+	if err := createDevices(root, cred.UID, cred.GID); err != nil {
 		return err
 	}
 
@@ -169,49 +177,35 @@ func parseBindOption(spec string) (bindMount, error) {
 	return bindMount{host: filepath.Clean(host), container: filepath.Clean(container)}, nil
 }
 
-func copyHostFiles(rootDir string) error {
+func copyHostFiles(root *osutil.Root) error {
 	for _, f := range hostFiles {
-		dst, err := osutil.SecureJoin(rootDir, f)
-		if err != nil {
-			return err
-		}
-		if err := osutil.CopyFile(f, dst); err != nil {
+		if err := root.CopyFileIn(f, f); err != nil {
 			return fmt.Errorf("copy %s into the container: %w", f, err)
 		}
-		log.Debugf("copied %s to %s", f, dst)
+		log.Debugf("copied %s into %s", f, root.Path())
 	}
 	return nil
 }
 
 // linkVarLock creates the /var/lock -> ../run/lock symlink when /var exists
 // and /var/lock does not. Failures are not fatal.
-func linkVarLock(rootDir string) {
-	varDir, err := osutil.SecureJoin(rootDir, "/var")
-	if err != nil || !osutil.ExistsDir(varDir) {
+func linkVarLock(root *osutil.Root) {
+	varDir, err := root.OpenDir("/var", false, nil)
+	if err != nil {
 		return
 	}
-	lock := filepath.Join(varDir, "lock")
-	if _, err := os.Lstat(lock); err == nil || !errors.Is(err, fs.ErrNotExist) {
-		return
-	}
-	if err := os.Symlink("../run/lock", lock); err != nil {
-		log.Debugf("cannot create %s: %v", lock, err)
+	_ = varDir.Close()
+	if err := root.SymlinkIfMissing("../run/lock", "/var/lock"); err != nil {
+		log.Debugf("cannot create /var/lock: %v", err)
 	}
 }
 
-func createDevices(rootDir string, uid, gid int) error {
+func createDevices(root *osutil.Root, uid, gid int) error {
 	for _, d := range devices {
-		p, err := osutil.SecureJoin(rootDir, d.path)
-		if err != nil {
+		if err := root.MknodChar(d.path, d.major, d.minor, 0o666); err != nil {
 			return err
 		}
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-			return err
-		}
-		if err := osutil.MknodChar(p, d.major, d.minor, 0o666); err != nil {
-			return err
-		}
-		if err := os.Lchown(p, uid, gid); err != nil {
+		if err := root.Lchown(d.path, uid, gid); err != nil {
 			return err
 		}
 	}

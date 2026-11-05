@@ -22,33 +22,6 @@ func Chroot(rootDir string) error {
 	return unix.Chdir("/")
 }
 
-// MknodChar makes sure path is a character device with the given numbers and
-// permission bits. An existing file of another kind at path is replaced.
-func MknodChar(path string, major, minor uint32, perm os.FileMode) error {
-	dev := unix.Mkdev(major, minor)
-	var st unix.Stat_t
-	err := unix.Lstat(path, &st)
-	switch {
-	case err == nil && st.Mode&unix.S_IFMT == unix.S_IFCHR && st.Rdev == dev:
-		// Already there.
-	case err == nil:
-		log.Debugf("replacing %s with a character device", path)
-		if err := os.Remove(path); err != nil {
-			return err
-		}
-		fallthrough
-	case errors.Is(err, unix.ENOENT):
-		log.Debugf("mknod %s c %d %d", path, major, minor)
-		if err := unix.Mknod(path, unix.S_IFCHR|uint32(perm.Perm()), int(dev)); err != nil {
-			return &fs.PathError{Op: "mknod", Path: path, Err: err}
-		}
-	default:
-		return &fs.PathError{Op: "lstat", Path: path, Err: err}
-	}
-	// mknod(2) is subject to the umask, so set the mode explicitly.
-	return os.Chmod(path, perm)
-}
-
 // DropBoundingCapabilities removes every capability not listed in keep from
 // the capability bounding set, so that the program executed next can never
 // gain them, even as root or through setuid binaries.

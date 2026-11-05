@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/yuuki/droot/osutil"
 )
 
 // privilegedDir creates a scratch directory for tests that really mount
@@ -84,7 +86,12 @@ func TestMounterLifecycle(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = unix.Unmount(filepath.Join(sibling, "mnt"), unix.MNT_DETACH) })
 
-	m := NewMounter(root)
+	r, err := osutil.OpenRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	m := NewMounter(r)
 	if err := m.MountSysProc(); err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +181,12 @@ func TestRemountReadonlyKeepsFlags(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = unix.Unmount(src, unix.MNT_DETACH) })
 
-	m := NewMounter(dir)
+	r, err := osutil.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	m := NewMounter(r)
 	if err := m.BindMount(src, "/dst", true); err != nil {
 		t.Fatal(err)
 	}

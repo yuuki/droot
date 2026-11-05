@@ -12,69 +12,64 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
 
 ### `droot run`
 
-1. **[security]** Running as root inside droot is close to running as root on
-   the host: `/proc` and `/sys` are the host's and writable (`/proc/sys/*`,
-   `/proc/sysrq-trigger`, sysfs attributes), and root keeps
-   `CAP_DAC_OVERRIDE`, `CAP_CHOWN` and `CAP_FOWNER`. Ideas: mount sysfs
-   read-only, mask sensitive `/proc` paths like Docker does
-   (`/proc/kcore`, `/proc/sysrq-trigger`, `/proc/sys` read-only, ...), or
-   offer a PID namespace.
-2. **[security]** No `no_new_privs`, seccomp filter or LSM profile: setuid-root
-   binaries in the image regain the capabilities left in the bounding set.
-3. **[security]** Paths inside the root are resolved in user space
-   (`osutil.SecureJoin`) and then used by path, which is racy if the root is
-   modified concurrently (e.g. by a process of a previous run). A robust
-   implementation would use `openat2(RESOLVE_IN_ROOT)` and mount through
-   `/proc/self/fd/N` like runc.
-4. **[bug]** Mounts are made in the host's mount namespace and persist after
-   the command exits; a failure halfway leaves the mounts already made. Users
-   must remember `droot umount`, and concurrent runs share mounts.
-5. **[compat]** Only `ENV` of the image is used. `WORKDIR`, `USER`,
-   `ENTRYPOINT`/`CMD`, `STOPSIGNAL` are ignored: the working directory is
-   always `/` and the command must always be given.
-6. **[compat]** `HOME`, `USER`, `LOGNAME` and `HOSTNAME` are not set, and the
-   environment is empty when there is neither `/.drootenv` nor `--env`
-   (`PATH` lookup falls back to a default path, but the variable is not set).
-7. **[compat]** Only `/dev/null`, `/dev/zero`, `/dev/random` and `/dev/urandom`
-   are created. `/dev/pts`, `/dev/ptmx`, `/dev/tty`, `/dev/full`, `/dev/shm`
-   (tmpfs, needed e.g. by Python multiprocessing), `/dev/fd` and
-   `/dev/std{in,out,err}` are missing, and `/tmp`/`/run` are not tmpfs.
-8. **[ux]** An unknown numeric `--user` without `--group` runs with droot's own
-   group (0 under sudo), like Docker. Consider a warning.
-9. **[ux]** Inherited behaviors whose purpose is unclear: `--bind` creates a
-   `.droot.keep` file in empty host directories, and device nodes are chowned
-   to the target user. Decide whether to keep them.
-10. **[compat]** `--cp` copies snapshots of the host files: later changes to the
-    host's `/etc/resolv.conf` or `/etc/hosts` are not reflected (a bind mount
-    would be live).
-11. **[compat]** Host-side lookups of user names use `/etc/passwd` only (the
-    static binary has no NSS); LDAP/SSSD users must be given by ID.
-12. **[compat]** `droot run` needs real root; rootless operation with user
-    namespaces is not supported.
-13. **[ux]** Two concurrent `droot run` on the same root race on `--cp` copies
-    and device creation (harmless in practice, but not guaranteed).
+- **[security]** Running as root inside droot is close to running as root on
+  the host: `/proc` and `/sys` are the host's and writable (`/proc/sys/*`,
+  `/proc/sysrq-trigger`, sysfs attributes), and root keeps
+  `CAP_DAC_OVERRIDE`, `CAP_CHOWN` and `CAP_FOWNER`. Ideas: mount sysfs
+  read-only, mask sensitive `/proc` paths like Docker does
+  (`/proc/kcore`, `/proc/sysrq-trigger`, `/proc/sys` read-only, ...), or
+  offer a PID namespace.
+- **[security]** No `no_new_privs`, seccomp filter or LSM profile: setuid-root
+  binaries in the image regain the capabilities left in the bounding set.
+- **[bug]** Mounts are made in the host's mount namespace and persist after
+  the command exits; a failure halfway leaves the mounts already made. Users
+  must remember `droot umount`, and concurrent runs share mounts.
+- **[compat]** Only `ENV` of the image is used. `WORKDIR`, `USER`,
+  `ENTRYPOINT`/`CMD`, `STOPSIGNAL` are ignored: the working directory is
+  always `/` and the command must always be given.
+- **[compat]** `HOME`, `USER`, `LOGNAME` and `HOSTNAME` are not set, and the
+  environment is empty when there is neither `/.drootenv` nor `--env`
+  (`PATH` lookup falls back to a default path, but the variable is not set).
+- **[compat]** Only `/dev/null`, `/dev/zero`, `/dev/random` and `/dev/urandom`
+  are created. `/dev/pts`, `/dev/ptmx`, `/dev/tty`, `/dev/full`, `/dev/shm`
+  (tmpfs, needed e.g. by Python multiprocessing), `/dev/fd` and
+  `/dev/std{in,out,err}` are missing, and `/tmp`/`/run` are not tmpfs.
+- **[ux]** An unknown numeric `--user` without `--group` runs with droot's own
+  group (0 under sudo), like Docker. Consider a warning.
+- **[ux]** Inherited behaviors whose purpose is unclear: `--bind` creates a
+  `.droot.keep` file in empty host directories, and device nodes are chowned
+  to the target user. Decide whether to keep them.
+- **[compat]** `--cp` copies snapshots of the host files: later changes to the
+  host's `/etc/resolv.conf` or `/etc/hosts` are not reflected (a bind mount
+  would be live).
+- **[compat]** Host-side lookups of user names use `/etc/passwd` only (the
+  static binary has no NSS); LDAP/SSSD users must be given by ID.
+- **[compat]** `droot run` needs real root; rootless operation with user
+  namespaces is not supported.
+- **[ux]** Two concurrent `droot run` on the same root race on `--cp` copies
+  and device creation (harmless in practice, but not guaranteed).
 
 ### `droot export`
 
-14. **[compat]** A Docker Engine API daemon and a local image are required:
-    there is no pull (and no registry authentication), no support for
-    `docker save`/OCI layouts, and `--platform` only selects among the variants
-    present locally.
-15. **[compat]** `ssh://` and `npipe://` `DOCKER_HOST`s are not supported.
-16. **[compat]** Environment values containing newlines cannot be represented
-    in `/.drootenv` and are skipped. The file has no version marker or escaping.
-17. **[ux]** No progress indication for large images; no compression option
-    (pipe to `gzip`/`zstd`).
-18. **[security]** Archives are neither checksummed nor signed by droot.
-19. **[compat]** The archive contains the files Docker adds to every container
-    (`/.dockerenv`, empty `/etc/hostname`, `/etc/hosts`, `/etc/resolv.conf`,
-    `/dev/console`, ...).
+- **[compat]** A Docker Engine API daemon and a local image are required:
+  there is no pull (and no registry authentication), no support for
+  `docker save`/OCI layouts, and `--platform` only selects among the variants
+  present locally.
+- **[compat]** `ssh://` and `npipe://` `DOCKER_HOST`s are not supported.
+- **[compat]** Environment values containing newlines cannot be represented
+  in `/.drootenv` and are skipped. The file has no version marker or escaping.
+- **[ux]** No progress indication for large images; no compression option
+  (pipe to `gzip`/`zstd`).
+- **[security]** Archives are neither checksummed nor signed by droot.
+- **[compat]** The archive contains the files Docker adds to every container
+  (`/.dockerenv`, empty `/etc/hostname`, `/etc/hosts`, `/etc/resolv.conf`,
+  `/dev/console`, ...).
 
 ### Project
 
-20. **[project]** The Homebrew tap (`yuuki/homebrew-droot`) is not updated by
-    the release workflow and must be checked against the new asset names.
-21. **[project]** Windows is not supported at all.
+- **[project]** The Homebrew tap (`yuuki/homebrew-droot`) is not updated by
+  the release workflow and must be checked against the new asset names.
+- **[project]** Windows is not supported at all.
 
 ## Feature ideas
 
@@ -136,7 +131,7 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
 - **[project]** Move packages under `internal/`: droot is a command, not a
   library, and its packages carry no compatibility promise.
 - **[project]** Fuzz tests for `environ.ParseEnv`, `mounter.ParseMountInfo`,
-  `osutil.SecureJoin` and the tar rewriting.
+  the path resolution of `osutil.Root` and the tar rewriting.
 - **[project]** End-to-end tests on arm64 runners and with Podman; coverage
   reporting.
 - **[project]** `SECURITY.md`, issue/PR templates, a Japanese README.
