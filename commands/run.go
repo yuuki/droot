@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 
 	"github.com/urfave/cli/v3"
 
@@ -78,7 +80,7 @@ type bindMount struct {
 	readonly        bool
 }
 
-func doRun(_ context.Context, cmd *cli.Command) error {
+func doRun(ctx context.Context, cmd *cli.Command) error {
 	setup(cmd)
 	if runtime.GOOS != "linux" {
 		return fmt.Errorf("droot run is only supported on Linux (running on %s)", runtime.GOOS)
@@ -131,6 +133,12 @@ func doRun(_ context.Context, cmd *cli.Command) error {
 	}
 	defer root.Close()
 
+	// Abort between the setup steps if droot is interrupted: the signal
+	// is caught to allow cleanups, so it would otherwise go unnoticed and
+	// COMMAND would be started anyway.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if cmd.Bool("copy-files") {
 		if err := copyHostFiles(root); err != nil {
 			return err
@@ -144,10 +152,16 @@ func doRun(_ context.Context, cmd *cli.Command) error {
 	log.Debugf("running as uid=%d gid=%d groups=%v", cred.UID, cred.GID, cred.Groups)
 
 	mnt := mounter.NewMounter(root)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := mnt.MountSysProc(); err != nil {
 		return err
 	}
 	for _, b := range binds {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if err := mnt.BindMount(b.host, b.container, b.readonly); err != nil {
 			return fmt.Errorf("bind mount %s on %s: %w", b.host, b.container, err)
 		}
@@ -159,7 +173,7 @@ func doRun(_ context.Context, cmd *cli.Command) error {
 		return err
 	}
 
-	return execInRoot(rootDir, argv, extraEnv, cred, execOptions{
+	return execInRoot(ctx, rootDir, argv, extraEnv, cred, execOptions{
 		dropCaps:        !cmd.Bool("no-dropcaps"),
 		noNewPrivileges: cmd.Bool("no-new-privileges"),
 	})
@@ -230,7 +244,7 @@ type execOptions struct {
 
 // execInRoot chroots into rootDir, drops privileges and executes argv. It only
 // returns on error.
-func execInRoot(rootDir string, argv, extraEnv []string, cred *identity.Credential, opts execOptions) error {
+func execInRoot(ctx context.Context, rootDir string, argv, extraEnv []string, cred *identity.Credential, opts execOptions) error {
 	// The capability bounding set is a per-thread attribute and execve(2)
 	// uses the calling thread's: stay on this OS thread until exec. The
 	// thread is never unlocked; on error the process exits.
@@ -274,6 +288,14 @@ func execInRoot(rootDir string, argv, extraEnv []string, cred *identity.Credenti
 	pathEnv, _ := environ.Lookup(env, "PATH")
 	argv0, err := osutil.LookPath(argv[0], pathEnv, osutil.IsExecutable)
 	if err != nil {
+		return err
+	}
+
+	// From now on, let termination signals act normally (on droot until
+	// the exec, then on COMMAND), and check one last time whether one was
+	// caught during the setup.
+	signal.Reset(os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	return osutil.Exec(argv0, argv, env)

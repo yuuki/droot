@@ -1,6 +1,9 @@
 package commands
 
 import (
+	"context"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -58,5 +61,23 @@ func TestCreateDevices(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(hostDev); len(entries) != 0 {
 		t.Fatalf("device nodes were created in the host directory: %v", entries)
+	}
+}
+
+func TestRunAbortsWhenInterrupted(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("requires root")
+	}
+	rootDir := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Ctrl-C before the setup
+	app := NewApp("test")
+	app.Writer, app.ErrWriter = io.Discard, io.Discard
+	err := app.Run(ctx, prepareArgs(app, []string{"droot", "run", "--root", rootDir, "--", "/bin/true"}))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("want context.Canceled, got %v", err)
+	}
+	if entries, _ := os.ReadDir(rootDir); len(entries) != 0 {
+		t.Fatalf("droot went on with the setup after the interruption: %v", entries)
 	}
 }

@@ -108,6 +108,9 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
   kept those capabilities as root, and a `--user` gained them by executing a
   file with `+i` file capabilities. The inheritable and ambient sets are now
   emptied too.
+- Ctrl-C (or SIGTERM/SIGHUP) during the setup of `droot run` was caught and
+  ignored, and COMMAND was started anyway. droot now stops the setup, and
+  signals arriving after the last check act on droot or COMMAND normally.
 - `droot run` created `/dev/zero` with the numbers of `/dev/null` (1:3) and
   `/dev/random` with those of `/dev/urandom` (1:9). Device permissions no longer
   depend on the umask.
