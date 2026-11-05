@@ -20,6 +20,7 @@ import (
 type API interface {
 	ContainerCreate(ctx context.Context, cfg *ContainerConfig, platform string) (string, error)
 	ContainerInspect(ctx context.Context, id string) (*ContainerInfo, error)
+	ImageInspect(ctx context.Context, ref, platform string) (*ImageInfo, error)
 	ContainerExport(ctx context.Context, id string) (io.ReadCloser, error)
 	ContainerRemove(ctx context.Context, id string) error
 }
@@ -92,11 +93,26 @@ func ExportImage(ctx context.Context, api API, image string, w io.Writer, opts E
 		return err
 	}
 
+	// Take the environment from the image the container was created from,
+	// not from the container's config, to which some daemons add variables
+	// (Podman adds container=podman and reorders them).
 	info, err := api.ContainerInspect(ctx, id)
 	if err != nil {
 		return fmt.Errorf("inspect container %s: %w", shortID(id), err)
 	}
-	envFile := encodeEnvFile(info.Config.Env)
+	imageRef := info.Image
+	if imageRef == "" {
+		imageRef = image
+	}
+	img, err := api.ImageInspect(ctx, imageRef, opts.Platform)
+	if err != nil {
+		return fmt.Errorf("inspect image %s: %w", image, err)
+	}
+	var env []string
+	if img.Config != nil {
+		env = img.Config.Env
+	}
+	envFile := encodeEnvFile(env)
 
 	body, err := api.ContainerExport(ctx, id)
 	if err != nil {

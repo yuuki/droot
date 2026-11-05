@@ -23,6 +23,7 @@ type ContainerConfig struct {
 // uses.
 type ContainerInfo struct {
 	ID     string `json:"Id"`
+	Image  string `json:"Image"` // ID of the image the container was created from
 	Config struct {
 		Env        []string `json:"Env"`
 		WorkingDir string   `json:"WorkingDir"`
@@ -73,6 +74,43 @@ func (c *Client) ContainerInspect(ctx context.Context, id string) (*ContainerInf
 	}
 	defer resp.Body.Close()
 	var info ContainerInfo
+	if err := decodeJSON(resp.Body, &info); err != nil {
+		return nil, err
+	}
+	return &info, nil
+}
+
+// ImageInfo is the subset of the image inspection result that droot uses.
+type ImageInfo struct {
+	ID     string `json:"Id"`
+	Config *struct {
+		Env []string `json:"Env"`
+	} `json:"Config"`
+}
+
+// imagePlatformAPIVersion is the first API version accepting the platform
+// parameter of image inspection.
+const imagePlatformAPIVersion = "1.49"
+
+// ImageInspect returns low-level information about an image. platform
+// (e.g. "linux/arm64") selects a variant when the daemon supports it.
+func (c *Client) ImageInspect(ctx context.Context, ref, platform string) (*ImageInfo, error) {
+	query := url.Values{}
+	if platform != "" {
+		version, err := c.APIVersion(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if !versionLess(version, imagePlatformAPIVersion) {
+			query.Set("platform", platform)
+		}
+	}
+	resp, err := c.do(ctx, http.MethodGet, "/images/"+url.PathEscape(ref)+"/json", query, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var info ImageInfo
 	if err := decodeJSON(resp.Body, &info); err != nil {
 		return nil, err
 	}

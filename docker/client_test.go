@@ -47,6 +47,8 @@ func (d *fakeDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, `{"Id":"`+fakeID+`","Warnings":["platform mismatch"]}`)
 	case r.Method == http.MethodGet && r.URL.Path == "/v1.99/containers/"+fakeID+"/json":
 		_, _ = io.WriteString(w, `{"Id":"`+fakeID+`","Config":{"Env":["PATH=/bin","A=b=c"],"WorkingDir":"/app"}}`)
+	case r.Method == http.MethodGet && r.URL.Path == "/v1.99/images/sha256:abc/json":
+		_, _ = io.WriteString(w, `{"Id":"sha256:abc","Config":{"Env":["PATH=/bin"]}}`)
 	case r.Method == http.MethodGet && r.URL.Path == "/v1.99/containers/"+fakeID+"/export":
 		_, _ = io.WriteString(w, "TAR")
 	case r.Method == http.MethodDelete && r.URL.Path == "/v1.99/containers/"+fakeID:
@@ -82,6 +84,10 @@ func exerciseClient(t *testing.T, c *Client, d *fakeDaemon) {
 	}
 	if strings.Join(info.Config.Env, ",") != "PATH=/bin,A=b=c" || info.Config.WorkingDir != "/app" {
 		t.Fatalf("unexpected inspect result: %+v", info)
+	}
+	img, err := c.ImageInspect(ctx, "sha256:abc", "linux/amd64")
+	if err != nil || img.Config == nil || strings.Join(img.Config.Env, ",") != "PATH=/bin" {
+		t.Fatalf("ImageInspect = %+v, %v", img, err)
 	}
 	rc, err := c.ContainerExport(ctx, id)
 	if err != nil {

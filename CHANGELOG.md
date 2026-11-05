@@ -80,6 +80,9 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
   silently ignored with API versions older than 1.41 (now an error); and
   every 404 — such as an image lacking the requested platform — was reported
   as "image not found locally".
+- The environment saved in `/.drootenv` is read from the image's
+  configuration instead of the temporary container's, to which Podman adds
+  `container=podman` (and reorders the variables).
 - `DOCKER_HOST` is parsed like the docker CLI: unix socket paths are taken
   literally (`%`, `#`, `?`, abstract `@name` sockets), `unix://` alone means
   the default socket, and a host without scheme (`192.0.2.1:2375`) is TCP.

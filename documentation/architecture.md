@@ -43,7 +43,8 @@ sequenceDiagram
   D->>E: GET /_ping (negotiate the API version)
   D->>E: POST /containers/create {Image, placeholder Entrypoint, label}
   Note right of E: the container is never started
-  D->>E: GET /containers/{id}/json (Config.Env)
+  D->>E: GET /containers/{id}/json (Image: the ID of the image used)
+  D->>E: GET /images/{image ID}/json (Config.Env)
   D->>E: GET /containers/{id}/export (tar stream)
   D->>D: copy every tar entry, drop any existing .drootenv,<br/>append .drootenv with the image's environment
   D->>E: DELETE /containers/{id}?force=1&v=1 (always, even after errors, Ctrl-C, SIGHUP or a broken pipe)
@@ -51,7 +52,7 @@ sequenceDiagram
 
 Design notes:
 
-- **No Docker SDK.** The `docker` package implements the five endpoints above
+- **No Docker SDK.** The `docker` package implements the six endpoints above
   over HTTP with `net/http`, on a unix socket or TCP (optionally TLS). The
   daemon address is resolved like the `docker` CLI does (`DOCKER_HOST`,
   `DOCKER_CONTEXT`, current context, default socket).
@@ -66,8 +67,9 @@ Design notes:
   `/.drootenv` with `/bin/sh -c 'echo ...'`, which required a shell in the
   image and broke (or was injectable) when values contained quotes, `$` or
   backquotes. The environment is now injected into the tar stream instead.
-- **The environment comes from the container's config**, which Docker merges
-  from the image config. droot 0.7 read the image's `ContainerConfig`, which
+- **The environment comes from the image config** of the exact image the
+  temporary container was created from (not from the container's config, to
+  which Podman adds `container=podman`). droot 0.7 read the image's `ContainerConfig`, which
   BuildKit leaves empty and recent daemons do not return at all.
 - **Temporary containers** carry the label `io.github.yuuki.droot=export`. If
   droot is killed with SIGKILL, leftovers can be removed with

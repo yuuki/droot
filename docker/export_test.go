@@ -21,9 +21,10 @@ type fakeAPI struct {
 	removeErr  error
 	exportBody io.ReadCloser
 
-	created  *ContainerConfig
-	platform string
-	removed  []string
+	created        *ContainerConfig
+	platform       string
+	inspectedImage string
+	removed        []string
 }
 
 const fakeID = "0123456789abcdef0123456789abcdef"
@@ -45,8 +46,18 @@ func (f *fakeAPI) ContainerCreate(ctx context.Context, cfg *ContainerConfig, pla
 }
 
 func (f *fakeAPI) ContainerInspect(_ context.Context, id string) (*ContainerInfo, error) {
-	info := &ContainerInfo{ID: id}
-	info.Config.Env = f.env
+	info := &ContainerInfo{ID: id, Image: "sha256:image"}
+	// Like Podman, the container config has an extra variable.
+	info.Config.Env = append([]string{"container=podman"}, f.env...)
+	return info, nil
+}
+
+func (f *fakeAPI) ImageInspect(_ context.Context, ref, platform string) (*ImageInfo, error) {
+	f.inspectedImage = ref
+	info := &ImageInfo{ID: ref}
+	info.Config = &struct {
+		Env []string `json:"Env"`
+	}{Env: f.env}
 	return info, nil
 }
 
@@ -152,6 +163,9 @@ func TestExportImage(t *testing.T) {
 	}
 	if len(api.removed) != 1 || api.removed[0] != fakeID {
 		t.Errorf("container should be removed exactly once, got %v", api.removed)
+	}
+	if api.inspectedImage != "sha256:image" {
+		t.Errorf("the environment must come from the container's image, inspected %q", api.inspectedImage)
 	}
 
 	got := readTar(t, out.Bytes())
