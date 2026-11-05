@@ -21,6 +21,7 @@ import (
 	"github.com/yuuki/droot/internal/log"
 	"github.com/yuuki/droot/internal/mounter"
 	"github.com/yuuki/droot/internal/osutil"
+	"github.com/yuuki/droot/internal/seccomp"
 )
 
 func runCommand() *cli.Command {
@@ -78,7 +79,9 @@ func runCommand() *cli.Command {
 			{Name: "no-mask", Kind: cli.Bool,
 				Usage: "do not mask the sensitive files of /proc and /sys nor make /proc/sys, /sys and the like read-only (dangerous)"},
 			{Name: "no-new-privileges", Kind: cli.Bool,
-				Usage: "set no_new_privs: setuid programs and file capabilities cannot grant privileges to COMMAND"},
+				Usage: "set no_new_privs: setuid programs and file capabilities cannot grant privileges to COMMAND (default: true; --no-new-privileges=false lets programs such as sudo or su work)"},
+			{Name: "seccomp", Kind: cli.String, Placeholder: "PROFILE",
+				Usage: "seccomp profile: default (deny the system calls Docker's default profile denies, such as unshare, mount, keyctl, bpf; amd64, arm64, arm and 386) or unconfined (the default)"},
 			{Name: "env", Aliases: []string{"e"}, Kind: cli.Strings, Placeholder: "KEY[=VALUE]",
 				Usage: "set an environment variable, overriding /.drootenv and --env-file; a bare KEY takes its value from droot's own environment"},
 			{Name: "env-file", Kind: cli.Strings, Placeholder: "FILE", Complete: "file",
@@ -227,6 +230,9 @@ func doRun(ctx context.Context, cmd *cli.Invocation) (err error) {
 	}
 	if cmd.String("root") == "" {
 		return cmd.UsageError("--root is required")
+	}
+	if p := cmd.String("seccomp"); cmd.IsSet("seccomp") && !slices.Contains(seccomp.Profiles, p) {
+		return cmd.UsageError("unknown seccomp profile %q: want %s", p, strings.Join(seccomp.Profiles, " or "))
 	}
 	// An empty --user, e.g. from an unset variable in a unit file, must not
 	// silently run COMMAND as root instead of the image's USER.
@@ -518,7 +524,8 @@ func doRun(ctx context.Context, cmd *cli.Invocation) (err error) {
 		dropCaps:        !cmd.Bool("no-dropcaps"),
 		keepCaps:        keep,
 		rlimits:         rlimits,
-		noNewPrivileges: cmd.Bool("no-new-privileges"),
+		noNewPrivileges: !cmd.IsSet("no-new-privileges") || cmd.Bool("no-new-privileges"),
+		seccomp:         cmd.String("seccomp") == "default",
 	})
 }
 
@@ -693,6 +700,7 @@ type execOptions struct {
 	keepCaps        map[uintptr]bool
 	rlimits         []osutil.Rlimit
 	noNewPrivileges bool
+	seccomp         bool
 }
 
 // execInRoot chroots into rootDir, drops privileges and executes argv. It only
@@ -735,6 +743,14 @@ func execInRoot(ctx context.Context, rootDir string, argv, env []string, cred *i
 		}
 		if err := osutil.ClearInheritableCapabilities(); err != nil {
 			return fmt.Errorf("drop capabilities: %w", err)
+		}
+	}
+	// While droot still has CAP_SYS_ADMIN, which installing a filter
+	// without no_new_privs needs. The filter denies none of the system
+	// calls droot makes until the exec.
+	if opts.seccomp {
+		if err := seccomp.Load(); err != nil {
+			return err
 		}
 	}
 	if cred.UID != 0 && opts.beforeSwitch != nil {

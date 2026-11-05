@@ -86,7 +86,8 @@ The options must come before COMMAND: everything from COMMAND on is passed to it
 | `--hostname NAME` | run COMMAND in a private UTS namespace with the host name NAME |
 | `--read-only` | make the root directory read-only for COMMAND (implies --unshare); use --tmpfs or --bind for the paths it writes |
 | `--no-mask` | do not mask the sensitive files of /proc and /sys nor make /proc/sys, /sys and the like read-only (dangerous) |
-| `--no-new-privileges` | set no\_new\_privs: setuid programs and file capabilities cannot grant privileges to COMMAND |
+| `--no-new-privileges` | set no\_new\_privs: setuid programs and file capabilities cannot grant privileges to COMMAND (default: true; --no-new-privileges=false lets programs such as sudo or su work) |
+| `--seccomp PROFILE` | seccomp profile: default (deny the system calls Docker's default profile denies, such as unshare, mount, keyctl, bpf; amd64, arm64, arm and 386) or unconfined (the default) |
 | `-e, --env KEY[=VALUE]` | set an environment variable, overriding /.drootenv and --env-file; a bare KEY takes its value from droot's own environment (repeatable) |
 | `--env-file FILE` | read KEY=VALUE lines from the host's FILE, overriding /.drootenv; a bare KEY takes its value from droot's own environment (repeatable) |
 | `-h, --help` | show help |

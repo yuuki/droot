@@ -48,6 +48,9 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
 - `droot run` no longer creates a `.droot.keep` file in empty `--bind` and
   `--robind` source directories, as droot 0.7 did for an undocumented
   reason: droot does not write into the host directories it binds.
+- `droot run` sets `no_new_privs` by default: setuid programs (`sudo`, `su`,
+  ...) and file capabilities can no longer grant privileges to the command.
+  Use `--no-new-privileges=false` for applications that need them.
 - `droot run` requires root (euid 0) and refuses `--root /`;
   `droot umount --root /` is refused.
 - `DOCKER_CERT_PATH` alone no longer enables TLS: like the docker CLI, TLS is
@@ -216,7 +219,12 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
   `/.drootenv`, represents every environment variable. `droot run` uses it:
   `droot run --root DIR` alone runs the image's `ENTRYPOINT` and `CMD`.
 - `droot run --workdir`/`-w`.
-- `droot run --no-new-privileges` sets the `no_new_privs` flag.
+- `droot run --no-new-privileges` sets the `no_new_privs` flag (now the
+  default).
+- `droot run --seccomp default` installs a seccomp filter that denies, like
+  Docker's default profile, namespace creation, the mount API, module and
+  kernel loading, keyrings, `bpf`, perf events, `userfaultfd`, io_uring and
+  other host-wide system calls (amd64, arm64, arm and 386).
 - `droot run --cap-add` and `--cap-drop` adjust the capabilities kept in the
   bounding set.
 - `droot run --env-file FILE` and `--env KEY` (without a value, taking it from

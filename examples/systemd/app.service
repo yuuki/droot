@@ -15,7 +15,7 @@ Environment=DROOT_LOG_FORMAT=json
 Environment=APP_ENV=production
 ExecStart=/usr/local/bin/droot run --root /var/containers/app/current \
     --unshare \
-    --user app --no-new-privileges --cap-drop ALL \
+    --user app --cap-drop ALL --seccomp default \
     --robind /etc/app/config.yml:/app/config.yml \
     --bind /var/log/app \
     --bind-net-files \

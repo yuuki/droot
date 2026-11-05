@@ -126,7 +126,10 @@ make the root directory read\-only for COMMAND (implies \-\-unshare); use \-\-tm
 do not mask the sensitive files of /proc and /sys nor make /proc/sys, /sys and the like read\-only (dangerous)
 .TP
 \fB\-\-no\-new\-privileges\fR
-set no_new_privs: setuid programs and file capabilities cannot grant privileges to COMMAND
+set no_new_privs: setuid programs and file capabilities cannot grant privileges to COMMAND (default: true; \-\-no\-new\-privileges=false lets programs such as sudo or su work)
+.TP
+\fB\-\-seccomp\fR \fIPROFILE\fR
+seccomp profile: default (deny the system calls Docker's default profile denies, such as unshare, mount, keyctl, bpf; amd64, arm64, arm and 386) or unconfined (the default)
 .TP
 \fB\-e,\fR \fI\-\-env KEY[=VALUE]\fR
 set an environment variable, overriding /.drootenv and \-\-env\-file; a bare KEY takes its value from droot's own environment (repeatable)

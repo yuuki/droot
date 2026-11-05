@@ -115,7 +115,7 @@ Environment=DROOT_LOG_FORMAT=json
 Environment=APP_ENV=production
 ExecStart=/usr/local/bin/droot run --root /var/containers/app/current \
     --unshare \
-    --user app --no-new-privileges --cap-drop ALL \
+    --user app --cap-drop ALL --seccomp default \
     --robind /etc/app/config.yml:/app/config.yml \
     --bind /var/log/app \
     --bind-net-files \
@@ -133,9 +133,10 @@ LimitNOFILE=65536
 - `--unshare` makes the mounts in a private mount namespace: they disappear
   when the service stops, and old releases can be deleted safely.
 - `--user app` (the image's `USER` would be the default anyway),
-  `--no-new-privileges` (setuid programs cannot gain privileges) and
-  `--cap-drop ALL` limit what the application can do; see
-  [Security considerations](security.md).
+  `--cap-drop ALL` and `--seccomp default` (a seccomp filter like Docker's
+  default profile) limit what the application can do, as does
+  `no_new_privs`, set by default (setuid programs cannot gain privileges);
+  see [Security considerations](security.md).
 - `--robind` and `--bind` give the application its configuration
   (read-only) and its log directory; `--bind-net-files` the host's
   `/etc/resolv.conf` and `/etc/hosts`; `--tmpfs /tmp` a private `/tmp`.

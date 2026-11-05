@@ -16,9 +16,9 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
   the host: root keeps `CAP_DAC_OVERRIDE`, `CAP_CHOWN` and `CAP_FOWNER`
   (unless `--cap-drop`), and `/proc` shows the host's processes. Idea: a PID
   namespace.
-- **[security]** No seccomp filter or LSM profile, and `no_new_privs` is
-  opt-in (`--no-new-privileges`): by default setuid-root binaries in the image
-  regain the capabilities left in the bounding set.
+- **[security]** The seccomp filter is opt-in (`--seccomp default`), is a
+  denylist rather than Docker's allowlist, and there is no LSM (AppArmor,
+  SELinux) profile.
 - **[ux]** By default, mounts are made in the host's mount namespace and
   persist after the command exits: users must remember `droot umount`, and
   concurrent runs share mounts (`--unshare` avoids both).
@@ -56,8 +56,8 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
 - **[feature]** A PID namespace (`--unshare` covers the mount, IPC and UTS
   namespaces): droot would have to stay as the parent of COMMAND instead of
   replacing itself with it.
-- **[feature]** An optional seccomp profile (e.g. Docker's default); consider
-  enabling `no_new_privs` by default (with an opt-out: it breaks `sudo`/`su`).
+- **[feature]** Custom seccomp profiles (Docker's JSON format), and the
+  32-bit compatibility system calls of 64-bit kernels.
 - **[feature]** Bind propagation modes (`shared`, `private`, ...); droot makes
   every mount a slave mount today.
 - **[feature]** cgroup v2 limits (`--memory`, `--cpus`, `--pids-limit`) without

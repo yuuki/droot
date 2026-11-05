@@ -193,7 +193,8 @@ droot は次の順に処理を行います。
 | `--hostname NAME` | ホスト名が `NAME` であるプライベートな UTS 名前空間で `COMMAND` を実行します（`NAME` は `HOSTNAME` のデフォルト値にもなります）。ホスト自体の名前は変更されません。 |
 | `--read-only` | `COMMAND` から見て `ROOT_DIR` を読み取り専用にします（バインドマウントと tmpfs はそれぞれのモードを保ちます。書き込みが必要な場所には `--tmpfs /tmp` や `--bind` などを追加してください）。読み取り専用のマウントが `COMMAND` とともに消えるように、`--unshare` も有効になります。 |
 | `--no-mask` | `/proc` と `/sys` をそのままにします。機密性の高いファイルのマスクも、`/proc/sys` や `/sys` などの読み取り専用化も行いません（危険）。以前の実行で行われたマスクは、`droot umount` するまで残ります。 |
-| `--no-new-privileges` | `no_new_privs` フラグを設定します。setuid プログラム（`su`、`sudo` など）やファイル capability によって `COMMAND` に権限が付与されることはなくなります。`--user` と併用することをおすすめします。 |
+| `--no-new-privileges` | `no_new_privs` フラグを設定します。setuid プログラム（`su`、`sudo` など）やファイル capability によって `COMMAND` に権限が付与されることはなくなります。デフォルトで有効です。`sudo` や `su` を必要とするアプリケーションでは `--no-new-privileges=false` で無効にできます。 |
+| `--seccomp PROFILE` | `default` を指定すると、Docker のデフォルトプロファイルと同様に、アプリケーションが本来行う必要のないシステムコールを拒否する seccomp フィルタを設定します。名前空間の作成（`unshare`、`setns`、名前空間フラグ付きの `clone`）、マウント、モジュールやカーネルのロード、キーリング、`bpf`、perf イベント、`userfaultfd`、io_uring、時刻の設定、スワップ、再起動などが `EPERM` で失敗します（`clone3` は C ライブラリが `clone` を使うよう `ENOSYS` で失敗します）。amd64、arm64、arm、386 に対応しています。他のアーキテクチャのプログラム（64 ビットカーネル上の 32 ビットプログラムなど）はシステムコールを一切実行できません。デフォルトの `unconfined` ではフィルタを設定しません。 |
 
 注意事項:
 

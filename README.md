@@ -230,7 +230,8 @@ In order, droot:
 | `--hostname NAME` | Run `COMMAND` in a private UTS namespace whose host name is `NAME` (also the default of `HOSTNAME`). The host's name is not changed. |
 | `--read-only` | Make `ROOT_DIR` read-only for `COMMAND` (bind mounts and tmpfs keep their own mode: add `--tmpfs /tmp`, `--bind`, ... for what it writes). Implies `--unshare`, so that the read-only mount disappears with `COMMAND`. |
 | `--no-mask` | Leave `/proc` and `/sys` as they are: do not mask their sensitive files nor make `/proc/sys`, `/sys` and the like read-only (dangerous). Masks made by a previous run stay until `droot umount`. |
-| `--no-new-privileges` | Set the `no_new_privs` flag: setuid programs (`su`, `sudo`, ...) and file capabilities cannot grant privileges to `COMMAND`. Recommended with `--user`. |
+| `--no-new-privileges` | Set the `no_new_privs` flag: setuid programs (`su`, `sudo`, ...) and file capabilities cannot grant privileges to `COMMAND`. On by default; `--no-new-privileges=false` turns it off for applications that need `sudo` or `su`. |
+| `--seccomp PROFILE` | `default` installs a seccomp filter that denies, like Docker's default profile, the system calls an application has no business making: creating namespaces (`unshare`, `setns`, `clone` with namespace flags), mounting, loading modules or kernels, keyrings, `bpf`, perf events, `userfaultfd`, io_uring, setting clocks, swapping, rebooting, ... They fail with `EPERM` (`clone3` with `ENOSYS`, so that the C library uses `clone`). Supported on amd64, arm64, arm and 386; programs of another architecture (e.g. 32-bit programs on a 64-bit kernel) cannot make any system call. `unconfined`, the default, installs none. |
 
 Notes:
 

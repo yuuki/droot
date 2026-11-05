@@ -101,7 +101,15 @@ assert_eq "--exclude and --drop-docker-files" \
 rm -f "$WORK/r1.tar" "$WORK/r2.tar" "$WORK/app.tar.gz" "$WORK/app.tar.gz.sha256"
 PULL_IMAGE=docker.io/library/hello-world:latest
 $DOCKER rmi -f "$PULL_IMAGE" >/dev/null 2>&1 || true
-assert_eq "--pull" "$("$DROOT" export --pull "$PULL_IMAGE" 2>/dev/null | tar -t | grep -c '^hello$')" "1"
+if "$DROOT" export --pull -o "$WORK/pulled.tar" "$PULL_IMAGE" 2>"$WORK/pull.err"; then
+  assert_eq "--pull" "$(tar -tf "$WORK/pulled.tar" | grep -c '^hello$')" "1"
+  rm -f "$WORK/pulled.tar"
+elif grep -q "429 Too Many Requests" "$WORK/pull.err"; then
+  echo "skip - --pull: Docker Hub rate limit"
+else
+  cat "$WORK/pull.err" >&2
+  fail "--pull"
+fi
 $DOCKER rmi -f "$PULL_IMAGE" >/dev/null 2>&1 || true
 if [[ $DOCKER == docker ]] && docker system dial-stdio --help >/dev/null 2>&1; then
   # A fake ssh running `docker system dial-stdio` locally, against the
@@ -186,8 +194,14 @@ assert_eq "--bind-net-files" \
   "$("$DROOT" run --root "$WORK/app" --user root --bind-net-files -- sh -c 'cat /etc/resolv.conf /etc/hosts; touch /etc/hosts 2>/dev/null || echo ro')" \
   "$(cat /etc/resolv.conf /etc/hosts; echo ro)"
 "$DROOT" umount --root "$WORK/app"
-assert_eq "--no-new-privileges" \
-  "$("$DROOT" run --root "$WORK/app" --user app --no-new-privileges -- awk '/^NoNewPrivs/ {print $2}' /proc/self/status)" "1"
+assert_eq "no_new_privs is set by default, --no-new-privileges=false clears it" \
+  "$("$DROOT" run --root "$WORK/app" --user app -- awk '/^NoNewPrivs/ {print $2}' /proc/self/status) $("$DROOT" run --root "$WORK/app" --user app --no-new-privileges=false -- awk '/^NoNewPrivs/ {print $2}' /proc/self/status)" \
+  "1 0"
+# With every capability, root can mount, unless the seccomp profile denies it.
+assert_eq "--seccomp default" \
+  "$("$DROOT" run --root "$WORK/app" --user root --no-dropcaps --no-mask -- sh -c 'mount -t tmpfs t /mnt && echo mounted && umount /mnt'; "$DROOT" run --root "$WORK/app" --user root --no-dropcaps --seccomp default -- sh -c 'mount -t tmpfs t /mnt 2>/dev/null || echo denied; awk "/^Seccomp:/ {print \$2}" /proc/self/status')" \
+  "$(printf 'mounted\ndenied\n2')"
+"$DROOT" umount --root "$WORK/app"
 if command -v capsh >/dev/null; then
   assert_eq "inheritable capabilities of the caller are dropped" \
     "$(capsh --inh=cap_sys_admin -- -c "\"$DROOT\" run --root \"$WORK/app\" --user root -- awk '/^Cap(Inh|Eff)/ {print \$2}' /proc/self/status" | tr '\n' ' ')" \
