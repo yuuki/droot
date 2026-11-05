@@ -202,6 +202,26 @@ func TestResolveRefusesFIFO(t *testing.T) {
 	}
 }
 
+func TestResolveWarnsAboutTheDefaultGroup(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+	root := openRoot(t, t.TempDir())
+	if _, err := Resolve(root, "4000001", ""); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "use --group") {
+		t.Fatalf("want a warning, got %q", buf.String())
+	}
+	buf.Reset()
+	if _, err := Resolve(root, "4000001", "4000001"); err != nil {
+		t.Fatal(err)
+	}
+	if buf.Len() != 0 {
+		t.Fatalf("no warning expected with --group, got %q", buf.String())
+	}
+}
+
 func TestResolveWarnsWhenANameMapsToRoot(t *testing.T) {
 	rootDir := t.TempDir()
 	if err := os.Mkdir(filepath.Join(rootDir, "etc"), 0o755); err != nil {

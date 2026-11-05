@@ -20,6 +20,10 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
   user's primary group is used instead of droot's own group (`root` under
   sudo), and the supplementary groups are set from the container's
   `/etc/group` instead of being inherited from the invoking root user.
+- A numeric `--user` that exists neither in the container nor on the host is
+  accepted (droot 0.7 failed with "unknown userid"). Without `--group` it runs
+  with droot's own group, usually 0 under sudo, like Docker; a warning is
+  printed.
 - `CAP_DAC_READ_SEARCH` is no longer kept in the capability bounding set
   (container escape through `open_by_handle_at(2)`).
 - Files copied by `--cp` keep the host's ownership and permissions instead of

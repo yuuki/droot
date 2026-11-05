@@ -35,8 +35,6 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
   are created. `/dev/pts`, `/dev/ptmx`, `/dev/tty`, `/dev/full`, `/dev/shm`
   (tmpfs, needed e.g. by Python multiprocessing), `/dev/fd` and
   `/dev/std{in,out,err}` are missing, and `/tmp`/`/run` are not tmpfs.
-- **[ux]** An unknown numeric `--user` without `--group` runs with droot's own
-  group (0 under sudo), like Docker. Consider a warning.
 - **[ux]** Inherited behavior whose purpose is unclear: `--bind` creates a
   `.droot.keep` file in empty host directories. Decide whether to keep it.
 - **[compat]** `--cp` copies snapshots of the host files: later changes to the

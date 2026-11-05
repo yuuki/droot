@@ -91,6 +91,8 @@ func Resolve(root *osutil.Root, userSpec, groupSpec string) (*Credential, error)
 		cred.UID, cred.Username, cred.Home = u.UID, u.Name, u.Home
 		if u.GID >= 0 {
 			cred.GID = u.GID
+		} else if groupSpec == "" {
+			log.Warnf("--user %s has no entry in the container's /etc/passwd: running with gid %d (droot's own group); use --group to choose one", userSpec, cred.GID)
 		}
 	}
 	if groupSpec != "" {
