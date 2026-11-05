@@ -53,10 +53,11 @@ end-to-end tests and cross builds on every push and pull request.
 ## Dependencies
 
 droot intentionally depends on as little as possible: only
-`github.com/urfave/cli/v3` and `golang.org/x/sys`. Talking to Docker is done
-with the standard library (`internal/docker` package) instead of the Docker SDK, which
-pulls in dozens of modules. Please keep it that way; update
-`LICENSE_OF_DEPENDENCIES.md` when adding a dependency.
+`golang.org/x/sys`. The command line is parsed by a small package
+(`internal/cli`), and Docker is spoken to with the standard library
+(`internal/docker`) instead of the Docker SDK, which pulls in dozens of
+modules. Please keep it that way; update `LICENSE_OF_DEPENDENCIES.md` when
+adding a dependency.
 
 Dependabot (`.github/dependabot.yml`) proposes monthly, grouped updates of Go
 modules and GitHub Actions.

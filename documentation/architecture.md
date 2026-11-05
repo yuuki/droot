@@ -26,7 +26,8 @@ library, and its packages carry no compatibility promise.
 | Package | Role |
 |---|---|
 | `cmd/droot` | `main`: signal handling, version stamping. |
-| `internal/commands` | The CLI (urfave/cli v3): `export`, `run`, `umount`. |
+| `internal/cli` | A small command line parser: flags, help, suggestions for typos, shell completion scripts. |
+| `internal/commands` | The commands: `export`, `run`, `umount`. |
 | `internal/docker` | A minimal Docker Engine API client written with the standard library, and the export logic. |
 | `internal/environ` | Reading, validating and merging `KEY=VALUE` environment variables (`/.drootenv`). |
 | `internal/identity` | Resolving `--user`/`--group` to uid, gid and supplementary groups. |
@@ -34,8 +35,7 @@ library, and its packages carry no compatibility promise.
 | `internal/osutil` | File system and process helpers: secure path resolution, file copy, devices, capabilities, credentials, exec. |
 | `internal/log` | A tiny leveled logger writing to STDERR. |
 
-Only two third-party modules are used: `github.com/urfave/cli/v3` and
-`golang.org/x/sys`.
+Only one third-party module is used: `golang.org/x/sys`.
 
 ## `droot export`
 

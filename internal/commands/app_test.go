@@ -13,8 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/urfave/cli/v3"
-
+	"github.com/yuuki/droot/internal/cli"
 	"github.com/yuuki/droot/internal/log"
 )
 
@@ -31,20 +30,16 @@ func parseRun(t *testing.T, argv ...string) (parsedRun, error) {
 	t.Helper()
 	var got parsedRun
 	app := NewApp("test")
-	app.Writer, app.ErrWriter = io.Discard, io.Discard
-	for _, c := range app.Commands {
-		if c.Name == "run" {
-			c.Action = func(_ context.Context, cmd *cli.Command) error {
-				got = parsedRun{
-					args: cmd.Args().Slice(), root: cmd.String("root"), user: cmd.String("user"), group: cmd.String("group"),
-					bind: cmd.StringSlice("bind"), robind: cmd.StringSlice("robind"), env: cmd.StringSlice("env"),
-					copyFiles: cmd.Bool("copy-files"), noDrop: cmd.Bool("no-dropcaps"), D: cmd.Bool("debug"),
-				}
-				return nil
-			}
+	app.Stdout = io.Discard
+	app.Command("run").Action = func(_ context.Context, cmd *cli.Invocation) error {
+		got = parsedRun{
+			args: cmd.Args(), root: cmd.String("root"), user: cmd.String("user"), group: cmd.String("group"),
+			bind: cmd.Strings("bind"), robind: cmd.Strings("robind"), env: cmd.Strings("env"),
+			copyFiles: cmd.Bool("copy-files"), noDrop: cmd.Bool("no-dropcaps"), D: cmd.Bool("debug"),
 		}
+		return nil
 	}
-	err := app.Run(context.Background(), prepareArgs(app, append([]string{"droot"}, argv...)))
+	err := app.Run(context.Background(), append([]string{"droot"}, argv...))
 	return got, err
 }
 
@@ -95,9 +90,19 @@ func TestRunFlagParsing(t *testing.T) {
 			want: parsedRun{args: []string{"h", "x"}, root: "/c"},
 		},
 		{
-			name: "COMMAND ending in the shell completion flag",
-			argv: []string{"run", "-r", "/c", "echo", "--generate-shell-completion"},
-			want: parsedRun{args: []string{"echo", "--generate-shell-completion"}, root: "/c"},
+			name: "flags of droot after COMMAND belong to COMMAND",
+			argv: []string{"run", "-r", "/c", "echo", "--help", "-D", "--root", "/x"},
+			want: parsedRun{args: []string{"echo", "--help", "-D", "--root", "/x"}, root: "/c"},
+		},
+		{
+			name: "boolean flags with a value",
+			argv: []string{"run", "--cp=true", "--no-dropcaps=false", "-D=1", "-r", "/c", "true"},
+			want: parsedRun{args: []string{"true"}, root: "/c", copyFiles: true, D: true},
+		},
+		{
+			name: "a lone dash is COMMAND",
+			argv: []string{"run", "-r", "/c", "-", "x"},
+			want: parsedRun{args: []string{"-", "x"}, root: "/c"},
 		},
 		{
 			name: "repeatable flags and commas",
@@ -131,17 +136,17 @@ func TestRunFlagParsing(t *testing.T) {
 }
 
 func TestHelpStillWorks(t *testing.T) {
-	for _, argv := range [][]string{{"help", "run"}, {"run", "--help"}, {"run", "-h"}, {"export", "-h"}, {"--help"}} {
+	for _, argv := range [][]string{{"help", "run"}, {"h", "run"}, {"run", "--help"}, {"run", "-h"}, {"run", "-r", "/x", "-h"}, {"export", "-h"}, {"export", "img", "--help"}, {"--help"}, {"help"}, {}} {
 		var out strings.Builder
 		app := NewApp("test")
-		app.Writer, app.ErrWriter = &out, io.Discard
+		app.Stdout = &out
 		for _, c := range app.Commands {
-			c.Action = func(context.Context, *cli.Command) error {
+			c.Action = func(context.Context, *cli.Invocation) error {
 				t.Errorf("droot %q ran the action instead of showing help", argv)
 				return nil
 			}
 		}
-		if err := app.Run(context.Background(), prepareArgs(app, append([]string{"droot"}, argv...))); err != nil {
+		if err := app.Run(context.Background(), append([]string{"droot"}, argv...)); err != nil {
 			t.Errorf("droot %q: %v", argv, err)
 		}
 		if !strings.Contains(out.String(), "USAGE") {
@@ -174,7 +179,7 @@ func TestUsageErrors(t *testing.T) {
 		{"umount", "--root", "/", "extra"}, // stray argument
 	} {
 		app := NewApp("test")
-		app.Writer, app.ErrWriter = io.Discard, io.Discard
+		app.Stdout = io.Discard
 		err := app.Run(context.Background(), append([]string{"droot"}, argv...))
 		if err == nil || !strings.Contains(err.Error(), "--help") {
 			t.Errorf("droot %q: want usage error, got %v", argv, err)
@@ -189,7 +194,7 @@ func TestUmountRefusesRoot(t *testing.T) {
 		t.Skip("not run as root")
 	}
 	app := NewApp("test")
-	app.Writer, app.ErrWriter = io.Discard, io.Discard
+	app.Stdout = io.Discard
 	err := app.Run(context.Background(), []string{"droot", "umount", "--root", "/"})
 	if err == nil || !strings.Contains(err.Error(), "refusing") {
 		t.Fatalf("umount --root / must be refused, got %v", err)
@@ -407,11 +412,18 @@ func TestErrorMessages(t *testing.T) {
 		{[]string{"run", "-rot=/x", "--", "true"}, "unknown flag -rot; did you mean --root?"},
 		{[]string{"run", "--bogus", "--", "true"}, "unknown flag --bogus (see 'droot run --help')"},
 		{[]string{"umount", "--rooot", "/x"}, "did you mean --root?"},
+		{[]string{"run", "---root", "/x", "true"}, "unknown flag ---root; did you mean --root?"},
+		{[]string{"run", "-r"}, "flag -r needs an argument (see 'droot run --help')"},
+		{[]string{"export", "-o"}, "flag -o needs an argument (see 'droot export --help')"},
+		{[]string{"run", "--cp=maybe", "-r", "/x", "true"}, `invalid value "maybe" for flag --cp`},
+		{[]string{"--root", "/x", "run"}, "unknown flag --root (see 'droot --help')"},
+		{[]string{"completion"}, "exactly one shell is required"},
+		{[]string{"completion", "tcsh"}, `unsupported shell "tcsh"`},
 	}
 	for _, tt := range tests {
 		app := NewApp("test")
-		app.Writer, app.ErrWriter = io.Discard, io.Discard
-		err := run(context.Background(), app, append([]string{"droot"}, tt.argv...))
+		app.Stdout = io.Discard
+		err := app.Run(context.Background(), append([]string{"droot"}, tt.argv...))
 		if err == nil || !strings.Contains(err.Error(), tt.want) {
 			t.Errorf("droot %q: got %v, want %q", tt.argv, err, tt.want)
 		}
@@ -420,19 +432,31 @@ func TestErrorMessages(t *testing.T) {
 	// Known help topics still work.
 	var out strings.Builder
 	app := NewApp("test")
-	app.Writer, app.ErrWriter = &out, io.Discard
-	if err := run(context.Background(), app, []string{"droot", "help", "export"}); err != nil || !strings.Contains(out.String(), "droot export") {
+	app.Stdout = &out
+	if err := app.Run(context.Background(), []string{"droot", "help", "export"}); err != nil || !strings.Contains(out.String(), "droot export") {
 		t.Errorf("help export: %v, %q", err, out.String())
 	}
 }
 
-func TestEditDistance(t *testing.T) {
-	for _, tt := range []struct {
-		a, b string
-		want int
-	}{{"run", "run", 0}, {"rnu", "run", 1}, {"rot", "root", 1}, {"exprot", "export", 1}, {"abc", "xyz", 3}} {
-		if got := editDistance(tt.a, tt.b); got != tt.want {
-			t.Errorf("editDistance(%q, %q) = %d, want %d", tt.a, tt.b, got, tt.want)
+func TestDebugFromInvalidEnv(t *testing.T) {
+	t.Setenv("DROOT_DEBUG", "yes please")
+	if _, err := parseRun(t, "run", "-r", "/c", "true"); err == nil || !strings.Contains(err.Error(), "DROOT_DEBUG") {
+		t.Fatalf("want an error about DROOT_DEBUG, got %v", err)
+	}
+	// The flag takes precedence over the environment.
+	got, err := parseRun(t, "run", "--debug=false", "-r", "/c", "true")
+	if err != nil || got.D {
+		t.Fatalf("--debug=false must win over DROOT_DEBUG: %+v, %v", got, err)
+	}
+}
+
+func TestVersion(t *testing.T) {
+	for _, argv := range [][]string{{"--version"}, {"-v"}} {
+		var out strings.Builder
+		app := NewApp("1.2.3")
+		app.Stdout = &out
+		if err := app.Run(context.Background(), append([]string{"droot"}, argv...)); err != nil || out.String() != "droot version 1.2.3\n" {
+			t.Errorf("droot %q: %v, %q", argv, err, out.String())
 		}
 	}
 }

@@ -11,8 +11,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/urfave/cli/v3"
-
+	"github.com/yuuki/droot/internal/cli"
 	"github.com/yuuki/droot/internal/docker"
 	"github.com/yuuki/droot/internal/osutil"
 )
@@ -28,32 +27,37 @@ func exportCommand() *cli.Command {
 			"'droot run' can restore them.\n\n" +
 			"The Docker daemon is selected like the docker CLI does, from DOCKER_HOST,\n" +
 			"DOCKER_TLS_VERIFY, DOCKER_CERT_PATH, DOCKER_CONTEXT or the current docker context.",
-		Flags: []cli.Flag{
-			&cli.StringFlag{
-				Name:    "output",
-				Aliases: []string{"o"},
-				Usage:   "write the archive to `FILE` instead of STDOUT (written atomically)",
+		Flags: []*cli.Flag{
+			{
+				Name:        "output",
+				Aliases:     []string{"o"},
+				Kind:        cli.String,
+				Placeholder: "FILE",
+				Usage:       "write the archive to FILE instead of STDOUT (written atomically)",
+				Complete:    "file",
 			},
-			&cli.StringFlag{
-				Name:  "platform",
-				Usage: "export the `PLATFORM` variant of a multi-platform image, e.g. linux/amd64",
+			{
+				Name:        "platform",
+				Kind:        cli.String,
+				Placeholder: "PLATFORM",
+				Usage:       "export the PLATFORM variant of a multi-platform image, e.g. linux/amd64",
 			},
 		},
 		Action: doExport,
 	}
 }
 
-func doExport(ctx context.Context, cmd *cli.Command) error {
+func doExport(ctx context.Context, cmd *cli.Invocation) error {
 	setup(cmd)
-	if cmd.NArg() != 1 || cmd.Args().First() == "" {
-		return usageError(cmd, "exactly one image is required")
+	if len(cmd.Args()) != 1 || cmd.Args()[0] == "" {
+		return cmd.UsageError("exactly one image is required")
 	}
-	image := cmd.Args().First()
+	image := cmd.Args()[0]
 	output := cmd.String("output")
 	toStdout := output == "" || output == "-"
 
 	if toStdout && osutil.IsTerminal(os.Stdout) {
-		return usageError(cmd, "refusing to write a tar archive to a terminal; use -o FILE or redirect stdout")
+		return cmd.UsageError("refusing to write a tar archive to a terminal; use -o FILE or redirect stdout")
 	}
 
 	client, err := docker.NewClientFromEnv()

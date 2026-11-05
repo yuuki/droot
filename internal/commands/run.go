@@ -11,8 +11,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/urfave/cli/v3"
-
+	"github.com/yuuki/droot/internal/cli"
 	"github.com/yuuki/droot/internal/environ"
 	"github.com/yuuki/droot/internal/identity"
 	"github.com/yuuki/droot/internal/log"
@@ -21,7 +20,6 @@ import (
 )
 
 func runCommand() *cli.Command {
-	stopAfterCommand := 1 // everything after COMMAND belongs to COMMAND
 	return &cli.Command{
 		Name:      "run",
 		Usage:     "Run a command in a container root directory with chroot(2)",
@@ -30,19 +28,30 @@ func runCommand() *cli.Command {
 			"basic device files, chroots into ROOT_DIR, drops capabilities from the\n" +
 			"bounding set, switches to --user/--group and executes COMMAND with the\n" +
 			"environment saved by 'droot export' (/.drootenv) plus --env.\n\n" +
-			"Mounts are left in place after COMMAND exits; remove them with 'droot umount'.\n" +
-			"Must be run as root.",
-		StopOnNthArg: &stopAfterCommand,
-		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "root", Aliases: []string{"r"}, Usage: "root directory `ROOT_DIR` to chroot into (required)"},
-			&cli.StringFlag{Name: "user", Aliases: []string{"u"}, Usage: "`USER` (name or ID) to run COMMAND as; names are looked up in ROOT_DIR/etc/passwd, then on the host"},
-			&cli.StringFlag{Name: "group", Aliases: []string{"g"}, Usage: "`GROUP` (name or ID) to run COMMAND as (default: the primary group of --user)"},
-			&cli.StringSliceFlag{Name: "bind", Aliases: []string{"b"}, Usage: "bind mount `SRC[:DEST]` from the host into the container (repeatable)"},
-			&cli.StringSliceFlag{Name: "robind", Usage: "read-only bind mount `SRC[:DEST]` (repeatable)"},
-			&cli.BoolFlag{Name: "copy-files", Aliases: []string{"cp"}, Usage: "copy the host's " + strings.Join(hostFiles, ", ") + " into the container"},
-			&cli.BoolFlag{Name: "no-dropcaps", Usage: "do not drop capabilities (dangerous)"},
-			&cli.BoolFlag{Name: "no-new-privileges", Usage: "set no_new_privs: setuid programs and file capabilities cannot grant privileges to COMMAND"},
-			&cli.StringSliceFlag{Name: "env", Aliases: []string{"e"}, Usage: "set environment variable `KEY=VALUE`, overriding /.drootenv (repeatable)"},
+			"The options must come before COMMAND: everything from COMMAND on is passed\n" +
+			"to it verbatim. Mounts are left in place after COMMAND exits; remove them\n" +
+			"with 'droot umount'. Must be run as root.",
+		StopAtFirstArg: true, // everything from COMMAND on belongs to COMMAND
+		ArgsComplete:   "command",
+		Flags: []*cli.Flag{
+			{Name: "root", Aliases: []string{"r"}, Kind: cli.String, Placeholder: "ROOT_DIR", Complete: "dir",
+				Usage: "root directory to chroot into (required)"},
+			{Name: "user", Aliases: []string{"u"}, Kind: cli.String, Placeholder: "USER", Complete: "user",
+				Usage: "user (name or ID) to run COMMAND as; names are looked up in ROOT_DIR/etc/passwd, then on the host"},
+			{Name: "group", Aliases: []string{"g"}, Kind: cli.String, Placeholder: "GROUP", Complete: "group",
+				Usage: "group (name or ID) to run COMMAND as (default: the primary group of --user)"},
+			{Name: "bind", Aliases: []string{"b"}, Kind: cli.Strings, Placeholder: "SRC[:DEST]", Complete: "file",
+				Usage: "bind mount SRC from the host on DEST (default: SRC) in the container"},
+			{Name: "robind", Kind: cli.Strings, Placeholder: "SRC[:DEST]", Complete: "file",
+				Usage: "read-only bind mount"},
+			{Name: "copy-files", Aliases: []string{"cp"}, Kind: cli.Bool,
+				Usage: "copy the host's " + strings.Join(hostFiles, ", ") + " into the container"},
+			{Name: "no-dropcaps", Kind: cli.Bool,
+				Usage: "do not drop capabilities (dangerous)"},
+			{Name: "no-new-privileges", Kind: cli.Bool,
+				Usage: "set no_new_privs: setuid programs and file capabilities cannot grant privileges to COMMAND"},
+			{Name: "env", Aliases: []string{"e"}, Kind: cli.Strings, Placeholder: "KEY=VALUE",
+				Usage: "set an environment variable, overriding /.drootenv"},
 		},
 		Action: doRun,
 	}
@@ -80,18 +89,18 @@ type bindMount struct {
 	readonly        bool
 }
 
-func doRun(ctx context.Context, cmd *cli.Command) error {
+func doRun(ctx context.Context, cmd *cli.Invocation) error {
 	setup(cmd)
 	if runtime.GOOS != "linux" {
 		return fmt.Errorf("droot run is only supported on Linux (running on %s)", runtime.GOOS)
 	}
 
-	argv := cmd.Args().Slice()
+	argv := cmd.Args()
 	if len(argv) == 0 || argv[0] == "" {
-		return usageError(cmd, "a command to run is required")
+		return cmd.UsageError("a command to run is required")
 	}
 	if cmd.String("root") == "" {
-		return usageError(cmd, "--root is required")
+		return cmd.UsageError("--root is required")
 	}
 	if os.Geteuid() != 0 {
 		return errors.New("droot run must be run as root (it needs to mount, chroot and switch users)")
@@ -102,20 +111,20 @@ func doRun(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 
-	extraEnv := cmd.StringSlice("env")
+	extraEnv := cmd.Strings("env")
 	if err := environ.Validate(extraEnv); err != nil {
 		return err
 	}
 
 	var binds []bindMount
-	for _, spec := range cmd.StringSlice("bind") {
+	for _, spec := range cmd.Strings("bind") {
 		b, err := parseBindOption(spec)
 		if err != nil {
 			return err
 		}
 		binds = append(binds, b)
 	}
-	for _, spec := range cmd.StringSlice("robind") {
+	for _, spec := range cmd.Strings("robind") {
 		b, err := parseBindOption(spec)
 		if err != nil {
 			return err

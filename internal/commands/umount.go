@@ -3,8 +3,7 @@ package commands
 import (
 	"context"
 
-	"github.com/urfave/cli/v3"
-
+	"github.com/yuuki/droot/internal/cli"
 	"github.com/yuuki/droot/internal/log"
 	"github.com/yuuki/droot/internal/mounter"
 	"github.com/yuuki/droot/internal/osutil"
@@ -17,20 +16,20 @@ func umountCommand() *cli.Command {
 		Description: "Lazily unmounts (MNT_DETACH) every mount point below ROOT_DIR, deepest\n" +
 			"first, and fails if some cannot be unmounted. ROOT_DIR itself is never\n" +
 			"unmounted. It is safe to run when nothing is mounted.",
-		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "root", Aliases: []string{"r"}, Usage: "root directory `ROOT_DIR` used with 'droot run' (required)"},
+		Flags: []*cli.Flag{
+			{Name: "root", Aliases: []string{"r"}, Kind: cli.String, Placeholder: "ROOT_DIR", Usage: "root directory used with 'droot run' (required)", Complete: "dir"},
 		},
 		Action: doUmount,
 	}
 }
 
-func doUmount(_ context.Context, cmd *cli.Command) error {
+func doUmount(_ context.Context, cmd *cli.Invocation) error {
 	setup(cmd)
 	if cmd.String("root") == "" {
-		return usageError(cmd, "--root is required")
+		return cmd.UsageError("--root is required")
 	}
-	if cmd.NArg() > 0 {
-		return usageError(cmd, "unexpected arguments: %q", cmd.Args().Slice())
+	if len(cmd.Args()) > 0 {
+		return cmd.UsageError("unexpected arguments: %q", cmd.Args())
 	}
 	rootDir, err := mounter.ResolveRootDir(cmd.String("root"))
 	if err != nil {

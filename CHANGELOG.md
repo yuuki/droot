@@ -46,9 +46,12 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
   verifying the certificate* when only `DOCKER_CERT_PATH` was set, even with
   a `ca.pem`, which let a man in the middle serve a fake daemon and inject
   files into archives later run as root.
-- The CLI moved to urfave/cli v3: help output changed, and usage errors
-  (unknown commands, flags or help topics) print a short hint, with a
-  suggestion, instead of the full help, and exit with status 1.
+- The command line is parsed by droot itself instead of urfave/cli: help
+  output changed, and usage errors (unknown commands, flags or help topics)
+  print a short hint, with a suggestion, instead of the full help, and exit
+  with status 1. Repeatable options (`--env`, `--bind`, ...) never split
+  their values on commas. Only `droot help` remains as a help command
+  (`droot help run`, `droot run --help`); subcommands have none.
 - The options of `droot run` must come before COMMAND: `droot run CMD --root
   R`, which droot 0.7 accepted by moving the flags ahead, is now an error
   (everything after COMMAND belongs to COMMAND).
@@ -184,7 +187,9 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
 - A warning when `--user NAME` maps to uid 0 in the image.
 - Temporary export containers are labeled `io.github.yuuki.droot`.
 - Bind mounting single files with `--bind`/`--robind`.
-- `droot completion bash|zsh|fish`.
+- `droot completion bash|zsh|fish` prints a completion script for the
+  commands and options, including the users, groups and directories taken by
+  `droot run` options, and the command line after `droot run`'s COMMAND.
 - `--debug` can be given after the subcommand.
 - Helpful error messages: missing images, a command whose ELF/script
   interpreter is missing in the container, writing an archive to a terminal.
@@ -202,7 +207,8 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
 - The dependency on `github.com/docker/docker` and its transitive modules
   (`docker/distribution`, `docker/go-connections`, `docker/go-units`,
   `docker/libtrust`, `opencontainers/go-digest`, `sirupsen/logrus`), as well as
-  `pkg/errors` and `golang.org/x/net`. droot now depends only on
-  `github.com/urfave/cli/v3` and `golang.org/x/sys`.
+  `pkg/errors` and `golang.org/x/net`, and `github.com/urfave/cli` (replaced
+  by a small parser in `internal/cli`). droot now depends only on
+  `golang.org/x/sys`.
 - The goxc/ghr/gobump release scripts and the Dockerfile used to build in a
   container (cross compilation needs no cgo any more).

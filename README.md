@@ -200,8 +200,13 @@ be a file system of its own. The command is idempotent and refuses `/`.
 
 ### Shell completion
 
-`droot completion bash|zsh|fish` prints a completion script, e.g.
-`source <(droot completion bash)`.
+`droot completion bash|zsh|fish` prints a completion script:
+
+```console
+$ source <(droot completion bash)     # in ~/.bashrc
+$ source <(droot completion zsh)      # in ~/.zshrc, after compinit
+$ droot completion fish > ~/.config/fish/completions/droot.fish
+```
 
 ## Choosing the Docker daemon
 

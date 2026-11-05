@@ -72,8 +72,8 @@ func TestRunAbortsWhenInterrupted(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Ctrl-C before the setup
 	app := NewApp("test")
-	app.Writer, app.ErrWriter = io.Discard, io.Discard
-	err := app.Run(ctx, prepareArgs(app, []string{"droot", "run", "--root", rootDir, "--", "/bin/true"}))
+	app.Stdout = io.Discard
+	err := app.Run(ctx, []string{"droot", "run", "--root", rootDir, "--", "/bin/true"})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("want context.Canceled, got %v", err)
 	}

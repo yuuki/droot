@@ -115,7 +115,7 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
 ### Usability
 
 - **[ux]** man pages and Markdown CLI reference generated from the CLI
-  definition (urfave/cli can render them).
+  definition (`internal/cli`).
 - **[ux]** `droot version` with commit and build date; `--quiet`; structured
   logs (`log/slog`, JSON).
 - **[ux]** A declarative file (e.g. `/etc/droot/app.toml`) describing the run
