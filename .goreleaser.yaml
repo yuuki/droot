@@ -13,7 +13,13 @@ builds:
     env:
       - CGO_ENABLED=0
     goos: [linux, darwin]
-    goarch: [amd64, arm64]
+    goarch: [amd64, arm64, arm]
+    # 32-bit ARM (e.g. a Raspberry Pi running a 32-bit OS) is only built
+    # for Linux, as ARMv7 with hardware floating point.
+    goarm: ["7"]
+    ignore:
+      - goos: darwin
+        goarch: arm
     flags: [-trimpath]
     ldflags:
       - -s -w -X main.version={{ .Version }}
@@ -23,13 +29,14 @@ builds:
 # download scripts using releases/latest/download/... and the Homebrew
 # formula keep working: droot_linux_amd64.tar.gz and droot_darwin_amd64.zip
 # containing droot_<os>_<arch>/droot, and bare droot_<os>_<arch> binaries.
+# 32-bit ARM assets are named droot_linux_armv7.
 archives:
   - id: archive
     formats: [tar.gz]
     format_overrides:
       - goos: darwin
         formats: [zip]
-    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}"
     wrap_in_directory: true
     files:
       - LICENSE
@@ -38,7 +45,7 @@ archives:
       - CHANGELOG.md
   - id: binary
     formats: [binary]
-    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}"
 
 checksum:
   name_template: checksums.txt

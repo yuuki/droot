@@ -44,10 +44,11 @@ Building from source requires Go 1.26 or later.
 
 ### Prebuilt binaries
 
-Static binaries for Linux and macOS (amd64 and arm64) are attached to every
+Static binaries for Linux (amd64, arm64 and 32-bit ARMv7, e.g. a Raspberry
+Pi with a 32-bit OS) and macOS (amd64 and arm64) are attached to every
 [GitHub release](https://github.com/yuuki/droot/releases), both as archives
-(`droot_linux_amd64.tar.gz`, `droot_darwin_arm64.zip`, ...) and as bare
-binaries:
+(`droot_linux_amd64.tar.gz`, `droot_linux_armv7.tar.gz`,
+`droot_darwin_arm64.zip`, ...) and as bare binaries:
 
 ```console
 $ curl -fsSL -o droot https://github.com/yuuki/droot/releases/latest/download/droot_linux_amd64

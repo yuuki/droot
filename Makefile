@@ -51,8 +51,8 @@ tidy: ## Tidy go.mod and go.sum
 
 .PHONY: cross
 cross: ## Check that droot builds for every released platform
-	for p in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do \
-		GOOS=$${p%/*} GOARCH=$${p#*/} CGO_ENABLED=0 go build -o /dev/null ./cmd/droot || exit 1; \
+	for p in linux/amd64 linux/arm64 linux/arm darwin/amd64 darwin/arm64; do \
+		GOOS=$${p%/*} GOARCH=$${p#*/} GOARM=7 CGO_ENABLED=0 go build -o /dev/null ./cmd/droot || exit 1; \
 	done
 
 .PHONY: snapshot
