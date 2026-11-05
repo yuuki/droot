@@ -123,10 +123,8 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
 ### Project and maintenance
 
 - **[project]** Automate the Homebrew tap with GoReleaser, or drop it.
-- **[project]** Sign releases (cosign keyless), publish an SBOM and build
-  provenance (GitHub artifact attestations).
 - **[project]** Fuzz tests for `environ.ParseEnv`, `mounter.ParseMountInfo`,
   the path resolution of `osutil.Root` and the tar rewriting.
 - **[project]** End-to-end tests on arm64 runners and with Podman; coverage
   reporting.
-- **[project]** `SECURITY.md`, issue/PR templates, a Japanese README.
+- **[project]** Issue/PR templates, a Japanese README.

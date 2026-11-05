@@ -55,6 +55,25 @@ $ curl -fsSL -o droot https://github.com/yuuki/droot/releases/latest/download/dr
 $ chmod +x droot && sudo mv droot /usr/local/bin/
 ```
 
+#### Verifying a release
+
+droot runs as root, so check what you install. Starting with 0.8.0,
+`checksums.txt` is signed by the release workflow with
+[cosign](https://docs.sigstore.dev/) keyless signing, every asset has a
+[build provenance attestation](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations),
+and every archive comes with an SPDX SBOM (`droot_linux_amd64.tar.gz.sbom.json`, ...):
+
+```console
+$ V=0.8.0 B=https://github.com/yuuki/droot/releases/download
+$ curl -fsSLO "$B/v$V/checksums.txt" -O "$B/v$V/checksums.txt.sigstore.json" -O "$B/v$V/droot_linux_amd64"
+$ cosign verify-blob --bundle checksums.txt.sigstore.json \
+    --certificate-identity "https://github.com/yuuki/droot/.github/workflows/release.yml@refs/tags/v$V" \
+    --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+    checksums.txt
+$ sha256sum --check --ignore-missing checksums.txt
+$ gh attestation verify --repo yuuki/droot droot_linux_amd64
+```
+
 ### go install
 
 ```console

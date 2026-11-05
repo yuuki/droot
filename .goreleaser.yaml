@@ -50,6 +50,24 @@ archives:
 checksum:
   name_template: checksums.txt
 
+# Keyless signature of checksums.txt with the GitHub OIDC identity of the
+# release workflow, written as checksums.txt.sigstore.json. Verifying it and
+# then the checksums verifies every asset (see README.md).
+signs:
+  - cmd: cosign
+    signature: "${artifact}.sigstore.json"
+    args:
+      - sign-blob
+      - "--bundle=${signature}"
+      - "${artifact}"
+      - "--yes"
+    artifacts: checksum
+
+# An SPDX SBOM per archive (droot_linux_amd64.tar.gz.sbom.json, ...),
+# written by syft.
+sboms:
+  - artifacts: archive
+
 snapshot:
   version_template: "{{ incpatch .Version }}-next"
 

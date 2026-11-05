@@ -56,8 +56,8 @@ cross: ## Check that droot builds for every released platform
 	done
 
 .PHONY: snapshot
-snapshot: ## Build release archives locally into dist/ without publishing
-	go run github.com/goreleaser/goreleaser/v2@$(GORELEASER_VERSION) release --snapshot --clean
+snapshot: ## Build release archives locally into dist/ without publishing (no signature nor SBOM)
+	go run github.com/goreleaser/goreleaser/v2@$(GORELEASER_VERSION) release --snapshot --clean --skip=sign,sbom
 
 .PHONY: clean
 clean: ## Remove build outputs

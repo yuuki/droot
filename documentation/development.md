@@ -72,10 +72,22 @@ Releases are built by [GoReleaser](https://goreleaser.com) from
 2. Tag and push: `git tag v0.8.0 && git push origin v0.8.0`.
 3. The `Release` workflow creates a **draft** GitHub release with the assets
    named like those of droot 0.7.7 — `droot_linux_<arch>.tar.gz`,
-   `droot_darwin_<arch>.zip` and bare `droot_<os>_<arch>` binaries — and
-   `checksums.txt`. Review it and publish it.
+   `droot_darwin_<arch>.zip` and bare `droot_<os>_<arch>` binaries — plus
+   `checksums.txt`, its cosign signature `checksums.txt.sigstore.json` and
+   an SBOM per archive, and attests the build provenance of every asset.
+   Check the signature as described in the README ("Verifying a release"),
+   review the release and publish it.
 4. Update the Homebrew tap (`yuuki/homebrew-droot`) with the new URL and
    checksum.
+
+Signing and attestations use the GitHub OIDC token of the workflow: no
+secret is needed, but the repository must allow GitHub Actions to request
+it (the default). `make snapshot` builds the same assets locally, without
+signature and SBOM.
+
+Vulnerability reports go through GitHub's private vulnerability reporting
+(see `SECURITY.md`), which must be enabled in the repository settings
+(Security → Private vulnerability reporting).
 
 The version printed by `droot --version` comes from `-X main.version` (set by
 GoReleaser and `make build`) or, for `go install`, from the module version.

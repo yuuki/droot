@@ -5,7 +5,9 @@ on:
     tags: ["v*"]
 
 permissions:
-  contents: write
+  contents: write # create the draft release
+  id-token: write # cosign keyless signing and attestations (GitHub OIDC)
+  attestations: write # build provenance attestations
 
 jobs:
   goreleaser:
@@ -17,9 +19,17 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: stable
+      # cosign signs checksums.txt, syft writes the SBOMs (.goreleaser.yaml).
+      - uses: sigstore/cosign-installer@v4
+      - uses: anchore/sbom-action/download-syft@v0
       - uses: goreleaser/goreleaser-action@v7
         with:
           version: "~> v2"
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # SLSA build provenance for every file listed in checksums.txt
+      # (archives and bare binaries). Verify with `gh attestation verify`.
+      - uses: actions/attest@v4
+        with:
+          subject-checksums: ./dist/checksums.txt

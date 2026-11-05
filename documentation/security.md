@@ -83,5 +83,5 @@ running on the host with a different root directory.
 
 ## Reporting a vulnerability
 
-Please report security issues privately to the author via the contact
-information on https://github.com/yuuki rather than in a public issue.
+Please report security issues privately, as described in
+[SECURITY.md](../SECURITY.md), rather than in a public issue.

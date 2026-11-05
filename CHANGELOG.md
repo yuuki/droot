@@ -197,6 +197,10 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
   interpreter is missing in the container, writing an archive to a terminal.
 - linux/arm64, linux/arm (ARMv7, `droot_linux_armv7`) and darwin/arm64
   binaries and a `checksums.txt` in releases.
+- Verifiable releases: `checksums.txt` is signed with cosign keyless signing
+  (`checksums.txt.sigstore.json`), every asset has a GitHub build provenance
+  attestation, and every archive an SPDX SBOM (`*.sbom.json`).
+- `SECURITY.md`: how to report vulnerabilities privately.
   The assets keep the names and layout of 0.7.7 (`droot_linux_amd64.tar.gz`,
   `droot_darwin_amd64.zip`, bare `droot_linux_amd64`, ...).
 - Documentation: architecture, security considerations, development guide,
