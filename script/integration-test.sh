@@ -116,6 +116,9 @@ assert_eq "--env-file and --env KEY take values from droot's environment" \
   "1 file p h unset"
 assert_eq "capability bounding set" \
   "$("$DROOT" run --root "$WORK/app" --user root -- awk '/^CapBnd/ {print $2}' /proc/self/status)" "00000000000004cb"
+assert_eq "--ulimit" \
+  "$("$DROOT" run --root "$WORK/app" --ulimit nofile=1024:2048 --ulimit core=0 -- sh -c 'ulimit -Sn; ulimit -Hn; ulimit -c')" \
+  "$(printf '1024\n2048\n0')"
 assert_eq "--cap-drop and --cap-add" \
   "$("$DROOT" run --root "$WORK/app" --user root --cap-drop ALL --cap-add net_raw --cap-add CAP_KILL -- awk '/^CapBnd/ {print $2}' /proc/self/status)" \
   "0000000000002020"

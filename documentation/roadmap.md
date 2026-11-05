@@ -66,8 +66,9 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
   enabling `no_new_privs` by default (with an opt-out: it breaks `sudo`/`su`).
 - **[feature]** Bind propagation modes (`shared`, `private`, ...); droot makes
   every mount a slave mount today.
-- **[feature]** Resource limits: `--ulimit`, cgroup v2 (`--memory`, `--cpus`,
-  `--pids-limit`), or documented `systemd-run --scope` integration.
+- **[feature]** cgroup v2 limits (`--memory`, `--cpus`, `--pids-limit`) without
+  systemd; who removes the cgroup after the command exits must be decided.
+  Today: `--ulimit`, and systemd (`systemd-run --scope`, `MemoryMax=`).
 - **[feature]** `droot umount --all`.
 - **[feature]** Rootless mode with user namespaces.
 

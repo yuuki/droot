@@ -214,6 +214,8 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
   tmpfs on `/dev/shm`, and the `/dev/fd`, `/dev/stdin`, `/dev/stdout` and
   `/dev/stderr` symlinks, in addition to the four devices of droot 0.7.
 - `droot run --tmpfs PATH[:OPTS]`, e.g. for `/tmp` and `/run`.
+- `droot run --ulimit NAME=SOFT[:HARD]` sets resource limits; the README
+  shows how to apply cgroup limits with systemd.
 - `droot run --unshare` makes the mounts in a private mount namespace, so
   that they disappear with the command; `--unshare-ipc` and `--hostname NAME`
   give it a private IPC or UTS namespace, and `--read-only` a read-only root.

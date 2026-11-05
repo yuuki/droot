@@ -203,6 +203,7 @@ In order, droot:
 | `--cap-add CAP` | Also keep the capability `CAP` in the bounding set: a name with or without `CAP_`, in any case (`NET_RAW`, `cap_sys_ptrace`), or `ALL`. Repeatable. |
 | `--cap-drop CAP` | Drop `CAP` from the capabilities kept by default, or `ALL` of them (then `--cap-add` adds back). Repeatable. |
 | `--no-dropcaps` | Do not drop capabilities (dangerous). |
+| `--ulimit NAME=SOFT[:HARD]` | Set a resource limit of `COMMAND` (`setrlimit(2)`), with the names of `docker run --ulimit`: `nofile`, `nproc`, `core`, `memlock`, `stack`, `as`, `cpu`, ... `HARD` defaults to `SOFT`; `unlimited` or `-1` means no limit. Repeatable. |
 | `--unshare` | Make the mounts in a private mount namespace: they are not visible on the host, disappear when `COMMAND` and its children have exited, and need no `droot umount`. Host mounts made later still propagate into the container. |
 | `--unshare-ipc` | Run `COMMAND` in a private IPC namespace (System V IPC objects, POSIX message queues). |
 | `--hostname NAME` | Run `COMMAND` in a private UTS namespace whose host name is `NAME` (also the default of `HOSTNAME`). The host's name is not changed. |
@@ -223,6 +224,31 @@ Notes:
   failed run are removed again; those of previous runs stay.
 - Concurrent `droot run` and `droot umount` on the same `ROOT_DIR` take turns
   (`flock(2)` on the directory) until `COMMAND` is executed.
+
+#### Resource limits
+
+droot sets the per-process limits of `--ulimit` but creates no cgroups.
+Limit memory, CPU and the number of tasks with your service manager, which
+already manages cgroups — for a one-off command:
+
+```console
+$ sudo systemd-run --scope -p MemoryMax=1G -p CPUQuota=50% -p TasksMax=512 \
+    droot run --root /var/containers/app -- app
+```
+
+or in the unit running the application:
+
+```ini
+[Service]
+ExecStart=/usr/local/bin/droot run --root /var/containers/app --user app -- app
+MemoryMax=1G
+CPUQuota=50%
+TasksMax=512
+LimitNOFILE=65536
+```
+
+`LimitNOFILE=` and the other `Limit*=` settings of the unit are inherited by
+`COMMAND` too, unless `--ulimit` overrides them.
 - `COMMAND` is looked up in the `PATH` of the container environment (falling
   back to `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`), not in
   the `PATH` of the shell that started droot.

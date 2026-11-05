@@ -65,6 +65,8 @@ func runCommand() *cli.Command {
 				Usage: "also keep the capability CAP (e.g. NET_RAW, SYS_PTRACE, or ALL) in the bounding set"},
 			{Name: "cap-drop", Kind: cli.Strings, Placeholder: "CAP",
 				Usage: "drop the capability CAP (e.g. CHOWN, or ALL) from the ones kept by default"},
+			{Name: "ulimit", Kind: cli.Strings, Placeholder: "NAME=SOFT[:HARD]",
+				Usage: "set a resource limit of COMMAND, e.g. nofile=65536 or core=0:unlimited (names of ulimit, as in docker run)"},
 			{Name: "unshare", Kind: cli.Bool,
 				Usage: "make the mounts in a private mount namespace: they disappear when COMMAND and its children exit, and need no 'droot umount'"},
 			{Name: "unshare-ipc", Kind: cli.Bool,
@@ -279,6 +281,14 @@ func doRun(ctx context.Context, cmd *cli.Invocation) (err error) {
 	if err != nil {
 		return err
 	}
+	var rlimits []osutil.Rlimit
+	for _, spec := range cmd.Strings("ulimit") {
+		l, err := osutil.ParseRlimit(spec)
+		if err != nil {
+			return err
+		}
+		rlimits = append(rlimits, l)
+	}
 	bindNetFiles := cmd.Bool("bind-net-files")
 	var tmpfs []tmpfsMount
 	for _, spec := range cmd.Strings("tmpfs") {
@@ -490,6 +500,7 @@ func doRun(ctx context.Context, cmd *cli.Invocation) (err error) {
 		workdir:         workdir,
 		dropCaps:        !cmd.Bool("no-dropcaps"),
 		keepCaps:        keep,
+		rlimits:         rlimits,
 		noNewPrivileges: cmd.Bool("no-new-privileges"),
 	})
 }
@@ -659,6 +670,7 @@ type execOptions struct {
 	workdir         string
 	dropCaps        bool
 	keepCaps        map[uintptr]bool
+	rlimits         []osutil.Rlimit
 	noNewPrivileges bool
 }
 
@@ -680,6 +692,10 @@ func execInRoot(ctx context.Context, rootDir string, argv, env []string, cred *i
 	// the credentials of COMMAND.
 	pathEnv, _ := environ.Lookup(env, "PATH")
 	if _, err := osutil.LookPath(argv[0], pathEnv, osutil.IsExecutable); err != nil {
+		return err
+	}
+	// Before dropping CAP_SYS_RESOURCE, which raising a hard limit needs.
+	if err := osutil.SetRlimits(opts.rlimits); err != nil {
 		return err
 	}
 
