@@ -130,6 +130,9 @@ before deleting or replacing the directory:
 $ sudo droot umount --root /var/containers/app
 ```
 
+See [Deploying an application](documentation/deployment.md) for a complete
+walkthrough, including systemd units.
+
 ### Integration with capze
 
 [capze](https://github.com/yuuki/capze) deploys archives in a Capistrano-like
@@ -373,6 +376,8 @@ $ DOCKER_HOST=ssh://deploy@build.example.com droot export -o app.tar app
 
 ## Documentation
 
+- [Deploying an application](documentation/deployment.md): from `docker build`
+  to a systemd service, with [example units](examples/systemd)
 - [Command line reference](documentation/cli.md)
 - [How droot works](documentation/architecture.md)
 - [Security considerations](documentation/security.md)

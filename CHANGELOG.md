@@ -263,7 +263,8 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
   The assets keep the names and layout of 0.7.7 (`droot_linux_amd64.tar.gz`,
   `droot_darwin_amd64.zip`, bare `droot_linux_amd64`, ...).
 - Documentation: architecture, security considerations, development guide,
-  known issues and ideas.
+  known issues and ideas, and a deployment tutorial with example systemd
+  units (`examples/systemd`).
 - CI on GitHub Actions (lint, unit tests as user and root on the minimum and
   latest Go, coverage report, end-to-end tests against Docker on amd64 and
   arm64 and against Podman, cross builds), Dependabot, GoReleaser release

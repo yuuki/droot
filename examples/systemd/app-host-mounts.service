@@ -1,0 +1,28 @@
+# The same service with the mounts made in the host's mount namespace, like
+# droot 0.7 always did: they are removed with `droot umount` when the
+# service stops, and before it starts in case a crash left them behind.
+# See documentation/deployment.md.
+[Unit]
+Description=app (droot container, host mount namespace)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=exec
+Environment=DROOT_LOG_FORMAT=json
+ExecStartPre=/usr/local/bin/droot umount --root /var/containers/app/current
+ExecStart=/usr/local/bin/droot run --root /var/containers/app/current \
+    --user app --no-new-privileges \
+    --robind /etc/app/config.yml:/app/config.yml \
+    --bind /var/log/app \
+    --cp \
+    -- /app/bin/server --config /app/config.yml
+ExecStopPost=/usr/local/bin/droot umount --root /var/containers/app/current
+KillSignal=SIGTERM
+Restart=on-failure
+RestartSec=5s
+MemoryMax=1G
+TasksMax=512
+
+[Install]
+WantedBy=multi-user.target
