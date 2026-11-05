@@ -80,6 +80,9 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
   silently ignored with API versions older than 1.41 (now an error); and
   every 404 — such as an image lacking the requested platform — was reported
   as "image not found locally".
+- `DOCKER_HOST` is parsed like the docker CLI: unix socket paths are taken
+  literally (`%`, `#`, `?`, abstract `@name` sockets), `unix://` alone means
+  the default socket, and a host without scheme (`192.0.2.1:2375`) is TCP.
 - `droot export -o FILE` created the file with mode 0644 regardless of the
   umask (archives may contain secrets such as `/etc/shadow`), replaced the
   mode and owner of an existing file, replaced a symlink instead of writing

@@ -277,8 +277,69 @@ func TestClientConnectionError(t *testing.T) {
 	}
 }
 
+func TestUnixSocketPathsAreLiteral(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"pct%41.sock", "hash#x.sock", "q?x.sock", "sp ace.sock"} {
+		t.Run(name, func(t *testing.T) {
+			sock := filepath.Join(dir, name)
+			l, err := net.Listen("unix", sock)
+			if err != nil {
+				t.Skipf("cannot listen on %q: %v", sock, err)
+			}
+			srv := &httptest.Server{Listener: l, Config: &http.Server{Handler: &fakeDaemon{}}}
+			srv.Start()
+			defer srv.Close()
+			c, err := NewClient(Endpoint{Host: "unix://" + sock})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := c.Ping(context.Background()); err != nil {
+				t.Fatalf("Ping through %q: %v", sock, err)
+			}
+		})
+	}
+
+	t.Run("abstract socket", func(t *testing.T) {
+		name := "@droot-test-" + filepath.Base(dir)
+		l, err := net.Listen("unix", name)
+		if err != nil {
+			t.Skipf("abstract sockets unavailable: %v", err)
+		}
+		srv := &httptest.Server{Listener: l, Config: &http.Server{Handler: &fakeDaemon{}}}
+		srv.Start()
+		defer srv.Close()
+		c, err := NewClient(Endpoint{Host: "unix://" + name})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := c.Ping(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("host without scheme is tcp", func(t *testing.T) {
+		srv := httptest.NewServer(&fakeDaemon{})
+		defer srv.Close()
+		c, err := NewClient(Endpoint{Host: srv.Listener.Addr().String()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := c.Ping(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("empty unix path is the default socket", func(t *testing.T) {
+		c, err := NewClient(Endpoint{Host: "unix://"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = c // the default socket may or may not exist here
+	})
+}
+
 func TestNewClientUnsupported(t *testing.T) {
-	for _, host := range []string{"ssh://user@host", "npipe:////./pipe/docker_engine", "tcp://", "unix://", "%zz"} {
+	for _, host := range []string{"ssh://user@host", "npipe:////./pipe/docker_engine", "fd://", "tcp://", "%zz://x"} {
 		if _, err := NewClient(Endpoint{Host: host}); err == nil {
 			t.Errorf("NewClient(%q) should fail", host)
 		}

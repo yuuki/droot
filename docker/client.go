@@ -50,7 +50,20 @@ type Client struct {
 // NewClient returns a client for the given endpoint. The API version is taken
 // from ep.APIVersion or negotiated with the daemon on first use.
 func NewClient(ep Endpoint) (*Client, error) {
-	u, err := url.Parse(ep.Host)
+	hostURL := ep.Host
+	if !strings.Contains(hostURL, "://") {
+		hostURL = "tcp://" + hostURL // like the docker CLI
+	}
+	// A unix socket path is taken literally, like the docker CLI does: it
+	// may contain '%', '#' or '?', or start with '@' (abstract socket).
+	socket, isUnix := strings.CutPrefix(hostURL, "unix://")
+	if isUnix {
+		hostURL = "unix:///"
+		if socket == "" {
+			socket = strings.TrimPrefix(DefaultHost, "unix://")
+		}
+	}
+	u, err := url.Parse(hostURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid docker host %q: %w", ep.Host, err)
 	}
@@ -78,10 +91,6 @@ func NewClient(ep Endpoint) (*Client, error) {
 
 	switch u.Scheme {
 	case "unix":
-		socket := u.Host + u.Path
-		if socket == "" {
-			return nil, fmt.Errorf("invalid docker host %q: missing socket path", ep.Host)
-		}
 		transport.DialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
 			var d net.Dialer
 			return d.DialContext(ctx, "unix", socket)
