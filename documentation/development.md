@@ -7,7 +7,8 @@
   CI tests the minimum and the latest Go release; releases are built with the
   latest stable Go.
 - Linux to run `droot run`/`droot umount` and the tests that mount file
-  systems. On macOS, use a Linux VM or a privileged container:
+  systems. On macOS, use a Linux VM or a privileged container (`make` uses
+  `sudo` only when not already root):
   `docker run --rm --privileged -v "$PWD":/src -w /src golang:1.27 make test-root`.
 - Docker to run the end-to-end tests.
 

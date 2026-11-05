@@ -2,6 +2,10 @@ BIN     := droot
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
+# Run privileged targets with sudo unless already root (e.g. in a container
+# without sudo).
+SUDO := $(if $(filter 0,$(shell id -u)),,sudo)
+
 GOLANGCI_LINT_VERSION := v2.15.0
 GORELEASER_VERSION    := v2.20.0
 
@@ -17,11 +21,11 @@ test: ## Run unit tests (tests that need root are skipped)
 
 .PHONY: test-root
 test-root: ## Run unit tests as root, including the ones that mount file systems
-	sudo env "PATH=$$PATH" GOTOOLCHAIN=$$(go env GOTOOLCHAIN) GOFLAGS=$$(go env GOFLAGS) go test -race -count=1 ./...
+	$(SUDO) env "PATH=$$PATH" "GOTOOLCHAIN=$$(go env GOTOOLCHAIN)" "GOFLAGS=$$(go env GOFLAGS)" go test -race -count=1 ./...
 
 .PHONY: integration-test
-integration-test: build ## Run end-to-end tests against the local Docker daemon (needs sudo)
-	sudo ./script/integration-test.sh ./$(BIN)
+integration-test: build ## Run end-to-end tests against the local Docker daemon (needs root)
+	$(SUDO) ./script/integration-test.sh ./$(BIN)
 
 .PHONY: cover
 cover: ## Write a coverage report to coverage.out
