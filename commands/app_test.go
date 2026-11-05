@@ -183,6 +183,11 @@ func TestUsageErrors(t *testing.T) {
 }
 
 func TestUmountRefusesRoot(t *testing.T) {
+	if os.Geteuid() == 0 {
+		// If the refusal ever regressed, this would detach every mount of
+		// the machine. mounter.TestResolveRootDir covers it without risk.
+		t.Skip("not run as root")
+	}
 	app := NewApp("test")
 	app.Writer, app.ErrWriter = io.Discard, io.Discard
 	err := app.Run(context.Background(), []string{"droot", "umount", "--root", "/"})

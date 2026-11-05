@@ -124,7 +124,13 @@ assert_eq "umount keeps mounts of sibling directories" "$(mounts_under "$WORK/ap
 umount "$WORK/app2/mnt"
 "$DROOT" umount --root "$WORK/app"
 echo "ok - umount is idempotent"
-if "$DROOT" umount --root / 2>/dev/null; then fail "umount --root / must be refused"; fi
-echo "ok - umount --root / is refused"
+# In a throwaway mount namespace: if the refusal regressed, this would detach
+# every mount of the machine.
+if unshare -m --propagation private true 2>/dev/null; then
+  if unshare -m --propagation private "$DROOT" umount --root / 2>/dev/null; then
+    fail "umount --root / must be refused"
+  fi
+  echo "ok - umount --root / is refused"
+fi
 
 echo "All integration tests passed (work directory: $WORK)"
