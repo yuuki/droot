@@ -1,0 +1,28 @@
+name: Feature request
+description: Suggest an idea or an improvement
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        droot aims to stay small and simple: chroot(2), capabilities and bind
+        mounts rather than a full container runtime. Please check the
+        [known issues and ideas](https://github.com/yuuki/droot/blob/master/documentation/roadmap.md)
+        and the existing issues first.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do, and why is it hard with droot today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: How could droot solve it? Command line examples are welcome.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives
+      description: Workarounds you use today, or how other tools (Docker, systemd, ...) do it.

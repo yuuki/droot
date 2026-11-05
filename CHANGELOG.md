@@ -206,8 +206,9 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
 - Documentation: architecture, security considerations, development guide,
   known issues and ideas.
 - CI on GitHub Actions (lint, unit tests as user and root on the minimum and
-  latest Go, end-to-end tests against Docker, cross builds), Dependabot,
-  GoReleaser release workflow.
+  latest Go, coverage report, end-to-end tests against Docker on amd64 and
+  arm64 and against Podman, cross builds), Dependabot, GoReleaser release
+  workflow, issue and pull request templates.
 
 ### Removed
 

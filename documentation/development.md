@@ -39,16 +39,19 @@ separately when `GOTOOLCHAIN=local` is enforced (e.g. a distribution's Go).
 |---|---|---|
 | Unit | `*_test.go` | nothing; Docker is faked (`internal/docker/export_test.go`) or served by `httptest` (`internal/docker/client_test.go`) |
 | Privileged unit | `internal/mounter/mount_linux_test.go`, `internal/osutil/sys_linux_test.go` | root on Linux; skipped otherwise |
-| End-to-end | `script/integration-test.sh` | root, Docker, network access to pull `alpine` and `busybox` |
+| End-to-end | `script/integration-test.sh` | root, Docker (or Podman: `DOCKER=podman DOCKER_HOST=unix:///run/podman/podman.sock`), network access to pull `alpine` and `busybox` |
 
 The privileged mount tests create their scratch directory with
 `os.MkdirTemp` and only delete it when nothing is mounted below it any more,
 so that a failing unmount can never make the cleanup delete files through a
 bind mount.
 
-CI (`.github/workflows/ci.yml`) runs golangci-lint, the unit tests with the
-minimum and the latest supported Go versions (unprivileged and as root), the
-end-to-end tests and cross builds on every push and pull request.
+CI (`.github/workflows/ci.yml`) runs on every push and pull request:
+golangci-lint; the unit tests with the minimum and the latest supported Go
+versions (unprivileged and as root); a coverage report (as root, shown in the
+job summary and uploaded as the `coverage` artifact); the end-to-end tests on
+amd64 and arm64 runners against Docker, and on amd64 against Podman's
+Docker-compatible API; and cross builds.
 
 ## Dependencies
 

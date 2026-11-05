@@ -48,8 +48,52 @@ jobs:
       - name: Vet for macOS
         run: GOOS=darwin go vet ./...
 
-  integration:
+  coverage:
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+      # As root, so that the tests that mount file systems count too.
+      - name: Unit tests with coverage
+        run: sudo env "PATH=$PATH" go test -count=1 -covermode=atomic -coverprofile=coverage.out ./...
+      - name: Coverage report
+        run: |
+          go tool cover -html=coverage.out -o coverage.html
+          total=$(go tool cover -func=coverage.out | awk '/^total:/ {print $NF}')
+          echo "Total coverage: $total"
+          {
+            echo "### Coverage: $total"
+            echo
+            echo "| Package | Coverage |"
+            echo "|---|---|"
+            # Statement coverage per package, from the profile.
+            awk -F'[: ,]' 'NR > 1 {
+                pkg = $1; sub(/\/[^\/]*$/, "", pkg)
+                total[pkg] += $(NF-1); if ($NF > 0) covered[pkg] += $(NF-1)
+              }
+              END { for (p in total) printf "| `%s` | %.1f%% |\n", p, 100 * covered[p] / total[p] }' coverage.out | sort
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: |
+            coverage.out
+            coverage.html
+
+  integration:
+    name: integration (${{ matrix.runner }}, ${{ matrix.engine }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+        engine: [docker]
+        include:
+          # Podman's Docker-compatible API.
+          - runner: ubuntu-latest
+            engine: podman
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -57,7 +101,14 @@ jobs:
           go-version: stable
       - run: make build
       - name: End-to-end tests against Docker
+        if: matrix.engine == 'docker'
         run: sudo ./script/integration-test.sh ./droot
+      - name: End-to-end tests against Podman
+        if: matrix.engine == 'podman'
+        run: |
+          podman --version
+          sudo systemctl start podman.socket
+          sudo DOCKER=podman DOCKER_HOST=unix:///run/podman/podman.sock ./script/integration-test.sh ./droot
 
   cross-build:
     runs-on: ubuntu-latest

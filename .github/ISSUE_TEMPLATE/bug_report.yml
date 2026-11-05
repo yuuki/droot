@@ -1,0 +1,46 @@
+name: Bug report
+description: droot does not behave as documented
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Please report **security vulnerabilities**
+        privately instead, as described in [SECURITY.md](https://github.com/yuuki/droot/blob/master/SECURITY.md).
+  - type: input
+    id: version
+    attributes:
+      label: droot version
+      description: Output of `droot --version`.
+      placeholder: droot version 0.8.0
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: |
+        OS and kernel (`uname -a`, `/etc/os-release`), how droot was installed,
+        and for `droot export` the daemon and its version (`docker version`,
+        Podman, Colima, ...).
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command line and output
+      description: The exact command, with `--debug`, and its full output.
+      render: console
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: A minimal Dockerfile or image and the steps, if possible.

@@ -125,6 +125,4 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
 - **[project]** Automate the Homebrew tap with GoReleaser, or drop it.
 - **[project]** Fuzz tests for `environ.ParseEnv`, `mounter.ParseMountInfo`,
   the path resolution of `osutil.Root` and the tar rewriting.
-- **[project]** End-to-end tests on arm64 runners and with Podman; coverage
-  reporting.
-- **[project]** Issue/PR templates, a Japanese README.
+- **[project]** A Japanese README.

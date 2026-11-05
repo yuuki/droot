@@ -7,6 +7,13 @@
 #
 #   make build && sudo ./script/integration-test.sh [path/to/droot]
 #
+# To test against Podman's Docker-compatible API, build the test images with
+# podman and point droot to its socket:
+#
+#   sudo systemctl start podman.socket
+#   sudo DOCKER=podman DOCKER_HOST=unix:///run/podman/podman.sock \
+#     ./script/integration-test.sh ./droot
+#
 # On exit, the test images are removed, and so is the work directory unless
 # KEEP_WORKDIR is set or mount points remain below it (deleting it would then
 # delete files through the bind mounts).
@@ -17,6 +24,8 @@ WORK=$(mktemp -d "${TMPDIR:-/tmp}/droot-e2e.XXXXXX")
 WORK=$(realpath "$WORK")
 IMAGE=droot-e2e:latest
 SCRATCH_IMAGE=droot-e2e-scratch:latest
+# The CLI used to build and remove the test images.
+DOCKER=${DOCKER:-docker}
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 assert_eq() { # name actual expected
@@ -30,7 +39,7 @@ cleanup() {
   for d in "$WORK"/*/; do
     "$DROOT" umount --root "$d" >/dev/null 2>&1 || true
   done
-  docker rmi -f "$IMAGE" "$SCRATCH_IMAGE" >/dev/null 2>&1 || true
+  $DOCKER rmi -f "$IMAGE" "$SCRATCH_IMAGE" >/dev/null 2>&1 || true
   if [[ -n "${KEEP_WORKDIR:-}" ]]; then
     echo "work directory kept: $WORK"
   elif [[ $(mounts_under "$WORK") -eq 0 ]]; then
@@ -45,8 +54,8 @@ trap cleanup EXIT
 [[ -x "$DROOT" ]] || fail "droot binary not found at $DROOT (run 'make build')"
 
 echo "# building test images"
-docker build -q -t "$IMAGE" - >/dev/null <<'EOF'
-FROM alpine:3.22
+$DOCKER build -q -t "$IMAGE" - >/dev/null <<'EOF'
+FROM docker.io/library/alpine:3.22
 RUN addgroup -g 1600 appgroup && adduser -D -u 1500 -G appgroup app \
  && addgroup -g 1700 extra && addgroup app extra \
  && mkdir -p /usr/local/myapp/bin \
@@ -57,8 +66,8 @@ ENV PATH=/usr/local/myapp/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:
 USER app
 ENTRYPOINT ["/bin/false"]
 EOF
-docker build -q -t "$SCRATCH_IMAGE" - >/dev/null <<'EOF'
-FROM busybox:1.37-musl AS bb
+$DOCKER build -q -t "$SCRATCH_IMAGE" - >/dev/null <<'EOF'
+FROM docker.io/library/busybox:1.37-musl AS bb
 FROM scratch
 COPY --from=bb /bin/busybox /busybox
 ENV GREETING="no shell here"
@@ -70,7 +79,7 @@ assert_eq "export writes .drootenv from the image config" \
   "$(tar -xOf "$WORK/app.tar" .drootenv)" \
   "$(printf 'PATH=/usr/local/myapp/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\nJAVA_OPTS=-Dfoo=bar -Dx=y')"
 assert_eq "export leaves no temporary container" \
-  "$(docker ps -aq --filter label=io.github.yuuki.droot | wc -l)" "0"
+  "$($DOCKER ps -aq --filter label=io.github.yuuki.droot | wc -l)" "0"
 if "$DROOT" export does-not-exist:nope >/dev/null 2>&1; then fail "exporting a missing image should fail"; fi
 echo "ok - exporting a missing image fails"
 
