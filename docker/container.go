@@ -35,6 +35,13 @@ type ContainerInfo struct {
 func (c *Client) ContainerCreate(ctx context.Context, cfg *ContainerConfig, platform string) (string, error) {
 	query := url.Values{}
 	if platform != "" {
+		version, err := c.APIVersion(ctx)
+		if err != nil {
+			return "", err
+		}
+		if versionLess(version, platformAPIVersion) {
+			return "", fmt.Errorf("--platform requires Docker Engine API %s or later (using %s)", platformAPIVersion, version)
+		}
 		query.Set("platform", platform)
 	}
 	resp, err := c.do(ctx, http.MethodPost, "/containers/create", query, cfg)

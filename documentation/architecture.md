@@ -56,7 +56,9 @@ Design notes:
   daemon address is resolved like the `docker` CLI does (`DOCKER_HOST`,
   `DOCKER_CONTEXT`, current context, default socket).
 - **API version.** droot uses the version advertised by the daemon in the
-  `Api-Version` header of `/_ping` (or `DOCKER_API_VERSION`). The endpoints
+  `Api-Version` header of `/_ping` (or `DOCKER_API_VERSION`, falling back to
+  1.41 when the daemon does not advertise one). `--platform` needs 1.41 or
+  later. The endpoints
   droot needs have been stable for a decade, while pinning an old version
   breaks as daemons raise their minimum supported version (droot 0.7 pinned
   1.29, which current Docker releases reject).

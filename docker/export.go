@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"path"
 	"strings"
 	"time"
@@ -66,7 +67,7 @@ func ExportImage(ctx context.Context, api API, image string, w io.Writer, opts E
 	}, opts.Platform)
 	cancelCreate()
 	if err != nil {
-		if IsNotFound(err) {
+		if isNoSuchImage(err) {
 			return fmt.Errorf("image %s not found locally; pull or build it first (e.g. `docker pull %s`): %w", image, image, err)
 		}
 		return fmt.Errorf("create container from image %s: %w", image, err)
@@ -205,6 +206,15 @@ func rewriteArchive(r io.Reader, w io.Writer, env []byte) error {
 		return fmt.Errorf("finish archive: %w", err)
 	}
 	return nil
+}
+
+// isNoSuchImage reports whether err says that the image does not exist,
+// as opposed to other 404s (an image without the requested platform, a
+// proxy answering for an unknown API version, ...).
+func isNoSuchImage(err error) bool {
+	var apiErr *APIError
+	return errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound &&
+		strings.Contains(strings.ToLower(apiErr.Message), "no such image")
 }
 
 func shortID(id string) string {

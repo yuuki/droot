@@ -74,6 +74,12 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
   `204` answer, as a complete archive. It now requires `200 OK` and the
   end-of-archive marker. Redirects are no longer followed (they could resend
   requests and the TLS client certificate elsewhere).
+- Docker Engine API version handling: a daemon not advertising its version
+  got 1.24, which current Docker rejects (now 1.41); `DOCKER_API_VERSION`
+  with a leading `v` (`v1.45`) produced bogus URLs; `--platform` was
+  silently ignored with API versions older than 1.41 (now an error); and
+  every 404 — such as an image lacking the requested platform — was reported
+  as "image not found locally".
 - `droot export -o FILE` created the file with mode 0644 regardless of the
   umask (archives may contain secrets such as `/etc/shadow`), replaced the
   mode and owner of an existing file, replaced a symlink instead of writing

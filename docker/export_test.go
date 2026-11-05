@@ -207,6 +207,15 @@ func TestExportImageNotFound(t *testing.T) {
 	}
 }
 
+func TestExportImageOtherNotFound(t *testing.T) {
+	api := &fakeAPI{createErr: &APIError{StatusCode: http.StatusNotFound,
+		Message: "image with reference img was found but does not provide the specified platform (linux/arm64)"}}
+	err := ExportImage(context.Background(), api, "img", io.Discard, ExportOptions{Platform: "linux/arm64"})
+	if err == nil || strings.Contains(err.Error(), "pull or build it first") {
+		t.Fatalf("a platform mismatch must not be reported as a missing image: %v", err)
+	}
+}
+
 func TestExportImageRemovesContainerOnError(t *testing.T) {
 	api := &fakeAPI{exportErr: errors.New("boom")}
 	err := ExportImage(context.Background(), api, "img", io.Discard, ExportOptions{})

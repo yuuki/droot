@@ -17,6 +17,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -24,9 +25,14 @@ import (
 
 const (
 	// fallbackAPIVersion is used when the daemon does not advertise its API
-	// version. 1.24 is the oldest version still accepted by most daemons and
-	// covers every endpoint droot uses.
-	fallbackAPIVersion = "1.24"
+	// version, which only happens behind odd proxies. 1.41 (Docker 20.10,
+	// Podman 3+) supports every feature droot uses and is still accepted by
+	// current Docker releases, unlike older versions.
+	fallbackAPIVersion = "1.41"
+
+	// platformAPIVersion is the first API version supporting the platform
+	// parameter of container creation; older daemons silently ignore it.
+	platformAPIVersion = "1.41"
 
 	userAgent = "droot"
 )
@@ -67,7 +73,7 @@ func NewClient(ep Endpoint) (*Client, error) {
 			},
 		},
 		host:       ep.Host,
-		apiVersion: ep.APIVersion,
+		apiVersion: strings.TrimPrefix(ep.APIVersion, "v"),
 	}
 
 	switch u.Scheme {
@@ -181,6 +187,19 @@ func (c *Client) APIVersion(ctx context.Context) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.apiVersion, nil
+}
+
+// versionLess reports whether API version a is older than b ("1.40" < "1.41").
+func versionLess(a, b string) bool {
+	parse := func(v string) (int, int) {
+		major, minor, _ := strings.Cut(v, ".")
+		ma, _ := strconv.Atoi(major)
+		mi, _ := strconv.Atoi(minor)
+		return ma, mi
+	}
+	amaj, amin := parse(a)
+	bmaj, bmin := parse(b)
+	return amaj < bmaj || (amaj == bmaj && amin < bmin)
 }
 
 // do sends a request to a versioned API endpoint. path must already be

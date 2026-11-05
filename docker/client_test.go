@@ -222,6 +222,50 @@ func TestClientRefusesRedirectsAndOddStatuses(t *testing.T) {
 	}
 }
 
+func TestAPIVersionEdgeCases(t *testing.T) {
+	var paths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		if r.URL.Path == "/_ping" {
+			return // no Api-Version header
+		}
+		w.WriteHeader(http.StatusCreated)
+		_, _ = io.WriteString(w, `{"Id":"x"}`)
+	}))
+	defer srv.Close()
+	host := "tcp://" + srv.Listener.Addr().String()
+	ctx := context.Background()
+
+	c, _ := NewClient(Endpoint{Host: host})
+	if v, err := c.APIVersion(ctx); err != nil || v != "1.41" {
+		t.Errorf("fallback version = %q, %v", v, err)
+	}
+
+	c, _ = NewClient(Endpoint{Host: host, APIVersion: "v1.45"})
+	if _, err := c.ContainerCreate(ctx, &ContainerConfig{Image: "i"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if last := paths[len(paths)-1]; last != "/v1.45/containers/create" {
+		t.Errorf("a leading v must be accepted, requested %s", last)
+	}
+
+	c, _ = NewClient(Endpoint{Host: host, APIVersion: "1.40"})
+	if _, err := c.ContainerCreate(ctx, &ContainerConfig{Image: "i"}, "linux/arm64"); err == nil {
+		t.Error("--platform with API 1.40 must fail instead of being ignored")
+	}
+}
+
+func TestVersionLess(t *testing.T) {
+	for _, tt := range []struct {
+		a, b string
+		want bool
+	}{{"1.40", "1.41", true}, {"1.41", "1.41", false}, {"1.9", "1.41", true}, {"1.100", "1.41", false}, {"2.0", "1.41", false}} {
+		if got := versionLess(tt.a, tt.b); got != tt.want {
+			t.Errorf("versionLess(%s, %s) = %v", tt.a, tt.b, got)
+		}
+	}
+}
+
 func TestClientConnectionError(t *testing.T) {
 	c, err := NewClient(Endpoint{Host: "unix://" + filepath.Join(t.TempDir(), "nonexistent.sock")})
 	if err != nil {
