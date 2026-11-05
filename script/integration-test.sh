@@ -24,6 +24,8 @@ WORK=$(mktemp -d "${TMPDIR:-/tmp}/droot-e2e.XXXXXX")
 WORK=$(realpath "$WORK")
 IMAGE=droot-e2e:latest
 SCRATCH_IMAGE=droot-e2e-scratch:latest
+LAYERS_IMAGE=droot-e2e-layers:latest
+REGISTRY_CONTAINER=droot-e2e-registry
 # The CLI used to build and remove the test images.
 DOCKER=${DOCKER:-docker}
 
@@ -39,7 +41,8 @@ cleanup() {
   for d in "$WORK"/*/; do
     "$DROOT" umount --root "$d" >/dev/null 2>&1 || true
   done
-  $DOCKER rmi -f "$IMAGE" "$SCRATCH_IMAGE" >/dev/null 2>&1 || true
+  $DOCKER rm -f "$REGISTRY_CONTAINER" >/dev/null 2>&1 || true
+  $DOCKER rmi -f "$IMAGE" "$SCRATCH_IMAGE" "$LAYERS_IMAGE" ${REGISTRY_IMAGE:+"$REGISTRY_IMAGE"} >/dev/null 2>&1 || true
   if [[ -n "${KEEP_WORKDIR:-}" ]]; then
     echo "work directory kept: $WORK"
   elif [[ $(mounts_under "$WORK") -eq 0 ]]; then
@@ -111,6 +114,60 @@ else
   fail "--pull"
 fi
 $DOCKER rmi -f "$PULL_IMAGE" >/dev/null 2>&1 || true
+
+echo "# export without daemon"
+# Layers with whiteouts, replaced directories and a hard link to a deleted
+# file: applied by droot, they must give the file system the daemon exports.
+$DOCKER build -q -t "$LAYERS_IMAGE" - >/dev/null <<'EOF'
+FROM docker.io/library/alpine:3.22
+RUN mkdir -p /d/sub /opq/x && echo a > /d/a && echo b > /d/sub/b && echo keep > /opq/x/f \
+ && ln /d/a /d/a-link && mkdir /todir && echo t > /todir/t && echo f > /file
+RUN rm -rf /d/sub /d/a /opq /todir /file && mkdir -p /opq/new /file && echo n > /opq/new/n \
+ && echo now-a-file > /todir && echo inside > /file/x
+RUN rm -rf /usr/share/apk && echo changed >> /etc/motd
+EOF
+# listing ARCHIVE: the entries with their metadata, sorted, but those of
+# droot and the files the daemon adds to (or changes in) containers.
+listing() {
+  tar --numeric-owner -tvf "$1" | awk '{ $4 = $4 " " $5; $5 = ""; print }' |
+    grep -vE ' (\.droot/.*|\.droot/|\.drootenv|\.dockerenv|dev/.*|etc/(hostname|hosts|resolv\.conf|mtab)( -> .*)?)$' | sort
+}
+"$DROOT" export -o "$WORK/layers-daemon.tar" "$LAYERS_IMAGE"
+listing "$WORK/layers-daemon.tar" >"$WORK/layers-daemon.list"
+$DOCKER save -o "$WORK/layers-save.tar" "$LAYERS_IMAGE"
+OCI_ARCHIVE="$WORK/layers-save.tar" # docker save writes an OCI layout too
+if [[ $DOCKER == podman ]]; then
+  OCI_ARCHIVE="$WORK/layers-oci.tar"
+  podman save -q --format oci-archive -o "$OCI_ARCHIVE" "$LAYERS_IMAGE"
+fi
+for ref in "docker-archive:$WORK/layers-save.tar" "oci-archive:$OCI_ARCHIVE"; do
+  DOCKER_HOST=tcp://127.0.0.1:1 "$DROOT" export -o "$WORK/layers-file.tar" "$ref"
+  listing "$WORK/layers-file.tar" | diff "$WORK/layers-daemon.list" - || fail "export ${ref%%:*}: not the file system the daemon exports"
+  echo "ok - export ${ref%%:*}: the file system the daemon exports"
+done
+assert_eq "export without daemon: the image configuration" \
+  "$(tar -xOf "$WORK/layers-file.tar" .droot/config.json | grep -c '"Image": "oci-archive:')" "1"
+# A registry on this machine, without TLS.
+if $DOCKER run -d --name "$REGISTRY_CONTAINER" -p 127.0.0.1::5000 docker.io/library/registry:2 >/dev/null 2>"$WORK/registry.err"; then
+  REGISTRY=$($DOCKER port "$REGISTRY_CONTAINER" 5000/tcp | head -n 1)
+  REGISTRY_IMAGE=$REGISTRY/droot-e2e-layers:latest
+  $DOCKER tag "$LAYERS_IMAGE" "$REGISTRY_IMAGE"
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    if [[ $DOCKER == podman ]]; then
+      podman push -q --tls-verify=false "$REGISTRY_IMAGE" 2>/dev/null && break
+    else
+      docker push -q "$REGISTRY_IMAGE" >/dev/null 2>&1 && break
+    fi
+    sleep 1
+  done
+  DOCKER_HOST=tcp://127.0.0.1:1 "$DROOT" export -o "$WORK/layers-registry.tar" "docker://$REGISTRY_IMAGE"
+  listing "$WORK/layers-registry.tar" | diff "$WORK/layers-daemon.list" - || fail "export docker://: not the file system the daemon exports"
+  echo "ok - export docker://: the file system the daemon exports"
+else
+  echo "skip - export docker://: cannot start a registry: $(head -c 200 "$WORK/registry.err")"
+fi
+rm -f "$WORK"/layers-*
+
 if [[ $DOCKER == docker ]] && docker system dial-stdio --help >/dev/null 2>&1; then
   # A fake ssh running `docker system dial-stdio` locally, against the
   # daemon of this test.

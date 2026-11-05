@@ -22,7 +22,7 @@ stacks such as Linux namespaces and union file systems. It relies on simple
 Linux features — `chroot(2)`, Linux `capabilities(7)` and bind mounts — to run
 a container image built by `docker`, and on plain tar archives to ship it.
 
-- **Build**: build an image with `docker build` and turn it into a tar archive with `droot export`.
+- **Build**: build an image with `docker build` (or any tool building OCI images) and turn it into a tar archive with `droot export`, from a Docker daemon, a registry, a `docker save` archive or an OCI layout.
 - **Ship**: upload the archive to any storage (Amazon S3, HTTP, rsync, ...) and download it on your servers.
 - **Run**: `droot run` = `chroot(2)` + dropped capabilities + bind mounts.
 
@@ -37,7 +37,7 @@ before running untrusted images.
 
 | Command | Requirements |
 |---|---|
-| `droot export` | Linux or macOS, and a daemon speaking the Docker Engine API: Docker Engine, Docker Desktop, Colima, OrbStack, Podman (`podman system service`), ... |
+| `droot export` | Linux or macOS. For the images of a daemon, a daemon speaking the Docker Engine API: Docker Engine, Docker Desktop, Colima, OrbStack, Podman (`podman system service`), ... Images of registries, `docker save` archives and OCI layouts need no daemon. |
 | `droot run`, `droot umount` | Linux, root privileges |
 
 Building from source requires Go 1.26 or later.
@@ -151,31 +151,41 @@ Run `droot COMMAND --help` for the full list of options.
 ### `droot export`
 
 ```
-droot export [-o FILE] [--platform PLATFORM] IMAGE[:TAG]
+droot export [-o FILE] [--platform PLATFORM] IMAGE
 ```
 
-Exports the file system of a local Docker image as a tar archive, to STDOUT or
-to `FILE`. droot creates a temporary container from the image **without
-starting it**, streams its file system and removes the container. The image's
-configuration — `ENV`, `WORKDIR`, `USER`, `ENTRYPOINT`, `CMD` and
-`STOPSIGNAL` — is saved as `/.droot/config.json` in the archive, and its
-environment variables also as `/.drootenv` (read by older droot versions), so
-that `droot run` can use them. Images without a shell, such as distroless or
-`FROM scratch` images, are supported.
+Exports the file system of a container image as a tar archive, to STDOUT or
+to `FILE`. The image's configuration — `ENV`, `WORKDIR`, `USER`,
+`ENTRYPOINT`, `CMD` and `STOPSIGNAL` — is saved as `/.droot/config.json` in
+the archive, and its environment variables also as `/.drootenv` (read by older
+droot versions), so that `droot run` can use them. Images without a shell,
+such as distroless or `FROM scratch` images, are supported.
+
+`IMAGE` is an image of a Docker daemon (`NAME[:TAG]`, an ID, ...): droot
+creates a temporary container from it **without starting it**, streams its
+file system and removes the container. Or it is one of these images, read
+[without daemon](#exporting-without-a-docker-daemon):
+
+| `IMAGE` | |
+|---|---|
+| `docker://[REGISTRY/]NAME[:TAG\|@DIGEST]` | An image of a registry: Docker Hub (`docker://alpine:3.22`), `ghcr.io`, ... |
+| `docker-archive:FILE[:NAME:TAG]` | An archive written by `docker save` or `podman save`. |
+| `oci:DIR[:NAME]` | An [OCI image layout](https://github.com/opencontainers/image-spec/blob/main/image-layout.md), as written by `skopeo`, `buildah`, `docker buildx build --output type=oci,tar=false`, ... |
+| `oci-archive:FILE[:NAME]` | A tar archive of an OCI image layout (`docker save` of Docker 25 and later, `podman save --format oci-archive`, ...). |
 
 | Option | Description |
 |---|---|
 | `-o`, `--output FILE` | Write the archive to `FILE` instead of STDOUT (`-` means STDOUT). The file is replaced atomically, so an interrupted export never leaves a truncated archive behind; like a plain `> FILE` redirection, a new file follows the umask, an existing file keeps its mode and owner, and symlinks are followed. |
-| `--platform PLATFORM` | Export the given variant (e.g. `linux/amd64`) of a multi-platform image. |
-| `--pull` | Pull `IMAGE` from its registry first (the `--platform` variant, if given), as `docker pull` would, with the credentials of the docker CLI: the credential helpers (`credHelpers`, `credsStore`) and the `auths` of `$DOCKER_CONFIG/config.json`. Without a tag, `latest` is pulled. |
+| `--platform PLATFORM` | Export the given variant (e.g. `linux/amd64`, `linux/arm/v7`) of a multi-platform image. By default, the variant of the daemon's platform, or, without daemon, of the platform droot runs on. |
+| `--pull` | For an image of a daemon: pull `IMAGE` from its registry into the daemon first (the `--platform` variant, if given), as `docker pull` would, with the credentials of the docker CLI: the credential helpers (`credHelpers`, `credsStore`) and the `auths` of `$DOCKER_CONFIG/config.json`. Without a tag, `latest` is pulled. |
 | `--compress ALGO` | Compress the archive with `gzip`, or `zstd` (with the `zstd` command). |
 | `--checksum` | Also write the SHA-256 checksum of the archive (as written, compressed or not) to `FILE.sha256`, in the format of `sha256sum`; needs `-o FILE`. Verify it with `sha256sum -c FILE.sha256` before extracting the archive as root. |
-| `--reproducible` | Make the archive depend only on the image, so that exporting the same image again gives the same bytes (for caches, deduplication or signatures): modification times later than `$SOURCE_DATE_EPOCH`, or else the image's creation time, are set to it (the files Docker creates in every container and the files added by droot are dated from it), and access and change times are dropped. Entries keep the order of the daemon. |
+| `--reproducible` | Make the archive depend only on the image, so that exporting the same image again gives the same bytes (for caches, deduplication or signatures): modification times later than `$SOURCE_DATE_EPOCH`, or else the image's creation time, are set to it (the files Docker creates in every container and the files added by droot are dated from it), and access and change times are dropped. Entries keep the order of the daemon (or of the layers). |
 | `--exclude PATTERN` | Leave out the entries matching `PATTERN`, and everything below a matching directory. A pattern containing `/` is matched against absolute paths (`/usr/share/doc`, `/var/cache/apk/*`), a pattern without `/` against base names (`*.pyc`); the syntax is that of Go's [`path.Match`](https://pkg.go.dev/path#Match). A hard link to a left out file is left out too, with a warning. Repeatable. |
-| `--drop-docker-files` | Leave out the files Docker adds to every container: `/.dockerenv`, and the empty placeholders `/etc/hostname`, `/etc/hosts`, `/etc/resolv.conf` and `/dev/console` (use `--cp` or `--bind-net-files` with `droot run`). |
+| `--drop-docker-files` | Leave out the files Docker adds to every container: `/.dockerenv`, and the empty placeholders `/etc/hostname`, `/etc/hosts`, `/etc/resolv.conf` and `/dev/console` (use `--cp` or `--bind-net-files` with `droot run`). Images read without daemon have none of them. |
 
-Without `--pull`, the image must exist locally (`docker pull` or `docker
-build` it first).
+For an image of a daemon, without `--pull`, the image must exist locally
+(`docker pull` or `docker build` it first).
 droot refuses to write the archive to a terminal. When STDERR is a terminal,
 the size exported so far is shown there.
 
@@ -347,6 +357,41 @@ $ source <(droot completion bash)     # in ~/.bashrc
 $ source <(droot completion zsh)      # in ~/.zshrc, after compinit
 $ droot completion fish > ~/.config/fish/completions/droot.fish
 ```
+
+## Exporting without a Docker daemon
+
+With a `docker://`, `docker-archive:`, `oci:` or `oci-archive:` image, `droot
+export` needs no daemon: on a CI runner without Docker, from the store of
+Podman, Buildah or containerd (through their `save` or `push` commands), or
+straight from a registry. droot then reads the manifest of the image (the
+variant for `--platform` in a multi-platform image), applies its layers one
+after the other like a container engine does — the whiteouts of a layer
+delete the files of the layers below it — and writes the resulting file
+system.
+
+```console
+$ droot export -o app.tar docker://ghcr.io/example/app:1.2.3
+$ droot export --platform linux/arm64 -o app-arm64.tar docker://registry.example.com/app@sha256:4f2c…
+$ docker save app:1.2.3 -o app-image.tar && droot export -o app.tar docker-archive:app-image.tar
+$ droot export -o app.tar oci:build/oci-layout:1.2.3
+```
+
+- The digests of the manifests, of the configuration and of the layers
+  (stored and uncompressed) are verified; a reference by digest
+  (`NAME@sha256:…`) pins the image.
+- Registries are accessed with the credentials of the docker CLI (`docker
+  login`), as with `--pull`. `localhost` and loopback registries may serve
+  plain HTTP; any other registry must serve HTTPS. `HTTPS_PROXY` and
+  `NO_PROXY` are honored.
+- The layers of a registry are downloaded to `$TMPDIR` (default `/tmp`)
+  during the export, then deleted. Layers compressed with zstd need the
+  `zstd` command.
+- The archive has the files of the image only: not those a daemon adds to
+  every container (`/.dockerenv`, the placeholders `/etc/hostname`,
+  `/etc/hosts` and `/etc/resolv.conf`, `/dev/console`, ...), and the image's
+  own `/etc/hosts` or `/etc/hostname`, if it has some, are kept.
+- With several images in an archive or a layout, name one:
+  `docker-archive:images.tar:app:1.2.3`, `oci:DIR:1.2.3`.
 
 ## Choosing the Docker daemon
 

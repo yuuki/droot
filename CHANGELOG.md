@@ -211,6 +211,11 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
   docker CLI (credential helpers, `credsStore`, `auths`), for `--platform` if
   given.
 - `droot export --platform` to pick a variant of a multi-platform image.
+- `droot export` without a Docker daemon, for the images of registries
+  (`docker://NAME[:TAG|@DIGEST]`, with the credentials of the docker CLI),
+  `docker save` archives (`docker-archive:FILE`) and OCI image layouts
+  (`oci:DIR`, `oci-archive:FILE`): droot applies the layers itself,
+  whiteouts included, verifying every digest.
 - `droot export` options for the ship step: `--compress gzip|zstd`,
   `--checksum` (`FILE.sha256`), `--reproducible` archives, `--exclude
   PATTERN` and `--drop-docker-files`; the progress is shown on a terminal.

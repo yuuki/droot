@@ -22,7 +22,7 @@ Global options, accepted before and after COMMAND:
 
 Commands:
 
-- [`droot export`](#droot-export): Export the file system of a Docker image as a tar archive
+- [`droot export`](#droot-export): Export the file system of a container image as a tar archive
 - [`droot run`](#droot-run): Run a command in a container root directory with chroot(2)
 - [`droot umount`](#droot-umount): Unmount everything mounted under a root directory by 'droot run'
 - [`droot status`](#droot-status): Show the mounts and the processes of a root directory
@@ -30,21 +30,32 @@ Commands:
 
 ## droot export
 
-Export the file system of a Docker image as a tar archive.
+Export the file system of a container image as a tar archive.
 
 ```
-droot export [options] IMAGE[:TAG]
+droot export [options] IMAGE
 ```
 
-Creates a temporary container from IMAGE (without starting it), streams its file system as a tar archive and removes the container. The image's configuration is saved as /.droot/config.json and its environment as /.drootenv in the archive, for 'droot run'.
+Writes the file system of IMAGE as a tar archive, with the image's configuration in /.droot/config.json and its environment in /.drootenv, for 'droot run'.
 
-The Docker daemon is selected like the docker CLI does, from DOCKER\_HOST, DOCKER\_TLS\_VERIFY, DOCKER\_CERT\_PATH, DOCKER\_CONTEXT or the current docker context.
+IMAGE is an image of a Docker daemon (NAME[:TAG], an ID, ...), or one of these images, read without daemon:
+
+```
+docker://[REGISTRY/]NAME[:TAG|@DIGEST]  an image of a registry (Docker Hub by default)
+docker-archive:FILE[:NAME:TAG]          an archive written by docker save
+oci:DIR[:NAME]                          an OCI image layout
+oci-archive:FILE[:NAME]                 a tar archive of an OCI image layout
+```
+
+From a daemon, droot creates a temporary container from IMAGE (without starting it), streams its file system and removes the container. The daemon is selected like the docker CLI does, from DOCKER\_HOST, DOCKER\_TLS\_VERIFY, DOCKER\_CERT\_PATH, DOCKER\_CONTEXT or the current docker context.
+
+Without daemon, droot applies the layers of the image itself, verifying their digests. The credentials for registries are those of the docker CLI (docker login); the layers are downloaded to $TMPDIR (default /tmp) for the export.
 
 | Option | Description |
 |---|---|
 | `-o, --output FILE` | write the archive to FILE instead of STDOUT (written atomically) |
-| `--platform PLATFORM` | export the PLATFORM variant of a multi-platform image, e.g. linux/amd64 |
-| `--pull` | pull IMAGE (for --platform) from its registry first, with the credentials of the docker CLI |
+| `--platform PLATFORM` | export the PLATFORM variant of a multi-platform image, e.g. linux/arm64 (default: the platform of the daemon, or the one droot runs on) |
+| `--pull` | pull IMAGE (for --platform) from its registry into the Docker daemon first, with the credentials of the docker CLI |
 | `--compress ALGO` | compress the archive with gzip, or zstd (with the zstd command) |
 | `--checksum` | also write the SHA-256 checksum of the archive to FILE.sha256 (sha256sum format; needs -o) |
 | `--reproducible` | make the archive depend only on the image: modification times later than $SOURCE\_DATE\_EPOCH or the image's creation time are set to it |

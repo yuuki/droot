@@ -19,6 +19,8 @@ import (
 
 	"github.com/yuuki/droot/internal/cli"
 	"github.com/yuuki/droot/internal/docker"
+	"github.com/yuuki/droot/internal/image"
+	"github.com/yuuki/droot/internal/imageconfig"
 	"github.com/yuuki/droot/internal/log"
 	"github.com/yuuki/droot/internal/osutil"
 )
@@ -26,14 +28,24 @@ import (
 func exportCommand() *cli.Command {
 	return &cli.Command{
 		Name:      "export",
-		Usage:     "Export the file system of a Docker image as a tar archive",
-		ArgsUsage: "IMAGE[:TAG]",
-		Description: "Creates a temporary container from IMAGE (without starting it), streams its\n" +
-			"file system as a tar archive and removes the container. The image's\n" +
-			"configuration is saved as /.droot/config.json and its environment as\n" +
-			"/.drootenv in the archive, for 'droot run'.\n\n" +
-			"The Docker daemon is selected like the docker CLI does, from DOCKER_HOST,\n" +
-			"DOCKER_TLS_VERIFY, DOCKER_CERT_PATH, DOCKER_CONTEXT or the current docker context.",
+		Usage:     "Export the file system of a container image as a tar archive",
+		ArgsUsage: "IMAGE",
+		Description: "Writes the file system of IMAGE as a tar archive, with the image's\n" +
+			"configuration in /.droot/config.json and its environment in /.drootenv, for\n" +
+			"'droot run'.\n\n" +
+			"IMAGE is an image of a Docker daemon (NAME[:TAG], an ID, ...), or one of\n" +
+			"these images, read without daemon:\n\n" +
+			"  docker://[REGISTRY/]NAME[:TAG|@DIGEST]  an image of a registry (Docker Hub by default)\n" +
+			"  docker-archive:FILE[:NAME:TAG]          an archive written by docker save\n" +
+			"  oci:DIR[:NAME]                          an OCI image layout\n" +
+			"  oci-archive:FILE[:NAME]                 a tar archive of an OCI image layout\n\n" +
+			"From a daemon, droot creates a temporary container from IMAGE (without\n" +
+			"starting it), streams its file system and removes the container. The daemon\n" +
+			"is selected like the docker CLI does, from DOCKER_HOST, DOCKER_TLS_VERIFY,\n" +
+			"DOCKER_CERT_PATH, DOCKER_CONTEXT or the current docker context.\n\n" +
+			"Without daemon, droot applies the layers of the image itself, verifying their\n" +
+			"digests. The credentials for registries are those of the docker CLI (docker\n" +
+			"login); the layers are downloaded to $TMPDIR (default /tmp) for the export.",
 		Flags: []*cli.Flag{
 			{
 				Name:        "output",
@@ -47,12 +59,12 @@ func exportCommand() *cli.Command {
 				Name:        "platform",
 				Kind:        cli.String,
 				Placeholder: "PLATFORM",
-				Usage:       "export the PLATFORM variant of a multi-platform image, e.g. linux/amd64",
+				Usage:       "export the PLATFORM variant of a multi-platform image, e.g. linux/arm64 (default: the platform of the daemon, or the one droot runs on)",
 			},
 			{
 				Name:  "pull",
 				Kind:  cli.Bool,
-				Usage: "pull IMAGE (for --platform) from its registry first, with the credentials of the docker CLI",
+				Usage: "pull IMAGE (for --platform) from its registry into the Docker daemon first, with the credentials of the docker CLI",
 			},
 			{
 				Name:        "compress",
@@ -93,7 +105,7 @@ func doExport(ctx context.Context, cmd *cli.Invocation) error {
 	if len(cmd.Args()) != 1 || cmd.Args()[0] == "" {
 		return cmd.UsageError("exactly one image is required")
 	}
-	image := cmd.Args()[0]
+	name := cmd.Args()[0]
 	output := cmd.String("output")
 	toStdout := output == "" || output == "-"
 
@@ -127,22 +139,36 @@ func doExport(ctx context.Context, cmd *cli.Invocation) error {
 		}
 	}
 
-	client, err := docker.NewClientFromEnv()
-	if err != nil {
-		return err
-	}
-	if err := client.Ping(ctx); err != nil {
-		return err
-	}
-	if cmd.Bool("pull") {
-		auth, err := docker.RegistryAuth(ctx, image)
-		if err != nil {
-			return fmt.Errorf("registry credentials: %w", err)
+	var exportImage func(io.Writer) error
+	if image.IsReference(name) {
+		if cmd.Bool("pull") {
+			return cmd.UsageError("--pull is for the images of a Docker daemon: %s is read without daemon", name)
 		}
-		log.Infof("pulling %s", docker.WithDefaultTag(image))
-		if err := client.ImagePull(ctx, image, opts.Platform, auth, func(s string) { log.Debugf("%s", s) }); err != nil {
+		img, err := image.Open(ctx, name, image.Options{Platform: opts.Platform, Credentials: registryCredentials})
+		if err != nil {
 			return err
 		}
+		defer img.Close()
+		exportImage = func(w io.Writer) error { return exportFlattened(ctx, img, w, opts) }
+	} else {
+		client, err := docker.NewClientFromEnv()
+		if err != nil {
+			return err
+		}
+		if err := client.Ping(ctx); err != nil {
+			return err
+		}
+		if cmd.Bool("pull") {
+			auth, err := docker.RegistryAuth(ctx, name)
+			if err != nil {
+				return fmt.Errorf("registry credentials: %w", err)
+			}
+			log.Infof("pulling %s", docker.WithDefaultTag(name))
+			if err := client.ImagePull(ctx, name, opts.Platform, auth, func(s string) { log.Debugf("%s", s) }); err != nil {
+				return err
+			}
+		}
+		exportImage = func(w io.Writer) error { return docker.ExportImage(ctx, client, name, w, opts) }
 	}
 	var sum hash.Hash
 	export := func(w io.Writer) (err error) {
@@ -154,9 +180,9 @@ func doExport(ctx context.Context, cmd *cli.Invocation) error {
 		if err != nil {
 			return err
 		}
-		p := newProgress(c, "exporting "+image, progressOutput())
+		p := newProgress(c, "exporting "+name, progressOutput())
 		defer func() { p.end(err == nil) }()
-		if err := docker.ExportImage(ctx, client, image, p, opts); err != nil {
+		if err := exportImage(p); err != nil {
 			c.abort()
 			return err
 		}
@@ -177,6 +203,47 @@ func doExport(ctx context.Context, cmd *cli.Invocation) error {
 		})
 	}
 	return nil
+}
+
+// errStopped stops the flattening of the layers when the archive cannot be
+// written.
+var errStopped = errors.New("export stopped")
+
+// exportFlattened writes the file system of img, read without daemon, like
+// docker.ExportImage.
+func exportFlattened(ctx context.Context, img *image.Image, w io.Writer, opts docker.ExportOptions) error {
+	pr, pw := io.Pipe()
+	done := make(chan error, 1)
+	go func() {
+		err := img.Flatten(ctx, pw)
+		pw.CloseWithError(err)
+		done <- err
+	}()
+	c := img.Config.Config
+	cfg := imageconfig.Config{
+		Image: img.Name, ImageID: img.ID,
+		Env: c.Env, WorkingDir: c.WorkingDir, User: c.User,
+		Entrypoint: c.Entrypoint, Cmd: c.Cmd, StopSignal: c.StopSignal,
+	}
+	err := docker.WriteArchive(ctx, pr, w, cfg, img.Config.Created, opts)
+	pr.CloseWithError(errStopped)
+	if ferr := <-done; ferr != nil && !errors.Is(ferr, errStopped) {
+		return ferr
+	}
+	return err
+}
+
+// registryCredentials returns the credentials of the docker CLI for a
+// registry.
+func registryCredentials(ctx context.Context, host string) (*image.Credentials, error) {
+	c, err := docker.RegistryCredentials(ctx, host)
+	if err != nil || c == nil {
+		return nil, err
+	}
+	return &image.Credentials{
+		Username: c.Username, Password: c.Password,
+		IdentityToken: c.IdentityToken, RegistryToken: c.RegistryToken,
+	}, nil
 }
 
 // progressOutput returns where the progress of an export is shown: STDERR

@@ -32,8 +32,10 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
 
 ### `droot export`
 
-- **[compat]** A Docker Engine API daemon is required (`--pull` fetches images
-  missing locally): `docker save` tarballs and OCI layouts are not supported.
+- **[compat]** Without daemon, only `sha256` digests, `localhost` registries
+  over plain HTTP (no `insecure-registries`), no registry mirrors and no
+  foreign (non-distributable) layers; archives must be uncompressed files
+  (not STDIN). Image signatures (cosign, Notation) are not verified.
 - **[compat]** `npipe://` `DOCKER_HOST`s (Windows) are not supported.
 - **[compat]** Environment variables with multi-line values or keys starting
   with `#` cannot be represented in `/.drootenv`: they are only in
@@ -68,9 +70,6 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
 
 ### Building and shipping
 
-- **[feature]** Daemonless export: flatten images straight from a registry, a
-  `docker save` tarball or an OCI layout (works on CI runners without Docker
-  and with Podman/Buildah/containerd stores).
 - **[feature]** `droot deploy`/`droot import`: download (S3/HTTP), verify a
   checksum or signature (cosign, minisign), extract atomically and switch a
   symlink while keeping N releases (capze-like), then optionally restart a

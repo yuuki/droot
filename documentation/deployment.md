@@ -50,8 +50,12 @@ $ cat app-1.2.3.tar.gz.sha256
 - `--drop-docker-files` leaves out `/.dockerenv` and the empty
   `/etc/hostname`, `/etc/hosts` and `/etc/resolv.conf` Docker creates in every
   container; the service below binds the host's.
-- On a CI runner where the image was pushed by another job, add `--pull`:
-  droot pulls it first with the credentials of the docker CLI.
+- On a CI runner where the image was pushed by another job, export it
+  straight from the registry, without Docker:
+  `droot export ... docker://registry.example.com/app:1.2.3` (with the
+  credentials of `docker login`), or pin it by digest
+  (`docker://registry.example.com/app@sha256:…`). With a Docker daemon,
+  `--pull` pulls it into the daemon first.
 - `--exclude PATTERN` slims the archive, e.g. `--exclude /usr/share/doc`.
 
 To sign the release, sign the checksum file, e.g. with

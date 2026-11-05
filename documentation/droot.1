@@ -27,22 +27,35 @@ show help
 \fB\-v, \-\-version\fR
 print the version
 .SH COMMANDS
-.SS droot export [options] IMAGE[:TAG]
+.SS droot export [options] IMAGE
 .PP
-Export the file system of a Docker image as a tar archive.
+Export the file system of a container image as a tar archive.
 .PP
-Creates a temporary container from IMAGE (without starting it), streams its file system as a tar archive and removes the container. The image's configuration is saved as /.droot/config.json and its environment as /.drootenv in the archive, for 'droot run'.
+Writes the file system of IMAGE as a tar archive, with the image's configuration in /.droot/config.json and its environment in /.drootenv, for 'droot run'.
 .PP
-The Docker daemon is selected like the docker CLI does, from DOCKER_HOST, DOCKER_TLS_VERIFY, DOCKER_CERT_PATH, DOCKER_CONTEXT or the current docker context.
+IMAGE is an image of a Docker daemon (NAME[:TAG], an ID, ...), or one of these images, read without daemon:
+.PP
+.nf
+.RS 4
+docker://[REGISTRY/]NAME[:TAG|@DIGEST]  an image of a registry (Docker Hub by default)
+docker\-archive:FILE[:NAME:TAG]          an archive written by docker save
+oci:DIR[:NAME]                          an OCI image layout
+oci\-archive:FILE[:NAME]                 a tar archive of an OCI image layout
+.RE
+.fi
+.PP
+From a daemon, droot creates a temporary container from IMAGE (without starting it), streams its file system and removes the container. The daemon is selected like the docker CLI does, from DOCKER_HOST, DOCKER_TLS_VERIFY, DOCKER_CERT_PATH, DOCKER_CONTEXT or the current docker context.
+.PP
+Without daemon, droot applies the layers of the image itself, verifying their digests. The credentials for registries are those of the docker CLI (docker login); the layers are downloaded to $TMPDIR (default /tmp) for the export.
 .TP
 \fB\-o,\fR \fI\-\-output FILE\fR
 write the archive to FILE instead of STDOUT (written atomically)
 .TP
 \fB\-\-platform\fR \fIPLATFORM\fR
-export the PLATFORM variant of a multi\-platform image, e.g. linux/amd64
+export the PLATFORM variant of a multi\-platform image, e.g. linux/arm64 (default: the platform of the daemon, or the one droot runs on)
 .TP
 \fB\-\-pull\fR
-pull IMAGE (for \-\-platform) from its registry first, with the credentials of the docker CLI
+pull IMAGE (for \-\-platform) from its registry into the Docker daemon first, with the credentials of the docker CLI
 .TP
 \fB\-\-compress\fR \fIALGO\fR
 compress the archive with gzip, or zstd (with the zstd command)
