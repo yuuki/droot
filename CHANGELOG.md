@@ -31,6 +31,9 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
   `/etc/passwd` in the container).
 - `droot umount` no longer unmounts `ROOT_DIR` itself when it is a mount
   point (e.g. a dedicated file system), only the mounts below it.
+- Values read from `/.drootenv` keep their leading and trailing whitespace
+  (`FOO=bar ` gives `bar `, as Docker would set it); droot 0.7 trimmed spaces
+  and tabs at both ends of each line.
 - Device nodes created by `droot run` are owned by root instead of
   `--user`/`--group` (mode 0666 as before), and none are created when `/dev`
   in the container is a mount point.
