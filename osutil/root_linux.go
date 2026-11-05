@@ -229,14 +229,6 @@ func allEmpty(parts []string) bool {
 	return true
 }
 
-func fileOwner(fi fs.FileInfo) (uid, gid int, ok bool) {
-	st, ok := fi.Sys().(*unix.Stat_t)
-	if !ok {
-		return 0, 0, false
-	}
-	return int(st.Uid), int(st.Gid), true
-}
-
 func readlinkFd(fd int) (string, error) {
 	for size := 256; size <= 1<<16; size *= 4 {
 		buf := make([]byte, size)
@@ -568,7 +560,7 @@ func (r *Root) CopyFileIn(src, path string) (err error) {
 	if err := tmp.Chmod(fi.Mode().Perm()); err != nil {
 		return err
 	}
-	if uid, gid, ok := fileOwner(fi); ok {
+	if uid, gid, _, ok := FileOwner(fi); ok {
 		if err := tmp.Chown(uid, gid); err != nil && !errors.Is(err, fs.ErrPermission) {
 			return err
 		}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -251,5 +252,89 @@ func TestOpenCancelableFIFO(t *testing.T) {
 	defer cancel()
 	if _, err := openCancelable(ctx, fifo); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("opening a FIFO without reader should give up, got %v", err)
+	}
+}
+
+func TestWriteFileLikeCreate(t *testing.T) {
+	dir := t.TempDir()
+	ctx := context.Background()
+	write := func(content string) func(io.Writer) error {
+		return func(w io.Writer) error {
+			_, err := io.WriteString(w, content)
+			return err
+		}
+	}
+	mode := func(p string) os.FileMode {
+		fi, err := os.Stat(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return fi.Mode().Perm()
+	}
+
+	old := syscall.Umask(0o077)
+	newFile := filepath.Join(dir, "new.tar")
+	err := writeFile(ctx, newFile, write("a"))
+	syscall.Umask(old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m := mode(newFile); m != 0o600 {
+		t.Errorf("a new file must follow the umask: mode %v", m)
+	}
+
+	existing := filepath.Join(dir, "existing.tar")
+	if err := os.WriteFile(existing, []byte("old"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(existing, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFile(ctx, existing, write("b")); err != nil {
+		t.Fatal(err)
+	}
+	if m := mode(existing); m != 0o640 {
+		t.Errorf("an existing file must keep its mode: %v", m)
+	}
+
+	link := filepath.Join(dir, "link.tar")
+	if err := os.Symlink("existing.tar", link); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFile(ctx, link, write("c")); err != nil {
+		t.Fatal(err)
+	}
+	if fi, _ := os.Lstat(link); fi.Mode()&fs.ModeSymlink == 0 {
+		t.Error("the symlink must be kept")
+	}
+	if b, _ := os.ReadFile(existing); string(b) != "c" {
+		t.Errorf("the symlink target must be written, got %q", b)
+	}
+
+	dangling := filepath.Join(dir, "dangling.tar")
+	if err := os.Symlink("created.tar", dangling); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFile(ctx, dangling, write("d")); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "created.tar")); string(b) != "d" {
+		t.Errorf("the target of a dangling symlink must be created, got %q", b)
+	}
+
+	hard := filepath.Join(dir, "hard.tar")
+	if err := os.Link(existing, hard); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFile(ctx, hard, write("e")); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(existing); string(b) != "e" {
+		t.Errorf("hard links must be kept, the other link reads %q", b)
+	}
+
+	long := filepath.Join(dir, strings.Repeat("x", 250)+".tar")
+	if err := writeFile(ctx, long, write("f")); err != nil {
+		t.Fatalf("a long file name must work: %v", err)
 	}
 }

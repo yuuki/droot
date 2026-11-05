@@ -128,7 +128,7 @@ as distroless or `FROM scratch` images, are supported.
 
 | Option | Description |
 |---|---|
-| `-o`, `--output FILE` | Write the archive to `FILE` instead of STDOUT. The file is written atomically: an interrupted export never leaves a truncated archive behind. |
+| `-o`, `--output FILE` | Write the archive to `FILE` instead of STDOUT (`-` means STDOUT). The file is replaced atomically, so an interrupted export never leaves a truncated archive behind; like a plain `> FILE` redirection, a new file follows the umask, an existing file keeps its mode and owner, and symlinks are followed. |
 | `--platform PLATFORM` | Export the given variant (e.g. `linux/amd64`) of a multi-platform image. |
 
 The image must exist locally (`docker pull` or `docker build` it first).

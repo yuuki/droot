@@ -219,6 +219,21 @@ func TestCopyFileIn(t *testing.T) {
 	if b, _ := os.ReadFile(dst); string(b) != "127.0.0.1 localhost\n" {
 		t.Errorf("unexpected content %q", b)
 	}
+	if os.Geteuid() == 0 {
+		if err := os.Chown(src, 1234, 5678); err != nil {
+			t.Fatal(err)
+		}
+		if err := root.CopyFileIn(src, "/owned"); err != nil {
+			t.Fatal(err)
+		}
+		var st unix.Stat_t
+		if err := unix.Stat(filepath.Join(rootDir, "owned"), &st); err != nil {
+			t.Fatal(err)
+		}
+		if st.Uid != 1234 || st.Gid != 5678 {
+			t.Errorf("ownership not preserved: %d:%d", st.Uid, st.Gid)
+		}
+	}
 
 	if err := root.CopyFileIn(src, "/etc/new/passwd"); err != nil {
 		t.Fatal(err)

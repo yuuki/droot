@@ -64,6 +64,12 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
   no longer kills droot with SIGPIPE before the cleanup, SIGHUP is handled
   like SIGINT, Ctrl-C works while the reader of stdout is stalled, and a
   second Ctrl-C terminates droot immediately.
+- `droot export -o FILE` created the file with mode 0644 regardless of the
+  umask (archives may contain secrets such as `/etc/shadow`), replaced the
+  mode and owner of an existing file, replaced a symlink instead of writing
+  to its target, broke hard links and failed for names close to 255 bytes.
+  It now behaves like droot 0.7's `os.Create` while still replacing the file
+  atomically (in place only when the file has several hard links).
 - `droot run` dropped capabilities and changed credentials on one OS thread
   only and could `exec` from another one, so the command could run with the
   full capability bounding set. The goroutine is now locked to its thread.
