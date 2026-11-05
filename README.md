@@ -54,6 +54,19 @@ $ curl -fsSL -o droot https://github.com/yuuki/droot/releases/latest/download/dr
 $ chmod +x droot && sudo mv droot /usr/local/bin/
 ```
 
+Every asset has a signed build provenance attestation, and every archive an
+SPDX SBOM (`*.sbom.json`). To check that a download was built by the release
+workflow of this repository from a release tag, use the
+[GitHub CLI](https://cli.github.com):
+
+```console
+$ gh attestation verify droot --repo yuuki/droot --signer-workflow yuuki/droot/.github/workflows/release.yml
+```
+
+The binaries are reproducible; see
+[Releasing](documentation/development.md#releasing) for how they are built,
+verified and rebuilt.
+
 ### go install
 
 ```console
