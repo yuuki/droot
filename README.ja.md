@@ -51,18 +51,13 @@ $ chmod +x droot && sudo mv droot /usr/local/bin/
 <a id="verifying-a-release"></a>
 #### リリースの検証
 
-droot は root として実行されるため、インストールするものを検証してください。0.8.0 以降、`checksums.txt` はリリースワークフローによって [cosign](https://docs.sigstore.dev/) のキーレス署名で署名されています。また、すべてのアセットに[ビルドの来歴の構成証明（build provenance attestation）](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations)があり、すべてのアーカイブに SPDX 形式の SBOM（`droot_linux_amd64.tar.gz.sbom.json` など）が付属しています。
+droot は root として実行されるため、インストールするものを検証してください。すべてのアセットには署名付きのビルドの来歴の構成証明（build provenance attestation）があり、すべてのアーカイブには SPDX 形式の SBOM（`*.sbom.json`）が付属しています。ダウンロードしたファイルが、このリポジトリのリリースワークフローによってリリースタグからビルドされたことは、[GitHub CLI](https://cli.github.com) で確認できます。
 
 ```console
-$ V=0.8.0 B=https://github.com/yuuki/droot/releases/download
-$ curl -fsSLO "$B/v$V/checksums.txt" -O "$B/v$V/checksums.txt.sigstore.json" -O "$B/v$V/droot_linux_amd64"
-$ cosign verify-blob --bundle checksums.txt.sigstore.json \
-    --certificate-identity "https://github.com/yuuki/droot/.github/workflows/release.yml@refs/tags/v$V" \
-    --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-    checksums.txt
-$ sha256sum --check --ignore-missing checksums.txt
-$ gh attestation verify --repo yuuki/droot droot_linux_amd64
+$ gh attestation verify droot --repo yuuki/droot --signer-workflow yuuki/droot/.github/workflows/release.yml
 ```
+
+バイナリは再現可能（reproducible）です。ビルド、検証、再ビルドの方法は [Releasing](documentation/development.md#releasing) を参照してください。
 
 ### go install
 

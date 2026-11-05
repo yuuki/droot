@@ -1,35 +1,94 @@
 name: Release
 
+# Pushing a tag vX.Y.Z (or vX.Y.Z-rc.N) runs CI on the tagged commit, builds
+# the assets with GoReleaser, publishes them as a draft GitHub release whose
+# notes are the CHANGELOG.md section of the version, and attests their build
+# provenance. See documentation/development.md#releasing.
 on:
   push:
     tags: ["v*"]
 
-permissions:
-  contents: write # create the draft release
-  id-token: write # cosign keyless signing and attestations (GitHub OIDC)
-  attestations: write # build provenance attestations
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  goreleaser:
+  check:
+    name: check the tag
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v7
+          persist-credentials: false
+      - name: The tag is a semantic version with release notes in CHANGELOG.md
+        env:
+          TAG: ${{ github.ref_name }}
+        run: script/release-notes.sh "$TAG"
+      - name: The tagged commit is on master
+        run: |
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/master || {
+            echo "::error::$GITHUB_SHA is not on master: release only merged commits"
+            exit 1
+          }
+
+  ci:
+    name: CI
+    needs: check
+    permissions:
+      contents: read
+    # A reusable workflow called with ./ comes from the tagged commit, not
+    # from a checkout, so the "$/" syntax would bring nothing (and actionlint
+    # does not know it yet).
+    uses: ./.github/workflows/ci.yml # zizmor: ignore[self-repository]
+
+  release:
+    name: release
+    needs: [check, ci]
+    runs-on: ubuntu-latest
+    # Protection rules (required reviewers, allowed tags) can be set on this
+    # environment in the repository settings.
+    environment: release
+    permissions:
+      contents: write # create the draft release and upload the assets
+      id-token: write # get the Sigstore certificate that signs the attestation
+      attestations: write # store the attestation
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: stable
-      # cosign signs checksums.txt, syft writes the SBOMs (.goreleaser.yaml).
-      - uses: sigstore/cosign-installer@v4
-      - uses: anchore/sbom-action/download-syft@v0
-      - uses: goreleaser/goreleaser-action@v7
+          # Build from scratch: a cache written by another workflow must not
+          # be able to alter the release binaries.
+          cache: false
+      - uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
-          version: "~> v2"
-          args: release --clean
+          syft-version: v1.56.0
+      - name: Release notes
+        env:
+          TAG: ${{ github.ref_name }}
+        # Outside the work tree: GoReleaser refuses to release a dirty tree,
+        # and the binaries record whether it was modified.
+        run: script/release-notes.sh "$TAG" >"$RUNNER_TEMP/release-notes.md"
+      - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+        with:
+          version: v2.20.0
+          args: release --clean --release-notes ${{ runner.temp }}/release-notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      # SLSA build provenance for every file listed in checksums.txt
-      # (archives and bare binaries). Verify with `gh attestation verify`.
-      - uses: actions/attest@v4
+      - name: List the subjects of the attestation
+        # Every asset, and checksums.txt itself.
+        run: |
+          cp dist/checksums.txt "$RUNNER_TEMP/subjects.txt"
+          (cd dist && sha256sum checksums.txt) >>"$RUNNER_TEMP/subjects.txt"
+          cat "$RUNNER_TEMP/subjects.txt"
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
-          subject-checksums: ./dist/checksums.txt
+          subject-checksums: ${{ runner.temp }}/subjects.txt

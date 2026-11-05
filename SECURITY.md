@@ -30,7 +30,7 @@ few weeks; droot is maintained on a best-effort basis.
 
 ## Verifying releases
 
-Release binaries can be verified before being installed: `checksums.txt` is
-signed with [cosign](https://docs.sigstore.dev/) keyless signing, and every
-asset has a GitHub build provenance attestation. See
+Every release asset has a signed build provenance attestation, which shows
+that it was built from a release tag by the release workflow of this
+repository, and the binaries are reproducible. See
 [Verifying a release](README.md#verifying-a-release).

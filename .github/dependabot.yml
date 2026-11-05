@@ -4,14 +4,22 @@ updates:
     directory: /
     schedule:
       interval: monthly
+    # Let a week pass before proposing a new release: compromised releases
+    # are usually found and pulled within days.
+    cooldown:
+      default-days: 7
     groups:
       go-modules:
         patterns: ["*"]
 
+  # Also updates the commit SHAs the workflows pin actions to, and their
+  # version comments.
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: monthly
+    cooldown:
+      default-days: 7
     groups:
       github-actions:
         patterns: ["*"]

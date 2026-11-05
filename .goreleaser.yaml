@@ -1,12 +1,12 @@
 # Release configuration. See documentation/development.md#releasing.
+#
+# The release workflow (.github/workflows/release.yml) runs CI first, so this
+# file has no test or `go mod tidy` hooks: a release builds exactly the
+# tagged tree. It passes the CHANGELOG.md section of the version as release
+# notes (--release-notes) and attests every asset listed in checksums.txt.
 version: 2
 
 project_name: droot
-
-before:
-  hooks:
-    - go mod tidy
-    - go test ./...
 
 builds:
   - main: ./cmd/droot
@@ -20,6 +20,9 @@ builds:
     ignore:
       - goos: darwin
         goarch: arm
+    # Reproducible: no local paths, and file times taken from the commit.
+    # Rebuilding the tag with the Go version reported by `go version -m
+    # droot` gives identical binaries.
     flags: [-trimpath]
     ldflags:
       # The commit date rather than the build date: reproducible builds.
@@ -39,40 +42,46 @@ archives:
         formats: [zip]
     name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}"
     wrap_in_directory: true
+    # Fixed owners, modes and times, so that the archives are reproducible
+    # too, whoever builds them.
+    builds_info:
+      owner: root
+      group: root
+      mode: 0755
+      mtime: "{{ .CommitDate }}"
     files:
-      - LICENSE
-      - LICENSE_OF_DEPENDENCIES.md
-      - README.md
-      - CHANGELOG.md
-      - documentation/droot.1
+      - src: LICENSE
+        info: &doc
+          owner: root
+          group: root
+          mode: 0644
+          mtime: "{{ .CommitDate }}"
+      - src: LICENSE_OF_DEPENDENCIES.md
+        info: *doc
+      - src: README.md
+        info: *doc
+      - src: CHANGELOG.md
+        info: *doc
+      # The man page, at the top of the archive: man -l droot.1
+      - src: documentation/droot.1
+        strip_parent: true
+        info: *doc
   - id: binary
     formats: [binary]
     name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}"
 
-checksum:
-  name_template: checksums.txt
-
-# Keyless signature of checksums.txt with the GitHub OIDC identity of the
-# release workflow, written as checksums.txt.sigstore.json. Verifying it and
-# then the checksums verifies every asset (see README.md).
-signs:
-  - cmd: cosign
-    signature: "${artifact}.sigstore.json"
-    args:
-      - sign-blob
-      - "--bundle=${signature}"
-      - "${artifact}"
-      - "--yes"
-    artifacts: checksum
-
-# An SPDX SBOM per archive (droot_linux_amd64.tar.gz.sbom.json, ...),
-# written by syft.
+# An SPDX SBOM per archive (droot_linux_amd64.tar.gz.sbom.json, ...), made
+# by syft, which must be in PATH.
 sboms:
   - artifacts: archive
+
+checksum:
+  name_template: checksums.txt
 
 snapshot:
   version_template: "{{ incpatch .Version }}-next"
 
+# Only used when --release-notes is not given (local runs).
 changelog:
   sort: asc
   filters:
@@ -82,4 +91,27 @@ changelog:
       - "^ci:"
 
 release:
+  # Published by a maintainer after review. With immutable releases enabled
+  # in the repository settings, the assets and the tag can no longer change
+  # once published.
   draft: true
+  # Rerunning the workflow replaces the draft instead of adding another one.
+  replace_existing_draft: true
+  # v1.2.3-rc.1 and the like are marked as pre-releases.
+  prerelease: auto
+  # Stop before building if the token cannot create the release, or if the
+  # tag already has a published (immutable) release.
+  preflight:
+    fail_on_error: true
+  # One line per paragraph: GitHub renders line breaks in release notes.
+  footer: |
+    ## Verifying the downloads
+
+    Every asset and `checksums.txt` have a signed [SLSA build provenance attestation](https://github.com/yuuki/droot/attestations) stating that they were built from `{{ .Tag }}` by the release workflow. Verify one with the [GitHub CLI](https://cli.github.com):
+
+    ```console
+    $ gh attestation verify droot_linux_amd64 --repo yuuki/droot \
+        --signer-workflow yuuki/droot/.github/workflows/release.yml --source-ref refs/tags/{{ .Tag }}
+    ```
+
+    or verify `checksums.txt` the same way, then the downloads with `sha256sum --ignore-missing -c checksums.txt`. The `*.sbom.json` files are SPDX software bills of materials of the archives.

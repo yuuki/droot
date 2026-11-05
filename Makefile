@@ -8,6 +8,7 @@ SUDO := $(if $(filter 0,$(shell id -u)),,sudo)
 
 GOLANGCI_LINT_VERSION := v2.15.0
 GORELEASER_VERSION    := v2.20.0
+GOVULNCHECK_VERSION   := v1.9.0
 
 .DEFAULT_GOAL := build
 
@@ -64,6 +65,14 @@ fmt: ## Format the code
 tidy: ## Tidy go.mod and go.sum
 	go mod tidy
 
+.PHONY: vuln
+vuln: ## Report known vulnerabilities reachable from droot (govulncheck)
+	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
+
+.PHONY: test-scripts
+test-scripts: ## Test the release scripts
+	./script/release-scripts-test.sh
+
 .PHONY: cross
 cross: ## Check that droot builds for every released platform
 	for p in linux/amd64 linux/arm64 linux/arm darwin/amd64 darwin/arm64; do \
@@ -71,8 +80,13 @@ cross: ## Check that droot builds for every released platform
 	done
 
 .PHONY: snapshot
-snapshot: ## Build release archives locally into dist/ without publishing (no signature nor SBOM)
-	go run github.com/goreleaser/goreleaser/v2@$(GORELEASER_VERSION) release --snapshot --clean --skip=sign,sbom
+snapshot: ## Build release archives locally into dist/ without publishing (SBOMs need syft)
+	go run github.com/goreleaser/goreleaser/v2@$(GORELEASER_VERSION) release --snapshot --clean $(if $(shell command -v syft),,--skip=sbom)
+
+.PHONY: release-prep
+release-prep: ## Move the Unreleased entries of CHANGELOG.md to a new version: make release-prep VERSION=x.y.z
+	$(if $(filter command line environment,$(origin VERSION)),,$(error usage: make release-prep VERSION=x.y.z))
+	./script/prepare-release.sh $(VERSION)
 
 .PHONY: clean
 clean: ## Remove build outputs

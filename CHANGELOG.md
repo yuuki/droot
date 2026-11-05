@@ -256,20 +256,22 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
 - Helpful error messages: missing images, a command whose ELF/script
   interpreter is missing in the container, writing an archive to a terminal.
 - linux/arm64, linux/arm (ARMv7, `droot_linux_armv7`) and darwin/arm64
-  binaries and a `checksums.txt` in releases.
-- Verifiable releases: `checksums.txt` is signed with cosign keyless signing
-  (`checksums.txt.sigstore.json`), every asset has a GitHub build provenance
-  attestation, and every archive an SPDX SBOM (`*.sbom.json`).
+  binaries and a `checksums.txt` in releases. The assets keep the names and
+  layout of 0.7.7 (`droot_linux_amd64.tar.gz`, `droot_darwin_amd64.zip`, bare
+  `droot_linux_amd64`, ...); the archives also contain the man page.
+- Signed SLSA build provenance attestations for every release asset
+  (`gh attestation verify`), an SPDX SBOM for every archive, and
+  reproducible binaries and archives.
 - `SECURITY.md`: how to report vulnerabilities privately.
-  The assets keep the names and layout of 0.7.7 (`droot_linux_amd64.tar.gz`,
-  `droot_darwin_amd64.zip`, bare `droot_linux_amd64`, ...).
 - Documentation: architecture, security considerations, development guide,
   known issues and ideas, and a deployment tutorial with example systemd
   units (`examples/systemd`). A Japanese README (`README.ja.md`).
 - CI on GitHub Actions (lint, unit tests as user and root on the minimum and
-  latest Go, coverage report, end-to-end tests against Docker on amd64 and
-  arm64 and against Podman, cross builds), Dependabot, GoReleaser release
-  workflow, issue and pull request templates.
+  latest Go, coverage report, fuzzing, end-to-end tests against Docker on
+  amd64 and arm64 and against Podman, govulncheck, a security linter for the
+  workflows, release snapshots), Dependabot, issue and pull request
+  templates, and a release workflow that runs CI on the tagged commit, builds
+  a draft release with GoReleaser and takes its notes from this changelog.
 
 ### Removed
 
