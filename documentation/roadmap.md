@@ -2,8 +2,10 @@
 
 This page lists the known limitations of droot and ideas for its future,
 collected during the 2026 maintenance. Items fixed in that maintenance are
-listed in the [changelog](../CHANGELOG.md). Contributions are welcome; please
-open an issue before starting on a large item.
+listed in the [changelog](../CHANGELOG.md). The items below are tracked as
+GitHub issues under [#32](https://github.com/yuuki/droot/issues/32).
+Contributions are welcome; please comment on the corresponding issue before
+starting on a large item.
 
 Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
 **[ux]**, **[feature]**, **[project]**.
@@ -106,10 +108,10 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
   and with Podman/Buildah/containerd stores).
 - **[feature]** `--compress gzip|zstd`, checksum files, reproducible archives
   (normalized mtimes, sorted entries) and `--exclude` patterns to slim images.
-- **[feature]** `droot deploy`/`droot import`: download (S3/HTTP), verify a
-  checksum or signature (cosign, minisign), extract atomically and switch a
-  symlink while keeping N releases (capze-like), then optionally restart a
-  systemd unit.
+- **[feature]** Helpers to verify an archive (checksum or signature) before
+  extracting it. Extracting releases and switching between them stays with
+  [capze](https://github.com/yuuki/capze), which replaced `droot deploy`
+  ([#10](https://github.com/yuuki/droot/issues/10)).
 - **[feature]** `ssh://` daemons through `ssh HOST docker system dial-stdio`.
 
 ### Usability
