@@ -389,23 +389,6 @@ func (r *Root) OpenMountTarget(path string, dir bool, check DirCheck) (*MountTar
 	}, nil
 }
 
-// Lchown changes the owner of path without following a symlink in its last
-// component.
-func (r *Root) Lchown(path string, uid, gid int) error {
-	res, err := r.lookup(path, lookupOptions{})
-	if err != nil {
-		return err
-	}
-	defer unix.Close(res.dir)
-	if res.name == "" {
-		return &fs.PathError{Op: "lchown", Path: r.displayPath(path), Err: unix.EISDIR}
-	}
-	if err := unix.Fchownat(res.dir, res.name, uid, gid, unix.AT_SYMLINK_NOFOLLOW); err != nil {
-		return &fs.PathError{Op: "lchown", Path: r.displayPath(path), Err: err}
-	}
-	return nil
-}
-
 // OpenFile opens the regular file at path for reading, following symlinks
 // inside the root. FIFOs, devices and other special files are refused
 // without blocking.
@@ -435,15 +418,21 @@ func (r *Root) OpenFile(path string) (*os.File, error) {
 
 // MknodChar makes sure path is a character device with the given numbers
 // and permission bits. A file of another kind at path (including a symlink)
-// is replaced. Missing parent directories are created.
-func (r *Root) MknodChar(path string, major, minor uint32, perm os.FileMode) error {
-	res, err := r.lookup(path, lookupOptions{mkdir: true})
+// is replaced. Missing parent directories are created. See DirCheck for
+// check; it is also applied to the directory the node is created in.
+func (r *Root) MknodChar(path string, major, minor uint32, perm os.FileMode, check DirCheck) error {
+	res, err := r.lookup(path, lookupOptions{mkdir: true, check: check})
 	if err != nil {
 		return err
 	}
 	defer unix.Close(res.dir)
 	if res.name == "" {
 		return &fs.PathError{Op: "mknod", Path: r.displayPath(path), Err: unix.EISDIR}
+	}
+	if check != nil {
+		if err := check(res.dir); err != nil {
+			return &fs.PathError{Op: "mknod", Path: r.displayPath(path), Err: err}
+		}
 	}
 
 	dev := unix.Mkdev(major, minor)

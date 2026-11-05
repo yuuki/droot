@@ -25,6 +25,9 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
 - Files copied by `--cp` keep the host's ownership and permissions instead of
   being chowned to `--user`/`--group` (which let the application rewrite
   `/etc/passwd` in the container).
+- Device nodes created by `droot run` are owned by root instead of
+  `--user`/`--group` (mode 0666 as before), and none are created when `/dev`
+  in the container is a mount point.
 - `droot run` requires root (euid 0) and refuses `--root /`;
   `droot umount --root /` is refused.
 - Release assets are built with GoReleaser: `droot_<version>_<os>_<arch>.tar.gz`
@@ -62,6 +65,10 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
   component) and every operation is done relative to the resolved directory,
   which also resists a running container swapping directories for symlinks
   while droot works.
+- With the host's `/dev` (or a single device) bind mounted into the
+  container, `droot run` chmodded the host's `/dev/null`, `/dev/zero`, ...
+  and chowned them to `--user`, which could then break the host with
+  `chmod 000 /dev/null`.
 - A bind mount target resolving to the root itself (e.g. an image symlink
   `/data -> /` with `--bind H:/data`) mounted the host directory over the
   whole container, and targets resolving through `/proc` or `/sys` created

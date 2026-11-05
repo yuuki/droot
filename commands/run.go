@@ -154,7 +154,7 @@ func doRun(_ context.Context, cmd *cli.Command) error {
 
 	linkVarLock(root)
 
-	if err := createDevices(root, cred.UID, cred.GID); err != nil {
+	if err := createDevices(root); err != nil {
 		return err
 	}
 
@@ -200,12 +200,19 @@ func linkVarLock(root *osutil.Root) {
 	}
 }
 
-func createDevices(root *osutil.Root, uid, gid int) error {
+// createDevices creates the device nodes, owned by root with mode 0666. If
+// /dev is not on the root's own file system (for instance a bind mount of
+// the host's /dev), nothing is created there: droot must not touch host
+// devices.
+func createDevices(root *osutil.Root) error {
+	onRoot := mounter.OnMountOf(root.Fd())
 	for _, d := range devices {
-		if err := root.MknodChar(d.path, d.major, d.minor, 0o666); err != nil {
-			return err
+		err := root.MknodChar(d.path, d.major, d.minor, 0o666, onRoot)
+		if errors.Is(err, mounter.ErrOtherMount) {
+			log.Warnf("not creating device nodes: /dev in the container is a mount point (e.g. a bind mount of the host's /dev)")
+			return nil
 		}
-		if err := root.Lchown(d.path, uid, gid); err != nil {
+		if err != nil {
 			return err
 		}
 	}

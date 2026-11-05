@@ -78,6 +78,36 @@ func isMountRoot(parent, fd int) (bool, error) {
 	return st.Dev != pst.Dev, nil
 }
 
+// ErrOtherMount is returned by the check of OnMountOf.
+var ErrOtherMount = errors.New("is on another mount than the container root")
+
+// OnMountOf returns an osutil.DirCheck accepting only directories on the
+// same mount as the descriptor fd, e.g. to make sure a directory of the
+// container is not a bind mount of a host directory.
+func OnMountOf(fd int) osutil.DirCheck {
+	return func(dir int) error {
+		id, err1 := mountID(fd)
+		did, err2 := mountID(dir)
+		if err1 == nil && err2 == nil {
+			if id != did {
+				return ErrOtherMount
+			}
+			return nil
+		}
+		var st, dst unix.Stat_t
+		if err := unix.Fstat(fd, &st); err != nil {
+			return err
+		}
+		if err := unix.Fstat(dir, &dst); err != nil {
+			return err
+		}
+		if st.Dev != dst.Dev {
+			return ErrOtherMount
+		}
+		return nil
+	}
+}
+
 func mount(source, target, fstype string, flags uintptr, data string) error {
 	log.Debugf("mount source=%q target=%q type=%q flags=%#x", source, target, fstype, flags)
 	if err := unix.Mount(source, target, fstype, flags, data); err != nil {

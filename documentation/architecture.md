@@ -115,7 +115,9 @@ setuid bits are preserved.
    the source, which a plain remount would clear.
 5. Create `/var/lock -> ../run/lock` if missing, and the device nodes
    `/dev/null` (1:3), `/dev/zero` (1:5), `/dev/random` (1:8) and
-   `/dev/urandom` (1:9) with mode 0666.
+   `/dev/urandom` (1:9), owned by root with mode 0666 — unless `/dev` is on
+   another mount than the root (e.g. a bind mount of the host's `/dev`), in
+   which case droot leaves it alone.
 6. Lock the goroutine to its OS thread. This matters: the capability bounding
    set is a per-thread attribute and `execve(2)` uses the calling thread's
    attributes. Without the lock, the Go scheduler may run the `exec` on

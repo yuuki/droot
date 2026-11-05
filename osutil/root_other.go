@@ -52,14 +52,13 @@ func (*Root) OpenMountTarget(string, bool, DirCheck) (*MountTarget, error) {
 	return nil, unsupported("OpenMountTarget")
 }
 
-// Lchown is only supported on Linux.
-func (*Root) Lchown(string, int, int) error { return unsupported("lchown") }
-
 // OpenFile is only supported on Linux.
 func (*Root) OpenFile(string) (*os.File, error) { return nil, unsupported("OpenFile") }
 
 // MknodChar is only supported on Linux.
-func (*Root) MknodChar(string, uint32, uint32, os.FileMode) error { return unsupported("mknod") }
+func (*Root) MknodChar(string, uint32, uint32, os.FileMode, DirCheck) error {
+	return unsupported("mknod")
+}
 
 // SymlinkIfMissing is only supported on Linux.
 func (*Root) SymlinkIfMissing(string, string) error { return unsupported("symlink") }

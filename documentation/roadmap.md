@@ -36,9 +36,8 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
   `/dev/std{in,out,err}` are missing, and `/tmp`/`/run` are not tmpfs.
 - **[ux]** An unknown numeric `--user` without `--group` runs with droot's own
   group (0 under sudo), like Docker. Consider a warning.
-- **[ux]** Inherited behaviors whose purpose is unclear: `--bind` creates a
-  `.droot.keep` file in empty host directories, and device nodes are chowned
-  to the target user. Decide whether to keep them.
+- **[ux]** Inherited behavior whose purpose is unclear: `--bind` creates a
+  `.droot.keep` file in empty host directories. Decide whether to keep it.
 - **[compat]** `--cp` copies snapshots of the host files: later changes to the
   host's `/etc/resolv.conf` or `/etc/hosts` are not reflected (a bind mount
   would be live).

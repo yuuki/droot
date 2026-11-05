@@ -269,7 +269,7 @@ func TestMknodChar(t *testing.T) {
 			name         string
 			major, minor uint32
 		}{{"/dev/null", 1, 3}, {"/dev/zero", 1, 5}, {"/newdev/random", 1, 8}} {
-			if err := root.MknodChar(d.name, d.major, d.minor, 0o666); err != nil {
+			if err := root.MknodChar(d.name, d.major, d.minor, 0o666, nil); err != nil {
 				if errors.Is(err, unix.EPERM) {
 					t.Skipf("mknod not permitted here: %v", err)
 				}
@@ -328,7 +328,7 @@ func TestRootRace(t *testing.T) {
 		}
 		_ = root.SymlinkIfMissing("x", "/dev/link")
 		if isRoot {
-			_ = root.MknodChar("/dev/null", 1, 3, 0o666)
+			_ = root.MknodChar("/dev/null", 1, 3, 0o666, nil)
 		}
 	}
 	stop.Store(true)

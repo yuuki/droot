@@ -81,8 +81,12 @@ assert_eq "environment from .drootenv and --env" \
 assert_eq "capability bounding set" \
   "$("$DROOT" run --root "$WORK/app" -- awk '/^CapBnd/ {print $2}' /proc/self/status)" "00000000000004cb"
 assert_eq "device nodes" \
-  "$("$DROOT" run --root "$WORK/app" -- sh -c 'stat -c "%n %t:%T %a" /dev/null /dev/zero /dev/random /dev/urandom' | tr '\n' ' ')" \
-  "/dev/null 1:3 666 /dev/zero 1:5 666 /dev/random 1:8 666 /dev/urandom 1:9 666 "
+  "$("$DROOT" run --root "$WORK/app" --user app -- sh -c 'stat -c "%n %t:%T %a %u" /dev/null /dev/zero /dev/random /dev/urandom' | tr '\n' ' ')" \
+  "/dev/null 1:3 666 0 /dev/zero 1:5 666 0 /dev/random 1:8 666 0 /dev/urandom 1:9 666 0 "
+mkdir -p "$WORK/hostdev"
+"$DROOT" run --root "$WORK/app" --bind "$WORK/hostdev:/dev" -- true 2>/dev/null
+assert_eq "a bind mounted /dev is left alone" "$(ls -A "$WORK/hostdev")" ""
+"$DROOT" umount --root "$WORK/app"
 assert_eq "read-only bind mount" \
   "$("$DROOT" run --root "$WORK/app" --robind "$WORK/data:/mnt/data" -- sh -c 'cat /mnt/data/file; touch /mnt/data/x 2>/dev/null || echo ro')" \
   "$(printf 'secret\nro')"

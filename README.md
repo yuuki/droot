@@ -144,7 +144,7 @@ Runs `COMMAND` inside `ROOT_DIR` (an extracted archive). In order, droot:
 
 1. optionally copies the host's `/etc/group`, `/etc/passwd`, `/etc/resolv.conf` and `/etc/hosts` into `ROOT_DIR` (`--cp`);
 2. mounts `proc` on `/proc`, bind mounts the host's `/sys` on `/sys` (as an rslave mount) and performs the `--bind`/`--robind` mounts;
-3. creates `/dev/null`, `/dev/zero`, `/dev/random`, `/dev/urandom` and the `/var/lock -> ../run/lock` symlink;
+3. creates `/dev/null`, `/dev/zero`, `/dev/random`, `/dev/urandom` (unless `/dev` is a mount point, e.g. `--bind /dev`) and the `/var/lock -> ../run/lock` symlink;
 4. `chroot`s into `ROOT_DIR`;
 5. drops every capability except `CAP_CHOWN`, `CAP_DAC_OVERRIDE`, `CAP_FOWNER`, `CAP_SETGID`, `CAP_SETUID` and `CAP_NET_BIND_SERVICE` from the bounding set (unless `--no-dropcaps`);
 6. switches to the requested user and groups;
