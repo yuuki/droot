@@ -6,10 +6,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"golang.org/x/sys/unix"
 
+	"github.com/yuuki/droot/internal/identity"
+	"github.com/yuuki/droot/internal/imageconfig"
 	"github.com/yuuki/droot/internal/osutil"
 )
 
@@ -79,5 +82,43 @@ func TestRunAbortsWhenInterrupted(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(rootDir); len(entries) != 0 {
 		t.Fatalf("droot went on with the setup after the interruption: %v", entries)
+	}
+}
+
+func TestContainerEnv(t *testing.T) {
+	dir := t.TempDir()
+	root, err := osutil.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	cfg := &imageconfig.Config{Env: []string{"A=cfg", "MULTI=x\ny", "B=cfg"}}
+
+	got, err := containerEnv(root, cfg)
+	if err != nil || !slices.Equal(got, cfg.Env) {
+		t.Fatalf("without /.drootenv: %q, %v", got, err)
+	}
+	// /.drootenv (possibly edited) overrides the configuration.
+	if err := os.WriteFile(filepath.Join(dir, ".drootenv"), []byte("A=file\nC=file\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err = containerEnv(root, cfg)
+	if want := []string{"A=file", "MULTI=x\ny", "B=cfg", "C=file"}; err != nil || !slices.Equal(got, want) {
+		t.Fatalf("got %q, %v; want %q", got, err, want)
+	}
+	got, err = containerEnv(root, nil)
+	if want := []string{"A=file", "C=file"}; err != nil || !slices.Equal(got, want) {
+		t.Fatalf("without config: got %q, %v; want %q", got, err, want)
+	}
+}
+
+func TestDefaultEnv(t *testing.T) {
+	got := defaultEnv([]string{"PATH=/bin", "USER=keep"}, &identity.Credential{Username: "app", Home: "/home/app"})
+	if want := []string{"PATH=/bin", "USER=keep", "HOME=/home/app", "LOGNAME=app"}; !slices.Equal(got, want) {
+		t.Errorf("got %q, want %q", got, want)
+	}
+	got = defaultEnv(nil, &identity.Credential{UID: 4242})
+	if want := []string{"PATH=" + osutil.DefaultPath, "HOME=/"}; !slices.Equal(got, want) {
+		t.Errorf("got %q, want %q", got, want)
 	}
 }

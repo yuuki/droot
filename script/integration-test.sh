@@ -59,12 +59,14 @@ FROM docker.io/library/alpine:3.22
 RUN addgroup -g 1600 appgroup && adduser -D -u 1500 -G appgroup app \
  && addgroup -g 1700 extra && addgroup app extra \
  && mkdir -p /usr/local/myapp/bin \
- && printf '#!/bin/sh\necho myapp-ok\n' > /usr/local/myapp/bin/myapp \
+ && printf '#!/bin/sh\necho myapp-ok "$@"\n' > /usr/local/myapp/bin/myapp \
  && chmod 755 /usr/local/myapp/bin/myapp
 ENV PATH=/usr/local/myapp/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     JAVA_OPTS="-Dfoo=bar -Dx=y"
 USER app
-ENTRYPOINT ["/bin/false"]
+WORKDIR /usr/local/myapp
+ENTRYPOINT ["myapp", "from-entrypoint"]
+CMD ["from-cmd"]
 EOF
 $DOCKER build -q -t "$SCRATCH_IMAGE" - >/dev/null <<'EOF'
 FROM docker.io/library/busybox:1.37-musl AS bb
@@ -78,6 +80,8 @@ echo "# export"
 assert_eq "export writes .drootenv from the image config" \
   "$(tar -xOf "$WORK/app.tar" .drootenv)" \
   "$(printf 'PATH=/usr/local/myapp/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\nJAVA_OPTS=-Dfoo=bar -Dx=y')"
+assert_eq "export writes the image config to .droot/config.json" \
+  "$(tar -xOf "$WORK/app.tar" .droot/config.json | grep -cE '"(WorkingDir": "/usr/local/myapp|User": "app|from-entrypoint|from-cmd)"')" "4"
 assert_eq "export leaves no temporary container" \
   "$($DOCKER ps -aq --filter label=io.github.yuuki.droot | wc -l)" "0"
 if "$DROOT" export does-not-exist:nope >/dev/null 2>&1; then fail "exporting a missing image should fail"; fi
@@ -88,6 +92,15 @@ tar -xpf "$WORK/app.tar" -C "$WORK/app"
 echo secret > "$WORK/data/file"
 
 echo "# run"
+assert_eq "without COMMAND, the image's ENTRYPOINT and CMD run as its USER" \
+  "$("$DROOT" run --root "$WORK/app"; "$DROOT" run --root "$WORK/app" -- id -u)" \
+  "$(printf 'myapp-ok from-entrypoint from-cmd\n1500')"
+assert_eq "WORKDIR, HOME, USER and LOGNAME" \
+  "$("$DROOT" run --root "$WORK/app" -- sh -c 'echo "$PWD $HOME $USER $LOGNAME"')" \
+  "/usr/local/myapp /home/app app app"
+assert_eq "--user and --workdir override the image" \
+  "$("$DROOT" run --root "$WORK/app" --user root -w /tmp -- sh -c 'echo "$(id -u) $PWD $HOME $USER"')" \
+  "0 /tmp /root root"
 assert_eq "user and groups are resolved in the container" \
   "$("$DROOT" run --root "$WORK/app" --user app -- id)" \
   "uid=1500(app) gid=1600(appgroup) groups=1600(appgroup),1700(extra)"
@@ -102,7 +115,7 @@ assert_eq "--env-file and --env KEY take values from droot's environment" \
       sh -c 'echo "$FROM_FILE $JAVA_OPTS $PASSED $FROM_HOST ${UNSET_VAR-unset}"')" \
   "1 file p h unset"
 assert_eq "capability bounding set" \
-  "$("$DROOT" run --root "$WORK/app" -- awk '/^CapBnd/ {print $2}' /proc/self/status)" "00000000000004cb"
+  "$("$DROOT" run --root "$WORK/app" --user root -- awk '/^CapBnd/ {print $2}' /proc/self/status)" "00000000000004cb"
 assert_eq "device nodes" \
   "$("$DROOT" run --root "$WORK/app" --user app -- sh -c 'stat -c "%n %t:%T %a %u" /dev/null /dev/zero /dev/random /dev/urandom' | tr '\n' ' ')" \
   "/dev/null 1:3 666 0 /dev/zero 1:5 666 0 /dev/random 1:8 666 0 /dev/urandom 1:9 666 0 "
@@ -112,20 +125,20 @@ touch "$WORK/hostdev/marker" # not empty, so that no .droot.keep is created
 assert_eq "a bind mounted /dev is left alone" "$(ls -A "$WORK/hostdev")" "marker"
 "$DROOT" umount --root "$WORK/app"
 assert_eq "read-only bind mount" \
-  "$("$DROOT" run --root "$WORK/app" --robind "$WORK/data:/mnt/data" -- sh -c 'cat /mnt/data/file; touch /mnt/data/x 2>/dev/null || echo ro')" \
+  "$("$DROOT" run --root "$WORK/app" --user root --robind "$WORK/data:/mnt/data" -- sh -c 'cat /mnt/data/file; touch /mnt/data/x 2>/dev/null || echo ro')" \
   "$(printf 'secret\nro')"
 assert_eq "--bind SRC:DEST:ro" \
-  "$("$DROOT" run --root "$WORK/app" --bind "$WORK/data:/mnt/data2:ro" -- sh -c 'cat /mnt/data2/file; touch /mnt/data2/x 2>/dev/null || echo ro')" \
+  "$("$DROOT" run --root "$WORK/app" --user root --bind "$WORK/data:/mnt/data2:ro" -- sh -c 'cat /mnt/data2/file; touch /mnt/data2/x 2>/dev/null || echo ro')" \
   "$(printf 'secret\nro')"
 assert_eq "--bind-net-files" \
-  "$("$DROOT" run --root "$WORK/app" --bind-net-files -- sh -c 'cat /etc/resolv.conf /etc/hosts; touch /etc/hosts 2>/dev/null || echo ro')" \
+  "$("$DROOT" run --root "$WORK/app" --user root --bind-net-files -- sh -c 'cat /etc/resolv.conf /etc/hosts; touch /etc/hosts 2>/dev/null || echo ro')" \
   "$(cat /etc/resolv.conf /etc/hosts; echo ro)"
 "$DROOT" umount --root "$WORK/app"
 assert_eq "--no-new-privileges" \
   "$("$DROOT" run --root "$WORK/app" --user app --no-new-privileges -- awk '/^NoNewPrivs/ {print $2}' /proc/self/status)" "1"
 if command -v capsh >/dev/null; then
   assert_eq "inheritable capabilities of the caller are dropped" \
-    "$(capsh --inh=cap_sys_admin -- -c "\"$DROOT\" run --root \"$WORK/app\" -- awk '/^Cap(Inh|Eff)/ {print \$2}' /proc/self/status" | tr '\n' ' ')" \
+    "$(capsh --inh=cap_sys_admin -- -c "\"$DROOT\" run --root \"$WORK/app\" --user root -- awk '/^Cap(Inh|Eff)/ {print \$2}' /proc/self/status" | tr '\n' ' ')" \
     "0000000000000000 00000000000004cb "
 fi
 set +e
@@ -135,15 +148,15 @@ set -e
 assert_eq "exit status is propagated" "$code" "42"
 
 ln -sfn "$WORK/data/file" "$WORK/app/etc/hosts"
-"$DROOT" run --root "$WORK/app" --cp -- true
+"$DROOT" run --root "$WORK/app" --user root --cp -- true
 assert_eq "--cp does not follow symlinks out of the root" "$(cat "$WORK/data/file")" "secret"
 
 echo "# image without a shell"
 mkdir -p "$WORK/scratch"
 "$DROOT" export "$SCRATCH_IMAGE" | tar -xpf - -C "$WORK/scratch"
 assert_eq "FROM scratch image with an unknown numeric uid" \
-  "$("$DROOT" run --root "$WORK/scratch" --user 4242 --group 4343 -- /busybox sh -c 'echo "$GREETING"; /busybox id')" \
-  "$(printf 'no shell here\nuid=4242 gid=4343 groups=4343')"
+  "$("$DROOT" run --root "$WORK/scratch" --user 4242 --group 4343 -- /busybox sh -c 'echo "$GREETING $HOME ${USER-nouser}"; /busybox id')" \
+  "$(printf 'no shell here / nouser\nuid=4242 gid=4343 groups=4343')"
 
 echo "# umount"
 mount --bind "$WORK/data" "$WORK/app2/mnt"

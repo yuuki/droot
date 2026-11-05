@@ -25,12 +25,8 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
 - **[bug]** Mounts are made in the host's mount namespace and persist after
   the command exits; a failure halfway leaves the mounts already made. Users
   must remember `droot umount`, and concurrent runs share mounts.
-- **[compat]** Only `ENV` of the image is used. `WORKDIR`, `USER`,
-  `ENTRYPOINT`/`CMD`, `STOPSIGNAL` are ignored: the working directory is
-  always `/` and the command must always be given.
-- **[compat]** `HOME`, `USER`, `LOGNAME` and `HOSTNAME` are not set, and the
-  environment is empty when there is neither `/.drootenv` nor `--env`
-  (`PATH` lookup falls back to a default path, but the variable is not set).
+- **[compat]** `STOPSIGNAL` is saved but not used (droot does not supervise
+  COMMAND), and `HOSTNAME` is not set.
 - **[compat]** Only `/dev/null`, `/dev/zero`, `/dev/random` and `/dev/urandom`
   are created. `/dev/pts`, `/dev/ptmx`, `/dev/tty`, `/dev/full`, `/dev/shm`
   (tmpfs, needed e.g. by Python multiprocessing), `/dev/fd` and
@@ -72,10 +68,6 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
 - **[feature]** `--unshare` (opt-in): a private mount namespace so that mounts
   disappear with the process, optionally PID/UTS/IPC namespaces, keeping the
   default as simple as today.
-- **[feature]** Save the image config (`Entrypoint`, `Cmd`, `WorkingDir`,
-  `User`, `StopSignal`) as `/.droot/config.json` at export time and use it as
-  defaults in `droot run` (so `droot run --root DIR` alone works).
-- **[feature]** `--workdir`/`-w`, automatic `HOME`/`USER`.
 - **[feature]** `--no-new-privileges`, `--cap-add`/`--cap-drop`, an optional
   seccomp profile, `--read-only` root.
 - **[feature]** `--tmpfs PATH`, `/dev/shm`, `/dev/pts` and the other common

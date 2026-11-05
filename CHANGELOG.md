@@ -65,6 +65,13 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
 - When both are given, `--debug` takes precedence over `DROOT_DEBUG` (in 0.7,
   `DROOT_DEBUG=0` disabled `-D`).
 - `droot export -o -` writes to STDOUT; droot 0.7 created a file named `-`.
+- With archives exported by this version, `droot run` uses the image's
+  `USER` as the default of `--user` and its `WORKDIR` as the working
+  directory, like `docker run`; droot 0.7 always ran as root (unless `--user`
+  was given) in `/`. Give `--user root` or `--workdir /` to keep the old
+  behavior. Archives exported by droot 0.7 are run as before.
+- `droot run` sets `PATH`, `HOME`, `USER` and `LOGNAME` when the image's
+  environment and the options do not.
 - The Go packages moved under `internal/` (`internal/commands`,
   `internal/docker`, ...): droot is a command, and its packages were never
   meant to be imported by other modules.
@@ -185,6 +192,11 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
   unsupported `ssh://` hosts. Works with Docker Desktop, Colima, OrbStack and
   Podman's Docker-compatible socket.
 - `droot export --platform` to pick a variant of a multi-platform image.
+- `droot export` saves the image configuration (`Env`, `WorkingDir`, `User`,
+  `Entrypoint`, `Cmd`, `StopSignal`) as `/.droot/config.json`, which, unlike
+  `/.drootenv`, represents every environment variable. `droot run` uses it:
+  `droot run --root DIR` alone runs the image's `ENTRYPOINT` and `CMD`.
+- `droot run --workdir`/`-w`.
 - `droot run --no-new-privileges` sets the `no_new_privs` flag.
 - `droot run --env-file FILE` and `--env KEY` (without a value, taking it from
   droot's environment), like `docker run`.

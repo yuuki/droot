@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/yuuki/droot/internal/environ"
+	"github.com/yuuki/droot/internal/imageconfig"
 	"github.com/yuuki/droot/internal/log"
 )
 
@@ -50,8 +51,11 @@ const createTimeout = 2 * time.Minute
 
 // ExportImage writes the root filesystem of image to w as a tar archive.
 //
-// The image's environment variables are stored in /.drootenv inside the
-// archive so that `droot run` can restore them. The image is never run: a
+// The image's configuration (environment, working directory, user,
+// entrypoint and command) is stored in /.droot/config.json inside the
+// archive, and its environment variables in /.drootenv too, for older
+// versions of droot, so that `droot run` can restore them. The image is
+// never run: a
 // container is created (but not started), exported and then removed. This
 // works for any image, including ones without /bin/sh such as distroless or
 // FROM scratch images.
@@ -108,11 +112,19 @@ func ExportImage(ctx context.Context, api API, image string, w io.Writer, opts E
 	if err != nil {
 		return fmt.Errorf("inspect image %s: %w", image, err)
 	}
-	var env []string
-	if img.Config != nil {
-		env = img.Config.Env
+	cfg := imageconfig.Config{Version: imageconfig.Version, Image: image, ImageID: img.ID}
+	if c := img.Config; c != nil {
+		cfg.Env, cfg.WorkingDir, cfg.User = c.Env, c.WorkingDir, c.User
+		cfg.Entrypoint, cfg.Cmd, cfg.StopSignal = c.Entrypoint, c.Cmd, c.StopSignal
 	}
-	envFile := encodeEnvFile(env)
+	cfgFile, err := cfg.Encode()
+	if err != nil {
+		return err
+	}
+	files := []extraFile{
+		{name: environ.EnvFilePath, content: encodeEnvFile(cfg.Env)},
+		{name: imageconfig.Path, content: cfgFile},
+	}
 
 	body, err := api.ContainerExport(ctx, id)
 	if err != nil {
@@ -120,7 +132,7 @@ func ExportImage(ctx context.Context, api API, image string, w io.Writer, opts E
 	}
 	defer body.Close()
 
-	if err := rewriteArchive(body, w, envFile); err != nil {
+	if err := rewriteArchive(body, w, files); err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
 		}
@@ -132,14 +144,14 @@ func ExportImage(ctx context.Context, api API, image string, w io.Writer, opts E
 // encodeEnvFile renders env in the format read by environ.ParseEnv.
 // Variables that would not be read back exactly — values containing a
 // newline, keys starting with '#' (read as comments) or surrounded by
-// spaces — are skipped with a warning.
+// spaces — are skipped with a warning; /.droot/config.json has them.
 func encodeEnvFile(env []string) []byte {
 	var b strings.Builder
 	for _, e := range env {
 		parsed, err := environ.ParseEnv(strings.NewReader(e))
 		if err != nil || len(parsed) != 1 || parsed[0] != e || strings.ContainsAny(e, "\r\n") {
 			k, _, _ := strings.Cut(e, "=")
-			log.Warnf("skipping environment variable %q: it cannot be represented in %s", k, environ.EnvFilePath)
+			log.Warnf("environment variable %q cannot be represented in %s: only %s has it (droot 0.7 ignores it)", k, environ.EnvFilePath, imageconfig.Path)
 			continue
 		}
 		b.WriteString(e)
@@ -148,12 +160,26 @@ func encodeEnvFile(env []string) []byte {
 	return []byte(b.String())
 }
 
+// replacedPaths are the paths of the archive that droot writes itself.
+var replacedPaths = []string{environ.EnvFilePath, imageconfig.Dir}
+
 // isReplaced reports whether a tar entry is dropped from the archive because
-// droot writes its own /.drootenv: /.drootenv itself, or anything below it
-// if the image has a directory by that name.
+// droot writes its own files: /.drootenv and /.droot, or anything below them
+// (if the image has a directory /.drootenv, or a file /.droot).
 func isReplaced(name string) bool {
 	p := path.Clean("/" + name)
-	return p == environ.EnvFilePath || strings.HasPrefix(p, environ.EnvFilePath+"/")
+	for _, r := range replacedPaths {
+		if p == r || strings.HasPrefix(p, r+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// extraFile is a regular file droot adds to the archive.
+type extraFile struct {
+	name    string // absolute path in the container
+	content []byte
 }
 
 // maxDroppedBytes bounds the content of dropped entries kept in memory to
@@ -181,14 +207,14 @@ func (z *zeroTail) Read(p []byte) (int, error) {
 // errTruncated is returned for an archive without end-of-archive marker.
 var errTruncated = errors.New("the exported archive is truncated (no end-of-archive marker): the connection to the Docker daemon was probably cut")
 
-// rewriteArchive copies the tar stream r to w, replacing any existing
-// /.drootenv entry with one containing env.
+// rewriteArchive copies the tar stream r to w, dropping the entries of
+// replacedPaths and appending files (and their parent directories).
 //
 // archive/tar reports the end of the input at an entry boundary like the
 // end-of-archive marker (two zero blocks), so a stream cut cleanly between
 // two entries would look complete. The marker is therefore checked
 // explicitly: the stream must end with at least 1024 zero bytes.
-func rewriteArchive(r io.Reader, w io.Writer, env []byte) error {
+func rewriteArchive(r io.Reader, w io.Writer, files []extraFile) error {
 	zr := &zeroTail{r: r}
 	tr := tar.NewReader(zr)
 	tw := tar.NewWriter(w)
@@ -210,7 +236,7 @@ func rewriteArchive(r io.Reader, w io.Writer, env []byte) error {
 			if hdr.Typeflag == tar.TypeReg {
 				droppedBytes += hdr.Size
 				if droppedBytes > maxDroppedBytes {
-					return fmt.Errorf("the image's own %s is too large", environ.EnvFilePath)
+					return fmt.Errorf("the image's own %s is too large", path.Clean("/"+hdr.Name))
 				}
 				b, err := io.ReadAll(tr)
 				if err != nil {
@@ -243,18 +269,34 @@ func rewriteArchive(r io.Reader, w io.Writer, env []byte) error {
 		}
 	}
 
-	hdr := &tar.Header{
-		Typeflag: tar.TypeReg,
-		Name:     strings.TrimPrefix(environ.EnvFilePath, "/"),
-		Mode:     0o644,
-		Size:     int64(len(env)),
-		ModTime:  time.Now().Truncate(time.Second),
-	}
-	if err := tw.WriteHeader(hdr); err != nil {
-		return fmt.Errorf("write %s: %w", environ.EnvFilePath, err)
-	}
-	if _, err := tw.Write(env); err != nil {
-		return fmt.Errorf("write %s: %w", environ.EnvFilePath, err)
+	modTime := time.Now().Truncate(time.Second)
+	dirs := map[string]bool{}
+	for _, f := range files {
+		// Parent directories first, e.g. .droot/ for .droot/config.json.
+		var parents []string
+		for d := path.Dir(f.name); d != "/" && !dirs[d]; d = path.Dir(d) {
+			parents = append([]string{d}, parents...)
+			dirs[d] = true
+		}
+		for _, d := range parents {
+			hdr := &tar.Header{Typeflag: tar.TypeDir, Name: strings.TrimPrefix(d, "/") + "/", Mode: 0o755, ModTime: modTime}
+			if err := tw.WriteHeader(hdr); err != nil {
+				return fmt.Errorf("write %s: %w", d, err)
+			}
+		}
+		hdr := &tar.Header{
+			Typeflag: tar.TypeReg,
+			Name:     strings.TrimPrefix(f.name, "/"),
+			Mode:     0o644,
+			Size:     int64(len(f.content)),
+			ModTime:  modTime,
+		}
+		if err := tw.WriteHeader(hdr); err != nil {
+			return fmt.Errorf("write %s: %w", f.name, err)
+		}
+		if _, err := tw.Write(f.content); err != nil {
+			return fmt.Errorf("write %s: %w", f.name, err)
+		}
 	}
 	if err := tw.Close(); err != nil {
 		return fmt.Errorf("finish archive: %w", err)

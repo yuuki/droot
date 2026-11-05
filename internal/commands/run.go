@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 	"github.com/yuuki/droot/internal/cli"
 	"github.com/yuuki/droot/internal/environ"
 	"github.com/yuuki/droot/internal/identity"
+	"github.com/yuuki/droot/internal/imageconfig"
 	"github.com/yuuki/droot/internal/log"
 	"github.com/yuuki/droot/internal/mounter"
 	"github.com/yuuki/droot/internal/osutil"
@@ -24,11 +26,14 @@ func runCommand() *cli.Command {
 	return &cli.Command{
 		Name:      "run",
 		Usage:     "Run a command in a container root directory with chroot(2)",
-		ArgsUsage: "[--] COMMAND [ARG...]",
+		ArgsUsage: "[--] [COMMAND [ARG...]]",
 		Description: "Mounts /proc, /sys and the requested bind mounts under ROOT_DIR, creates the\n" +
 			"basic device files, chroots into ROOT_DIR, drops capabilities from the\n" +
 			"bounding set, switches to --user/--group and executes COMMAND with the\n" +
-			"environment saved by 'droot export' (/.drootenv) plus --env.\n\n" +
+			"environment saved by 'droot export' plus --env-file and --env.\n\n" +
+			"Without COMMAND, the ENTRYPOINT and CMD of the image saved by 'droot export'\n" +
+			"(/.droot/config.json) are run; COMMAND replaces both. The image's USER and\n" +
+			"WORKDIR are the defaults of --user and --workdir.\n\n" +
 			"The options must come before COMMAND: everything from COMMAND on is passed\n" +
 			"to it verbatim. Mounts are left in place after COMMAND exits; remove them\n" +
 			"with 'droot umount'. Must be run as root.",
@@ -38,9 +43,11 @@ func runCommand() *cli.Command {
 			{Name: "root", Aliases: []string{"r"}, Kind: cli.String, Placeholder: "ROOT_DIR", Complete: "dir",
 				Usage: "root directory to chroot into (required)"},
 			{Name: "user", Aliases: []string{"u"}, Kind: cli.String, Placeholder: "USER", Complete: "user",
-				Usage: "user (name or ID) to run COMMAND as; names are looked up in ROOT_DIR/etc/passwd, then on the host"},
+				Usage: "user (name or ID) to run COMMAND as (default: the image's USER, or droot's own user); names are looked up in ROOT_DIR/etc/passwd, then on the host"},
 			{Name: "group", Aliases: []string{"g"}, Kind: cli.String, Placeholder: "GROUP", Complete: "group",
 				Usage: "group (name or ID) to run COMMAND as (default: the primary group of --user)"},
+			{Name: "workdir", Aliases: []string{"w"}, Kind: cli.String, Placeholder: "DIR",
+				Usage: "working directory of COMMAND inside the container (default: the image's WORKDIR, or /)"},
 			{Name: "bind", Aliases: []string{"b"}, Kind: cli.Strings, Placeholder: "SRC[:DEST][:OPTS]", Complete: "file",
 				Usage: "bind mount SRC from the host on DEST (default: SRC) in the container; OPTS is a comma-separated list of ro, rw and rbind (recursive)"},
 			{Name: "robind", Kind: cli.Strings, Placeholder: "SRC[:DEST][:OPTS]", Complete: "file",
@@ -104,14 +111,15 @@ func doRun(ctx context.Context, cmd *cli.Invocation) error {
 	}
 
 	argv := cmd.Args()
-	if len(argv) == 0 || argv[0] == "" {
-		return cmd.UsageError("a command to run is required")
+	if len(argv) > 0 && argv[0] == "" {
+		return cmd.UsageError("COMMAND must not be empty")
 	}
 	if cmd.String("root") == "" {
 		return cmd.UsageError("--root is required")
 	}
-	if os.Geteuid() != 0 {
-		return errors.New("droot run must be run as root (it needs to mount, chroot and switch users)")
+	workdir := cmd.String("workdir")
+	if cmd.IsSet("workdir") && !filepath.IsAbs(workdir) {
+		return cmd.UsageError("--workdir must be an absolute path: %q", workdir)
 	}
 
 	rootDir, err := mounter.ResolveRootDir(cmd.String("root"))
@@ -165,6 +173,48 @@ func doRun(ctx context.Context, cmd *cli.Invocation) error {
 	}
 	defer root.Close()
 
+	// The image configuration saved by droot export, if any, gives the
+	// defaults of COMMAND, --user and --workdir, and the environment.
+	cfg, err := imageconfig.Read(root)
+	if err != nil {
+		return err
+	}
+	argv = cfg.Command(argv)
+	if len(argv) == 0 || argv[0] == "" {
+		if cfg != nil {
+			return cmd.UsageError("a command to run is required: the image defines neither ENTRYPOINT nor CMD")
+		}
+		return cmd.UsageError("a command to run is required")
+	}
+	if os.Geteuid() != 0 {
+		return errors.New("droot run must be run as root (it needs to mount, chroot and switch users)")
+	}
+	userSpec, groupSpec := cmd.String("user"), cmd.String("group")
+	imageUser := !cmd.IsSet("user") && cfg != nil && cfg.User != ""
+	if imageUser {
+		// USER is NAME, UID, NAME:GROUP or UID:GID.
+		var group string
+		userSpec, group, _ = strings.Cut(cfg.User, ":")
+		if !cmd.IsSet("group") {
+			groupSpec = group
+		}
+		log.Debugf("running as the image's USER %s", cfg.User)
+	}
+	if !cmd.IsSet("workdir") && cfg != nil {
+		workdir = cfg.WorkingDir
+	}
+	if workdir == "" {
+		workdir = "/"
+	}
+	baseEnv, err := containerEnv(root, cfg)
+	if err != nil {
+		return err
+	}
+	env, err := environ.Merge(baseEnv, extraEnv)
+	if err != nil {
+		return err
+	}
+
 	// Abort between the setup steps if droot is interrupted: the signal
 	// is caught to allow cleanups, so it would otherwise go unnoticed and
 	// COMMAND would be started anyway.
@@ -181,11 +231,15 @@ func doRun(ctx context.Context, cmd *cli.Invocation) error {
 		}
 	}
 
-	cred, err := identity.Resolve(root, cmd.String("user"), cmd.String("group"))
+	cred, err := identity.Resolve(root, userSpec, groupSpec)
 	if err != nil {
+		if imageUser {
+			return fmt.Errorf("the image's USER %s: %w (use --user to run as another user; with --cp, the container's /etc/passwd is the host's)", cfg.User, err)
+		}
 		return err
 	}
 	log.Debugf("running as uid=%d gid=%d groups=%v", cred.UID, cred.GID, cred.Groups)
+	env = defaultEnv(env, cred)
 
 	mnt := mounter.NewMounter(root)
 	if err := ctx.Err(); err != nil {
@@ -218,7 +272,8 @@ func doRun(ctx context.Context, cmd *cli.Invocation) error {
 		return err
 	}
 
-	return execInRoot(ctx, rootDir, argv, extraEnv, cred, execOptions{
+	return execInRoot(ctx, rootDir, argv, env, cred, execOptions{
+		workdir:         workdir,
 		dropCaps:        !cmd.Bool("no-dropcaps"),
 		noNewPrivileges: cmd.Bool("no-new-privileges"),
 	})
@@ -325,14 +380,60 @@ func createDevices(root *osutil.Root) error {
 	return nil
 }
 
+// containerEnv returns the environment of the image: the Env of
+// /.droot/config.json, overridden by /.drootenv (which older versions of
+// droot wrote alone, and which users may have edited).
+func containerEnv(root *osutil.Root, cfg *imageconfig.Config) ([]string, error) {
+	var env []string
+	if cfg != nil {
+		env = cfg.Env
+	}
+	f, err := root.OpenFile(environ.EnvFilePath)
+	if errors.Is(err, fs.ErrNotExist) {
+		return environ.Merge(env, nil)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	fileEnv, err := environ.ParseEnv(f)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", f.Name(), err)
+	}
+	return environ.Merge(env, fileEnv)
+}
+
+// defaultEnv sets the variables that a login would set, unless they are
+// already set: PATH, and HOME, USER and LOGNAME from the container's
+// /etc/passwd entry of the user (HOME=/ if the user has none, like Docker).
+func defaultEnv(env []string, cred *identity.Credential) []string {
+	set := func(k, v string) {
+		if _, ok := environ.Lookup(env, k); !ok {
+			env = append(env, k+"="+v)
+		}
+	}
+	set("PATH", osutil.DefaultPath)
+	home := cred.Home
+	if home == "" {
+		home = "/"
+	}
+	set("HOME", home)
+	if cred.Username != "" {
+		set("USER", cred.Username)
+		set("LOGNAME", cred.Username)
+	}
+	return env
+}
+
 type execOptions struct {
+	workdir         string
 	dropCaps        bool
 	noNewPrivileges bool
 }
 
 // execInRoot chroots into rootDir, drops privileges and executes argv. It only
 // returns on error.
-func execInRoot(ctx context.Context, rootDir string, argv, extraEnv []string, cred *identity.Credential, opts execOptions) error {
+func execInRoot(ctx context.Context, rootDir string, argv, env []string, cred *identity.Credential, opts execOptions) error {
 	// The capability bounding set is a per-thread attribute and execve(2)
 	// uses the calling thread's: stay on this OS thread until exec. The
 	// thread is never unlocked; on error the process exits.
@@ -341,16 +442,8 @@ func execInRoot(ctx context.Context, rootDir string, argv, extraEnv []string, cr
 	if err := osutil.Chroot(rootDir); err != nil {
 		return err
 	}
-
-	env := extraEnv
-	if osutil.ExistsFile(environ.EnvFilePath) {
-		fileEnv, err := environ.ReadEnvFile(environ.EnvFilePath)
-		if err != nil {
-			return err
-		}
-		if env, err = environ.Merge(fileEnv, extraEnv); err != nil {
-			return err
-		}
+	if err := os.Chdir(opts.workdir); err != nil {
+		return fmt.Errorf("working directory: %w", err)
 	}
 
 	if opts.dropCaps {

@@ -82,10 +82,18 @@ func (c *Client) ContainerInspect(ctx context.Context, id string) (*ContainerInf
 
 // ImageInfo is the subset of the image inspection result that droot uses.
 type ImageInfo struct {
-	ID     string `json:"Id"`
-	Config *struct {
-		Env []string `json:"Env"`
-	} `json:"Config"`
+	ID     string       `json:"Id"`
+	Config *ImageConfig `json:"Config"`
+}
+
+// ImageConfig is the subset of an image's configuration that droot saves.
+type ImageConfig struct {
+	Env        []string `json:"Env"`
+	WorkingDir string   `json:"WorkingDir"`
+	User       string   `json:"User"`
+	Entrypoint []string `json:"Entrypoint"`
+	Cmd        []string `json:"Cmd"`
+	StopSignal string   `json:"StopSignal"`
 }
 
 // imagePlatformAPIVersion is the first API version accepting the platform

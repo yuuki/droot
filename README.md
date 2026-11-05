@@ -149,9 +149,11 @@ droot export [-o FILE] [--platform PLATFORM] IMAGE[:TAG]
 Exports the file system of a local Docker image as a tar archive, to STDOUT or
 to `FILE`. droot creates a temporary container from the image **without
 starting it**, streams its file system and removes the container. The image's
-environment variables (`ENV` in the Dockerfile) are saved as `/.drootenv` in
-the archive so that `droot run` can restore them. Images without a shell, such
-as distroless or `FROM scratch` images, are supported.
+configuration — `ENV`, `WORKDIR`, `USER`, `ENTRYPOINT`, `CMD` and
+`STOPSIGNAL` — is saved as `/.droot/config.json` in the archive, and its
+environment variables also as `/.drootenv` (read by older droot versions), so
+that `droot run` can use them. Images without a shell, such as distroless or
+`FROM scratch` images, are supported.
 
 | Option | Description |
 |---|---|
@@ -164,10 +166,18 @@ droot refuses to write the archive to a terminal.
 ### `droot run`
 
 ```
-droot run --root ROOT_DIR [OPTIONS] [--] COMMAND [ARG...]
+droot run --root ROOT_DIR [OPTIONS] [--] [COMMAND [ARG...]]
 ```
 
-Runs `COMMAND` inside `ROOT_DIR` (an extracted archive). In order, droot:
+Runs `COMMAND` inside `ROOT_DIR` (an extracted archive). Without `COMMAND`,
+the image's `ENTRYPOINT` followed by its `CMD` is run. Unlike `docker run`,
+a `COMMAND` replaces both: give the entrypoint explicitly to pass it
+arguments. The image's `USER` and `WORKDIR` are the defaults of `--user` and
+`--workdir`. These defaults come from `/.droot/config.json`, written by
+`droot export` since droot 0.8; with archives exported by older versions,
+`COMMAND` is required and droot runs as root in `/` unless told otherwise.
+
+In order, droot:
 
 1. optionally copies the host's `/etc/group`, `/etc/passwd`, `/etc/resolv.conf` and `/etc/hosts` into `ROOT_DIR` (`--cp`);
 2. mounts `proc` on `/proc`, bind mounts the host's `/sys` on `/sys` (as an rslave mount) and performs the `--bind`/`--robind`/`--bind-net-files` mounts;
@@ -175,13 +185,14 @@ Runs `COMMAND` inside `ROOT_DIR` (an extracted archive). In order, droot:
 4. `chroot`s into `ROOT_DIR`;
 5. drops every capability except `CAP_CHOWN`, `CAP_DAC_OVERRIDE`, `CAP_FOWNER`, `CAP_SETGID`, `CAP_SETUID` and `CAP_NET_BIND_SERVICE` from the bounding set and empties the inheritable and ambient sets (unless `--no-dropcaps`);
 6. switches to the requested user and groups;
-7. executes `COMMAND` with the environment of `/.drootenv` overridden by `--env-file`, then by `--env`. droot *replaces itself* with `COMMAND`, so the exit status and signals are those of `COMMAND`.
+7. changes to the working directory and executes `COMMAND` with the environment of the image (the `Env` of `/.droot/config.json` overridden by `/.drootenv`), overridden by `--env-file`, then by `--env`. `PATH` (`/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`), `HOME`, `USER` and `LOGNAME` (from the user's entry in `ROOT_DIR/etc/passwd`; `HOME=/` without entry) are set when missing. droot *replaces itself* with `COMMAND`, so the exit status and signals are those of `COMMAND`.
 
 | Option | Description |
 |---|---|
 | `-r`, `--root ROOT_DIR` | Root directory to chroot into (required). |
-| `-u`, `--user USER` | User name or ID to run as. Names are looked up in `ROOT_DIR/etc/passwd` first, then on the host (`/etc/passwd`, then `getent passwd` for users served by NSS such as LDAP or SSSD), so the image decides what a name maps to (droot warns when a name other than `root` maps to uid 0); numeric IDs do not depend on the image. Unknown numeric IDs are accepted. |
+| `-u`, `--user USER` | User name or ID to run as. Defaults to the image's `USER` (which may also name a group, as `USER app:staff`), or to droot's own user (root). Names are looked up in `ROOT_DIR/etc/passwd` first, then on the host (`/etc/passwd`, then `getent passwd` for users served by NSS such as LDAP or SSSD), so the image decides what a name maps to (droot warns when a name other than `root` maps to uid 0); numeric IDs do not depend on the image. Unknown numeric IDs are accepted. |
 | `-g`, `--group GROUP` | Group name or ID to run as, looked up like `--user` (`ROOT_DIR/etc/group`, the host's `/etc/group`, `getent group`). Defaults to the primary group of `--user`; for a numeric `--user` without an entry in `ROOT_DIR/etc/passwd`, to droot's own group (usually 0, with a warning), like Docker. |
+| `-w`, `--workdir DIR` | Working directory of `COMMAND`, an absolute path inside the container. Defaults to the image's `WORKDIR`, or `/`. It must exist. |
 | `-b`, `--bind SRC[:DEST][:OPTS]` | Bind mount the host's `SRC` (directory or file) on `DEST` (default: `SRC`) in the container. `OPTS` is a comma-separated list of `ro` (read-only), `rw` (the default) and `rbind` (also bind the mounts below `SRC`; with `ro`, they are all read-only), as in `--bind /srv/data:/data:ro` or `--bind /srv:rbind`. A last part that is not such a list belongs to `DEST` (`--bind /a:/b:c` mounts on `/b:c`). Repeatable. |
 | `--robind SRC[:DEST][:OPTS]` | Same as `--bind SRC:DEST:ro`. Repeatable. |
 | `--cp`, `--copy-files` | Copy the host's `/etc/group`, `/etc/passwd`, `/etc/resolv.conf` and `/etc/hosts` into the container. |
@@ -201,7 +212,11 @@ Notes:
 - `COMMAND` is looked up in the `PATH` of the container environment (falling
   back to `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`), not in
   the `PATH` of the shell that started droot.
-- The working directory is `/`.
+- The image's `STOPSIGNAL` is saved but not used: droot is not a supervisor.
+  Set it as `KillSignal=` in a systemd unit, for instance.
+- With `--cp`, the container's `/etc/passwd` and `/etc/group` are the host's,
+  so the image's `USER` must exist on the host too, or be overridden with
+  `--user`.
 
 ### `droot umount`
 

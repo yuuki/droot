@@ -55,6 +55,11 @@ audio:x:1800: app
 func TestResolve(t *testing.T) {
 	root := openRoot(t, newRoot(t))
 	uid, gid := os.Getuid(), os.Getgid()
+	// The current identity is looked up in the container for HOME.
+	var curName, curHome string
+	if uid == 0 {
+		curName, curHome = "root", "/root"
+	}
 
 	tests := []struct {
 		name        string
@@ -64,7 +69,7 @@ func TestResolve(t *testing.T) {
 	}{
 		{
 			name: "no user and no group keeps the current identity",
-			want: Credential{UID: uid, GID: gid},
+			want: Credential{UID: uid, GID: gid, Username: curName, Home: curHome},
 		},
 		{
 			name: "user name uses the primary group and supplementary groups",

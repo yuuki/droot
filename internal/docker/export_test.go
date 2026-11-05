@@ -8,9 +8,13 @@ import (
 	"io"
 	"net/http"
 	"os/exec"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/yuuki/droot/internal/imageconfig"
 )
 
 type fakeAPI struct {
@@ -56,9 +60,7 @@ func (f *fakeAPI) ContainerInspect(_ context.Context, id string) (*ContainerInfo
 func (f *fakeAPI) ImageInspect(_ context.Context, ref, platform string) (*ImageInfo, error) {
 	f.inspectedImage = ref
 	info := &ImageInfo{ID: ref}
-	info.Config = &struct {
-		Env []string `json:"Env"`
-	}{Env: f.env}
+	info.Config = &ImageConfig{Env: f.env, WorkingDir: "/app", User: "app:staff", Entrypoint: []string{"/entry"}, Cmd: []string{"serve", "--port=80"}, StopSignal: "SIGQUIT"}
 	return info, nil
 }
 
@@ -171,8 +173,9 @@ func TestExportImage(t *testing.T) {
 
 	got := readTar(t, out.Bytes())
 	want := entries[:len(entries)-1] // the stale .drootenv is replaced
-	if len(got) != len(want)+1 {
-		t.Fatalf("got %d entries, want %d", len(got), len(want)+1)
+	// .drootenv, .droot/ and .droot/config.json are appended.
+	if len(got) != len(want)+3 {
+		t.Fatalf("got %d entries, want %d", len(got), len(want)+3)
 	}
 	for i, w := range want {
 		g := got[i]
@@ -189,13 +192,31 @@ func TestExportImage(t *testing.T) {
 		}
 	}
 
-	env := got[len(got)-1]
+	env := got[len(want)]
 	if env.hdr.Name != ".drootenv" || env.hdr.Typeflag != tar.TypeReg || env.hdr.Mode != 0o644 {
 		t.Fatalf("unexpected env entry header: %+v", env.hdr)
 	}
 	wantEnv := "PATH=/usr/local/bin:/usr/bin:/bin\nJAVA_OPTS=-Da=b -Dc=d\nQUOTE=\"$HOME\" `x`\n"
 	if env.body != wantEnv {
 		t.Errorf(".drootenv = %q, want %q", env.body, wantEnv)
+	}
+	if dir := got[len(want)+1].hdr; dir.Name != ".droot/" || dir.Typeflag != tar.TypeDir || dir.Mode != 0o755 {
+		t.Fatalf("unexpected .droot entry header: %+v", dir)
+	}
+	cfgEntry := got[len(want)+2]
+	if cfgEntry.hdr.Name != ".droot/config.json" || cfgEntry.hdr.Typeflag != tar.TypeReg || cfgEntry.hdr.Mode != 0o644 {
+		t.Fatalf("unexpected config entry header: %+v", cfgEntry.hdr)
+	}
+	cfg, err := imageconfig.Parse([]byte(cfgEntry.body), "config.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCfg := imageconfig.Config{
+		Version: imageconfig.Version, Image: "example/app:latest", ImageID: "sha256:image", Env: api.env,
+		WorkingDir: "/app", User: "app:staff", Entrypoint: []string{"/entry"}, Cmd: []string{"serve", "--port=80"}, StopSignal: "SIGQUIT",
+	}
+	if !reflect.DeepEqual(*cfg, wantCfg) {
+		t.Errorf("config.json:\ngot  %+v\nwant %+v", *cfg, wantCfg)
 	}
 }
 
@@ -206,8 +227,13 @@ func TestExportImageSkipsUnrepresentableEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := readTar(t, out.Bytes())
-	if len(got) != 1 || got[0].body != "A=1\nB=2\n" {
+	if len(got) != 3 || got[0].body != "A=1\nB=2\n" {
 		t.Fatalf("unexpected archive: %+v", got)
+	}
+	// The configuration keeps them.
+	cfg, err := imageconfig.Parse([]byte(got[2].body), "config.json")
+	if err != nil || !slices.Equal(cfg.Env, api.env) {
+		t.Fatalf("config.json Env = %q, %v", cfg.Env, err)
 	}
 }
 
@@ -371,6 +397,7 @@ func TestIsReplaced(t *testing.T) {
 	for name, want := range map[string]bool{
 		".drootenv": true, "./.drootenv": true, "/.drootenv": true, ".drootenv/": true, ".drootenv/x": true,
 		"etc/.drootenv": false, ".drootenv.bak": false, ".drootenvx/y": false,
+		".droot": true, "./.droot/": true, ".droot/config.json": true, ".droot/x/y": true, ".drootx": false, "etc/.droot/config.json": false,
 	} {
 		if got := isReplaced(name); got != want {
 			t.Errorf("isReplaced(%q) = %v, want %v", name, got, want)

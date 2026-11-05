@@ -59,7 +59,9 @@ type Group struct {
 // Resolve computes the credential for --user userSpec and --group groupSpec.
 // Each spec is either a name or a numeric ID.
 //
-//   - With neither spec, the current uid/gid are kept and groups are untouched.
+//   - With neither spec, the current uid/gid are kept and groups are untouched;
+//     Username and Home are taken from the container's /etc/passwd if the
+//     uid is listed there.
 //   - With a user, the gid defaults to the user's primary group and the
 //     supplementary groups are the groups listing the user in the container's
 //     /etc/group.
@@ -75,6 +77,19 @@ type Group struct {
 func Resolve(root *osutil.Root, userSpec, groupSpec string) (*Credential, error) {
 	cred := &Credential{UID: os.Getuid(), GID: os.Getgid()}
 	if userSpec == "" && groupSpec == "" {
+		// Keep the identity, but find its name and home directory in
+		// the container, for HOME and USER. This is best effort: the
+		// identity does not depend on it.
+		users, err := readPasswd(root, "/etc/passwd")
+		if err != nil {
+			log.Debugf("cannot read the container's /etc/passwd: %v", err)
+		}
+		for _, u := range users {
+			if u.UID == cred.UID {
+				cred.Username, cred.Home = u.Name, u.Home
+				break
+			}
+		}
 		return cred, nil
 	}
 

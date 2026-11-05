@@ -29,7 +29,8 @@ library, and its packages carry no compatibility promise.
 | `internal/cli` | A small command line parser: flags, help, suggestions for typos, shell completion scripts. |
 | `internal/commands` | The commands: `export`, `run`, `umount`. |
 | `internal/docker` | A minimal Docker Engine API client written with the standard library, and the export logic. |
-| `internal/environ` | Reading, validating and merging `KEY=VALUE` environment variables (`/.drootenv`). |
+| `internal/environ` | Reading, validating and merging `KEY=VALUE` environment variables (`/.drootenv`, `--env-file`). |
+| `internal/imageconfig` | The image configuration saved in `/.droot/config.json`. |
 | `internal/identity` | Resolving `--user`/`--group` to uid, gid and supplementary groups. |
 | `internal/mounter` | Mounting `/proc`, `/sys` and bind mounts, parsing `/proc/self/mountinfo`, unmounting. |
 | `internal/osutil` | File system and process helpers: secure path resolution, file copy, devices, capabilities, credentials, exec. |
@@ -47,9 +48,9 @@ sequenceDiagram
   D->>E: POST /containers/create {Image, placeholder Entrypoint, label}
   Note right of E: the container is never started
   D->>E: GET /containers/{id}/json (Image: the ID of the image used)
-  D->>E: GET /images/{image ID}/json (Config.Env)
+  D->>E: GET /images/{image ID}/json (Config: Env, WorkingDir, User, Entrypoint, Cmd, StopSignal)
   D->>E: GET /containers/{id}/export (tar stream)
-  D->>D: copy every tar entry, drop any existing .drootenv,<br/>append .drootenv with the image's environment
+  D->>D: copy every tar entry, drop any existing .drootenv and .droot,<br/>append .drootenv and .droot/config.json
   D->>E: DELETE /containers/{id}?force=1&v=1 (always, even after errors, Ctrl-C, SIGHUP or a broken pipe)
 ```
 
@@ -82,7 +83,26 @@ Design notes:
 
 The archive is the plain `docker export` tar of the container's file system
 (including the files Docker adds to every container such as `/.dockerenv`,
-`/etc/hosts` and `/etc/resolv.conf`), plus `/.drootenv`:
+`/etc/hosts` and `/etc/resolv.conf`), plus `/.droot/config.json`, the
+image's configuration:
+
+```json
+{
+  "Version": 1,
+  "Image": "dockerfiles/app",
+  "ImageID": "sha256:...",
+  "Env": ["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "JAVA_OPTS=-Dfoo=bar -Dbaz=qux"],
+  "WorkingDir": "/app",
+  "User": "app",
+  "Entrypoint": ["/app/bin/server"],
+  "Cmd": ["--port=8080"],
+  "StopSignal": "SIGTERM"
+}
+```
+
+`Version` is incremented when the format changes incompatibly; droot ignores
+fields it does not know. The environment is also written to `/.drootenv`,
+which droot 0.7 reads:
 
 ```
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
@@ -92,8 +112,10 @@ JAVA_OPTS=-Dfoo=bar -Dbaz=qux
 One `KEY=VALUE` per line, everything after the first `=` being the value.
 Blank lines and lines starting with `#` are ignored when reading. Variables
 that would not be read back exactly (values containing newlines, keys
-starting with `#` or surrounded by spaces) cannot be represented and are
-skipped with a warning at export time.
+starting with `#` or surrounded by spaces) cannot be represented: they are
+only in `/.droot/config.json`, with a warning at export time. When both files
+exist, `droot run` takes the environment of `config.json` and applies
+`/.drootenv` over it, so that edits to `/.drootenv` still take effect.
 
 Extract archives as root with `tar -xpf` so that ownership, permissions and
 setuid bits are preserved.
@@ -101,7 +123,10 @@ setuid bits are preserved.
 ## `droot run`
 
 1. Validate the options and resolve `--root` to an absolute path without
-   symlinks (which is how `/proc/self/mountinfo` reports mount points).
+   symlinks (which is how `/proc/self/mountinfo` reports mount points). Read
+   `/.droot/config.json` and `/.drootenv` through `osutil.Root` (see below)
+   for the defaults of COMMAND, `--user` and `--workdir` and the environment,
+   and read the `--env-file`s on the host.
 2. `--cp`: copy the host's `/etc/{group,passwd,resolv.conf,hosts}` into the
    root. Each destination is resolved with `osutil.Root`, which opens every
    path component with `openat(2)` and `O_NOFOLLOW` from the descriptor of its
@@ -131,8 +156,9 @@ setuid bits are preserved.
    set is a per-thread attribute and `execve(2)` uses the calling thread's
    attributes. Without the lock, the Go scheduler may run the `exec` on
    another thread than the one that dropped the capabilities.
-7. `chroot(2)` into the root and `chdir("/")`.
-8. Read `/.drootenv` (now inside the root) and merge `--env` over it.
+7. `chroot(2)` into the root and `chdir(2)` to the working directory.
+8. Merge the environment: the image's, then `--env-file`, then `--env`, plus
+   the defaults of `PATH`, `HOME`, `USER` and `LOGNAME`.
 9. Drop every capability not in the keep list from the bounding set with
    `prctl(PR_CAPBSET_DROP)`, and empty the inheritable and ambient sets: the
    bounding set does not limit inheritable capabilities, which root keeps
