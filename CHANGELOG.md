@@ -45,9 +45,9 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
   verifying the certificate* when only `DOCKER_CERT_PATH` was set, even with
   a `ca.pem`, which let a man in the middle serve a fake daemon and inject
   files into archives later run as root.
-- Release assets are built with GoReleaser: `droot_<version>_<os>_<arch>.tar.gz`
-  archives and bare `droot_<os>_<arch>` binaries for linux and darwin on amd64
-  and arm64. 386 builds and zip archives are no longer provided.
+- Release assets are built with GoReleaser and keep the names and layout of
+  0.7.7 (`droot_linux_amd64.tar.gz`, `droot_darwin_amd64.zip`, bare
+  `droot_linux_amd64`, ...), now also for arm64; a `checksums.txt` is added.
 - The CLI moved to urfave/cli v3: help output changed, and usage errors print
   a short hint instead of the full help.
 

@@ -63,9 +63,10 @@ Releases are built by [GoReleaser](https://goreleaser.com) from
 1. Move the entries under "Unreleased" in `CHANGELOG.md` to a new version
    section and commit.
 2. Tag and push: `git tag v0.8.0 && git push origin v0.8.0`.
-3. The `Release` workflow creates a **draft** GitHub release with tar.gz
-   archives, bare binaries named like the assets of droot <= 0.7.7
-   (`droot_linux_amd64`, ...) and `checksums.txt`. Review it and publish it.
+3. The `Release` workflow creates a **draft** GitHub release with the assets
+   named like those of droot 0.7.7 — `droot_linux_<arch>.tar.gz`,
+   `droot_darwin_<arch>.zip` and bare `droot_<os>_<arch>` binaries — and
+   `checksums.txt`. Review it and publish it.
 4. Update the Homebrew tap (`yuuki/homebrew-droot`) with the new URL and
    checksum.
 

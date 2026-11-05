@@ -19,17 +19,23 @@ builds:
       - -s -w -X main.version={{ .Version }}
     mod_timestamp: "{{ .CommitTimestamp }}"
 
+# The assets are named and laid out like those of droot 0.7.7, so that
+# download scripts using releases/latest/download/... and the Homebrew
+# formula keep working: droot_linux_amd64.tar.gz and droot_darwin_amd64.zip
+# containing droot_<os>_<arch>/droot, and bare droot_<os>_<arch> binaries.
 archives:
   - id: archive
     formats: [tar.gz]
-    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: darwin
+        formats: [zip]
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    wrap_in_directory: true
     files:
       - LICENSE
       - LICENSE_OF_DEPENDENCIES.md
       - README.md
       - CHANGELOG.md
-  # Bare binaries named like the assets of droot <= 0.7.7
-  # (e.g. droot_linux_amd64), so that existing download scripts keep working.
   - id: binary
     formats: [binary]
     name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
