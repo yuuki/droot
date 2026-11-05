@@ -264,7 +264,7 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
   `droot_darwin_amd64.zip`, bare `droot_linux_amd64`, ...).
 - Documentation: architecture, security considerations, development guide,
   known issues and ideas, and a deployment tutorial with example systemd
-  units (`examples/systemd`).
+  units (`examples/systemd`). A Japanese README (`README.ja.md`).
 - CI on GitHub Actions (lint, unit tests as user and root on the minimum and
   latest Go, coverage report, end-to-end tests against Docker on amd64 and
   arm64 and against Podman, cross builds), Dependabot, GoReleaser release

@@ -86,4 +86,3 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
 ### Project and maintenance
 
 - **[project]** Automate the Homebrew tap with GoReleaser, or drop it.
-- **[project]** A Japanese README.

@@ -1,6 +1,8 @@
 droot
 =====
 
+English | [日本語](README.ja.md)
+
 [![CI](https://github.com/yuuki/droot/actions/workflows/ci.yml/badge.svg)](https://github.com/yuuki/droot/actions/workflows/ci.yml)
 [![Latest Version](https://img.shields.io/github/release/yuuki/droot.svg?style=flat-square)](https://github.com/yuuki/droot/releases)
 [![Go Report Card](https://goreportcard.com/badge/github.com/yuuki/droot)](https://goreportcard.com/report/github.com/yuuki/droot)
@@ -114,21 +116,24 @@ Deploy and run it on a server (extract as root so that file ownership and
 setuid bits are preserved):
 
 ```console
-$ sudo droot umount --root /var/containers/app   # it is safe to umount before run if you use --bind
-$ sudo mkdir -p /tmp/app /var/containers/app
 $ aws s3 cp s3://drootexamples/app.tar.gz . && aws s3 cp s3://drootexamples/app.tar.gz.sha256 .
 $ sha256sum -c app.tar.gz.sha256
-$ sudo tar -xpzf app.tar.gz -C /tmp/app
-$ sudo mv -T /tmp/app /var/containers/app
+$ sudo mkdir -p /var/containers/app
+$ sudo tar -xpzf app.tar.gz -C /var/containers/app
 $ sudo droot run --cp --user appuser --group appgroup --bind /var/log/app --root /var/containers/app -- command
 ```
 
-`droot run` leaves its mounts in place after the command exits. Remove them
-before deleting or replacing the directory:
+`droot run` leaves its mounts in place after the command exits (unless
+`--unshare` is given). Remove them before deleting or replacing the directory,
+for instance to deploy a new version — deleting it with mounts below would
+delete files of the host through the bind mounts:
 
 ```console
 $ sudo droot umount --root /var/containers/app
 ```
+
+To deploy new versions, extract each one into a new directory and switch
+between them, e.g. with capze (below).
 
 See [Deploying an application](documentation/deployment.md) for a complete
 walkthrough, including systemd units.
@@ -139,7 +144,7 @@ walkthrough, including systemd units.
 directory layout and keeps the last releases:
 
 ```console
-$ aws s3 cp s3://drootexamples/app.tar.gz - | sudo tar -xpzf - -C /tmp/app
+$ sudo mkdir /tmp/app && sudo tar -xpzf app.tar.gz -C /tmp/app   # after verifying the checksum as above
 $ sudo capze --keep 5 /tmp/app /var/containers/app
 ```
 
@@ -201,7 +206,7 @@ In order, droot:
 
 1. optionally copies the host's `/etc/group`, `/etc/passwd`, `/etc/resolv.conf` and `/etc/hosts` into `ROOT_DIR` (`--cp`);
 2. mounts `proc` on `/proc` and bind mounts the host's `/sys` on `/sys` (as an rslave mount), masks their sensitive files and makes `/proc/sys`, `/proc/sysrq-trigger`, `/proc/irq`, `/proc/bus`, `/proc/fs` and `/sys` read-only like Docker (unless `--no-mask`), and performs the `--bind`/`--robind`/`--tmpfs` mounts (parents first) and the `--bind-net-files` mounts;
-3. creates the `/var/lock -> ../run/lock` symlink and populates `/dev` like Docker, unless `/dev` is a mount point (e.g. `--bind /dev`): the devices `null`, `zero`, `full`, `random`, `urandom` and `tty` (owned by root, mode 0666), the symlinks `fd -> /proc/self/fd`, `stdin`, `stdout`, `stderr` and `ptmx -> pts/ptmx`, a private `devpts` instance on `/dev/pts` (pseudo-terminals) and a 64 MiB tmpfs on `/dev/shm`;
+3. creates the `/var/lock -> ../run/lock` symlink if `/var` exists and `/var/lock` does not, and populates `/dev` like Docker — unless `/dev` is a mount point (e.g. `--bind /dev`), in which case it is left alone: the devices `null`, `zero`, `full`, `random`, `urandom` and `tty` (owned by root, mode 0666), the symlinks `fd -> /proc/self/fd`, `stdin`, `stdout`, `stderr` and `ptmx -> pts/ptmx`, a private `devpts` instance on `/dev/pts` (pseudo-terminals) and a 64 MiB tmpfs on `/dev/shm`;
 4. `chroot`s into `ROOT_DIR`;
 5. drops every capability except `CAP_CHOWN`, `CAP_DAC_OVERRIDE`, `CAP_FOWNER`, `CAP_SETGID`, `CAP_SETUID` and `CAP_NET_BIND_SERVICE` (adjusted by `--cap-add`/`--cap-drop`) from the bounding set and empties the inheritable and ambient sets (unless `--no-dropcaps`);
 6. switches to the requested user and groups;
@@ -244,6 +249,14 @@ Notes:
   failed run are removed again; those of previous runs stay.
 - Concurrent `droot run` and `droot umount` on the same `ROOT_DIR` take turns
   (`flock(2)` on the directory) until `COMMAND` is executed.
+- `COMMAND` is looked up in the `PATH` of the container environment (falling
+  back to `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`), not in
+  the `PATH` of the shell that started droot.
+- The image's `STOPSIGNAL` is saved but not used: droot is not a supervisor.
+  Set it as `KillSignal=` in a systemd unit, for instance.
+- With `--cp`, the container's `/etc/passwd` and `/etc/group` are the host's,
+  so the image's `USER` must exist on the host too, or be overridden with
+  `--user`.
 
 #### Resource limits
 
@@ -269,14 +282,6 @@ LimitNOFILE=65536
 
 `LimitNOFILE=` and the other `Limit*=` settings of the unit are inherited by
 `COMMAND` too, unless `--ulimit` overrides them.
-- `COMMAND` is looked up in the `PATH` of the container environment (falling
-  back to `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`), not in
-  the `PATH` of the shell that started droot.
-- The image's `STOPSIGNAL` is saved but not used: droot is not a supervisor.
-  Set it as `KillSignal=` in a systemd unit, for instance.
-- With `--cp`, the container's `/etc/passwd` and `/etc/group` are the host's,
-  so the image's `USER` must exist on the host too, or be overridden with
-  `--user`.
 
 ### `droot umount`
 
@@ -316,8 +321,8 @@ Processes in /var/containers/app: 1
   4242  1500  /usr/local/bin/app --port 8080
 ```
 
-Processes of a `droot run --unshare` are listed, but their mounts, private,
-are not.
+Processes of a `droot run --unshare` are listed, but not their mounts, which
+are private.
 
 ### Global options
 
