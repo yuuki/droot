@@ -219,6 +219,9 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
   `/.drootenv`, represents every environment variable. `droot run` uses it:
   `droot run --root DIR` alone runs the image's `ENTRYPOINT` and `CMD`.
 - `droot run --workdir`/`-w`.
+- `droot run --config FILE` reads the options from a file (a subset of TOML,
+  parsed without a new dependency), so that systemd units stay short; see
+  `examples/droot/app.toml`.
 - `droot run --no-new-privileges` sets the `no_new_privs` flag (now the
   default).
 - `droot run --seccomp default` installs a seccomp filter that denies, like

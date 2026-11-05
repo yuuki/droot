@@ -210,7 +210,8 @@ In order, droot:
 
 | Option | Description |
 |---|---|
-| `-r`, `--root ROOT_DIR` | Root directory to chroot into (required). |
+| `--config FILE` | Read the options from `FILE`, e.g. `/etc/droot/app.toml`, so that a systemd unit only needs `droot run --config FILE` (see [`examples/droot/app.toml`](examples/droot/app.toml)). Keys are the long names of the options (`root`, `user`, `bind`, `unshare`, ...) and `command` gives `COMMAND`; values are strings, `true`/`false` or arrays of strings, in a subset of TOML (anything else is an error). Options given on the command line take precedence; repeatable ones are added to the file's. |
+| `-r`, `--root ROOT_DIR` | Root directory to chroot into (required, on the command line or in `--config`). |
 | `-u`, `--user USER` | User name or ID to run as. Defaults to the image's `USER` (which may also name a group, as `USER app:staff`), or to droot's own user (root). Names are looked up in `ROOT_DIR/etc/passwd` first, then on the host (`/etc/passwd`, then `getent passwd` for users served by NSS such as LDAP or SSSD), so the image decides what a name maps to (droot warns when a name other than `root` maps to uid 0); numeric IDs do not depend on the image. Unknown numeric IDs are accepted. |
 | `-g`, `--group GROUP` | Group name or ID to run as, looked up like `--user` (`ROOT_DIR/etc/group`, the host's `/etc/group`, `getent group`). Defaults to the primary group of `--user`; for a numeric `--user` without an entry in `ROOT_DIR/etc/passwd`, to droot's own group (usually 0, with a warning), like Docker. |
 | `-w`, `--workdir DIR` | Working directory of `COMMAND`, an absolute path inside the container. Defaults to the image's `WORKDIR`, or `/`. It must exist. |

@@ -70,6 +70,20 @@ Mounts /proc, /sys and the requested bind mounts under ROOT_DIR, creates the bas
 Without COMMAND, the ENTRYPOINT and CMD of the image saved by 'droot export' (/.droot/config.json) are run; COMMAND replaces both. The image's USER and WORKDIR are the defaults of \-\-user and \-\-workdir.
 .PP
 The options must come before COMMAND: everything from COMMAND on is passed to it verbatim. Mounts are left in place after COMMAND exits; remove them with 'droot umount'. Must be run as root.
+.PP
+\-\-config FILE reads options from FILE, in a subset of TOML: lines KEY = VALUE, where KEY is the long name of an option and VALUE a string ("..." or '...'), true or false, or an array of strings for repeatable options; command, an array of strings, gives COMMAND. # starts a comment. The options given on the command line take precedence, and repeatable ones are added to the file's:
+.PP
+.nf
+.RS 4
+root = "/var/containers/app/current"
+unshare = true
+bind = ["/var/log/app", "/srv/data:/data:ro"]
+command = ["/app/bin/server", "\-\-port=8080"]
+.RE
+.fi
+.TP
+\fB\-\-config\fR \fIFILE\fR
+read options from FILE: the long names of the options of droot run as keys, and command, in a subset of TOML (see droot(1)); the command line takes precedence
 .TP
 \fB\-r,\fR \fI\-\-root ROOT_DIR\fR
 root directory to chroot into (required)

@@ -139,6 +139,16 @@ assert_eq "without COMMAND, the image's ENTRYPOINT and CMD run as its USER" \
 assert_eq "WORKDIR, HOME, USER and LOGNAME" \
   "$("$DROOT" run --root "$WORK/app" -- sh -c 'echo "$PWD $HOME $USER $LOGNAME"')" \
   "/usr/local/myapp /home/app app app"
+cat >"$WORK/app.toml" <<EOF
+# droot run --config
+root = "$WORK/app"
+user = "root"
+env = ["FROM_CONFIG=1"]
+command = ["sh", "-c", "echo \$FROM_CONFIG \$FROM_CLI \$(id -u)"]
+EOF
+assert_eq "--config, with the command line taking precedence" \
+  "$("$DROOT" run --config "$WORK/app.toml"; "$DROOT" run --config "$WORK/app.toml" -e FROM_CLI=2 --user app)" \
+  "$(printf '1 0\n1 2 1500')"
 assert_eq "--user and --workdir override the image" \
   "$("$DROOT" run --root "$WORK/app" --user root -w /tmp -- sh -c 'echo "$(id -u) $PWD $HOME $USER"')" \
   "0 /tmp /root root"

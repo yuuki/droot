@@ -66,8 +66,18 @@ Without COMMAND, the ENTRYPOINT and CMD of the image saved by 'droot export' (/.
 
 The options must come before COMMAND: everything from COMMAND on is passed to it verbatim. Mounts are left in place after COMMAND exits; remove them with 'droot umount'. Must be run as root.
 
+--config FILE reads options from FILE, in a subset of TOML: lines KEY = VALUE, where KEY is the long name of an option and VALUE a string ("..." or '...'), true or false, or an array of strings for repeatable options; command, an array of strings, gives COMMAND. # starts a comment. The options given on the command line take precedence, and repeatable ones are added to the file's:
+
+```
+root = "/var/containers/app/current"
+unshare = true
+bind = ["/var/log/app", "/srv/data:/data:ro"]
+command = ["/app/bin/server", "--port=8080"]
+```
+
 | Option | Description |
 |---|---|
+| `--config FILE` | read options from FILE: the long names of the options of droot run as keys, and command, in a subset of TOML (see droot(1)); the command line takes precedence |
 | `-r, --root ROOT_DIR` | root directory to chroot into (required) |
 | `-u, --user USER` | user (name or ID) to run COMMAND as (default: the image's USER, or droot's own user); names are looked up in ROOT\_DIR/etc/passwd, then on the host |
 | `-g, --group GROUP` | group (name or ID) to run COMMAND as (default: the primary group of --user) |

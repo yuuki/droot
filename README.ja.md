@@ -173,7 +173,8 @@ droot は次の順に処理を行います。
 
 | オプション | 説明 |
 |---|---|
-| `-r`, `--root ROOT_DIR` | chroot するルートディレクトリ（必須）。 |
+| `--config FILE` | オプションを `FILE`（例: `/etc/droot/app.toml`）から読み込みます。systemd ユニットには `droot run --config FILE` と書くだけで済みます（[`examples/droot/app.toml`](examples/droot/app.toml) を参照）。キーはオプションの長い名前（`root`、`user`、`bind`、`unshare` など）で、`command` で `COMMAND` を指定します。値は文字列、`true`/`false`、文字列の配列で、TOML のサブセットとして解釈されます（それ以外はエラーになります）。コマンドラインで指定したオプションが優先され、繰り返し指定できるオプションはファイルの値に追加されます。 |
+| `-r`, `--root ROOT_DIR` | chroot するルートディレクトリ（必須。コマンドラインまたは `--config` で指定）。 |
 | `-u`, `--user USER` | 実行するユーザーの名前または ID。デフォルトはイメージの `USER`（`USER app:staff` のようにグループも指定されている場合があります）、それがなければ droot 自身のユーザー（root）です。名前はまず `ROOT_DIR/etc/passwd` で検索され、次にホスト上（`/etc/passwd`、次に LDAP や SSSD など NSS が提供するユーザーのための `getent passwd`）で検索されます。そのため、名前がどのユーザーに対応するかはイメージが決めます（`root` 以外の名前が uid 0 に対応する場合、droot は警告を出します）。数値の ID はイメージに依存しません。未知の数値 ID も受け付けます。 |
 | `-g`, `--group GROUP` | 実行するグループの名前または ID。`--user` と同様に検索されます（`ROOT_DIR/etc/group`、ホストの `/etc/group`、`getent group`）。デフォルトは `--user` のプライマリグループです。`ROOT_DIR/etc/passwd` にエントリのない数値の `--user` の場合は、Docker と同様に droot 自身のグループ（通常は 0。警告が出ます）になります。 |
 | `-w`, `--workdir DIR` | `COMMAND` の作業ディレクトリ。コンテナ内の絶対パスで指定します。デフォルトはイメージの `WORKDIR`、それがなければ `/` です。ディレクトリは存在している必要があります。 |

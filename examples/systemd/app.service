@@ -10,18 +10,12 @@ After=network-online.target
 Type=exec
 # Messages of droot itself as JSON objects in the journal.
 Environment=DROOT_LOG_FORMAT=json
-# Passed to the application with --env APP_ENV (a bare KEY takes its value
-# from droot's environment).
+# Passed to the application by env = ["APP_ENV"] in app.toml (a bare KEY
+# takes its value from droot's environment).
 Environment=APP_ENV=production
-ExecStart=/usr/local/bin/droot run --root /var/containers/app/current \
-    --unshare \
-    --user app --cap-drop ALL --seccomp default \
-    --robind /etc/app/config.yml:/app/config.yml \
-    --bind /var/log/app \
-    --bind-net-files \
-    --tmpfs /tmp \
-    --env APP_ENV \
-    -- /app/bin/server --config /app/config.yml
+# The options of droot run are in examples/droot/app.toml, installed as
+# /etc/droot/app.toml.
+ExecStart=/usr/local/bin/droot run --config /etc/droot/app.toml
 # droot replaces itself with the command: systemd signals the application
 # directly. Use the STOPSIGNAL of the image, if any.
 KillSignal=SIGTERM

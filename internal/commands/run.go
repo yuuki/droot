@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"maps"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"syscall"
 
 	"github.com/yuuki/droot/internal/cli"
+	"github.com/yuuki/droot/internal/conffile"
 	"github.com/yuuki/droot/internal/environ"
 	"github.com/yuuki/droot/internal/identity"
 	"github.com/yuuki/droot/internal/imageconfig"
@@ -38,10 +40,21 @@ func runCommand() *cli.Command {
 			"WORKDIR are the defaults of --user and --workdir.\n\n" +
 			"The options must come before COMMAND: everything from COMMAND on is passed\n" +
 			"to it verbatim. Mounts are left in place after COMMAND exits; remove them\n" +
-			"with 'droot umount'. Must be run as root.",
+			"with 'droot umount'. Must be run as root.\n\n" +
+			"--config FILE reads options from FILE, in a subset of TOML: lines KEY = VALUE,\n" +
+			"where KEY is the long name of an option and VALUE a string (\"...\" or '...'),\n" +
+			"true or false, or an array of strings for repeatable options; command, an\n" +
+			"array of strings, gives COMMAND. # starts a comment. The options given on the\n" +
+			"command line take precedence, and repeatable ones are added to the file's:\n\n" +
+			"   root = \"/var/containers/app/current\"\n" +
+			"   unshare = true\n" +
+			"   bind = [\"/var/log/app\", \"/srv/data:/data:ro\"]\n" +
+			"   command = [\"/app/bin/server\", \"--port=8080\"]",
 		StopAtFirstArg: true, // everything from COMMAND on belongs to COMMAND
 		ArgsComplete:   "command",
 		Flags: []*cli.Flag{
+			{Name: "config", Kind: cli.String, Placeholder: "FILE", Complete: "file",
+				Usage: "read options from FILE: the long names of the options of droot run as keys, and command, in a subset of TOML (see droot(1)); the command line takes precedence"},
 			{Name: "root", Aliases: []string{"r"}, Kind: cli.String, Placeholder: "ROOT_DIR", Complete: "dir",
 				Usage: "root directory to chroot into (required)"},
 			{Name: "user", Aliases: []string{"u"}, Kind: cli.String, Placeholder: "USER", Complete: "user",
@@ -225,6 +238,15 @@ func doRun(ctx context.Context, cmd *cli.Invocation) (err error) {
 	}
 
 	argv := cmd.Args()
+	if cmd.IsSet("config") {
+		command, err := applyConfigFile(cmd, cmd.String("config"))
+		if err != nil {
+			return err
+		}
+		if len(argv) == 0 {
+			argv = command
+		}
+	}
 	if len(argv) > 0 && argv[0] == "" {
 		return cmd.UsageError("COMMAND must not be empty")
 	}
@@ -527,6 +549,46 @@ func doRun(ctx context.Context, cmd *cli.Invocation) (err error) {
 		noNewPrivileges: !cmd.IsSet("no-new-privileges") || cmd.Bool("no-new-privileges"),
 		seccomp:         cmd.String("seccomp") == "default",
 	})
+}
+
+// maxConfigSize bounds the size of a --config file.
+const maxConfigSize = 1 << 20
+
+// applyConfigFile applies the options of the --config file to cmd, and
+// returns its command, if any.
+func applyConfigFile(cmd *cli.Invocation, path string) ([]string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	b, err := io.ReadAll(io.LimitReader(f, maxConfigSize+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(b) > maxConfigSize {
+		return nil, fmt.Errorf("%s: larger than %d bytes", path, maxConfigSize)
+	}
+	values, err := conffile.Parse(b)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	var command []string
+	if v, ok := values["command"]; ok {
+		command, ok = v.([]string)
+		if !ok || len(command) == 0 {
+			return nil, fmt.Errorf("%s: command must be a non-empty array of strings, e.g. [\"/app/bin/server\", \"--port=80\"]", path)
+		}
+		delete(values, "command")
+	}
+	if _, ok := values["config"]; ok {
+		return nil, fmt.Errorf("%s: a configuration file cannot include another one", path)
+	}
+	if err := cmd.ApplyConfig(values); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	log.Debugf("read the options of %s", path)
+	return command, nil
 }
 
 // bindOptions are the options accepted after SRC:DEST.

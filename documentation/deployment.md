@@ -105,23 +105,33 @@ uses the release `current` pointed to when it started.
 
 ## 5. Run with systemd
 
-[`examples/systemd/app.service`](../examples/systemd/app.service) runs the
-application as a service:
+The options of `droot run` go in a file,
+[`examples/droot/app.toml`](../examples/droot/app.toml), installed as
+`/etc/droot/app.toml`:
+
+```toml
+root = "/var/containers/app/current"
+unshare = true
+user = "app"
+cap-drop = ["ALL"]
+seccomp = "default"
+robind = ["/etc/app/config.yml:/app/config.yml"]
+bind = ["/var/log/app"]
+bind-net-files = true
+tmpfs = ["/tmp"]
+env = ["APP_ENV"]
+command = ["/app/bin/server", "--config", "/app/config.yml"]
+```
+
+so that [`examples/systemd/app.service`](../examples/systemd/app.service)
+stays short:
 
 ```ini
 [Service]
 Type=exec
 Environment=DROOT_LOG_FORMAT=json
 Environment=APP_ENV=production
-ExecStart=/usr/local/bin/droot run --root /var/containers/app/current \
-    --unshare \
-    --user app --cap-drop ALL --seccomp default \
-    --robind /etc/app/config.yml:/app/config.yml \
-    --bind /var/log/app \
-    --bind-net-files \
-    --tmpfs /tmp \
-    --env APP_ENV \
-    -- /app/bin/server --config /app/config.yml
+ExecStart=/usr/local/bin/droot run --config /etc/droot/app.toml
 KillSignal=SIGTERM
 Restart=on-failure
 MemoryMax=1G
@@ -129,6 +139,9 @@ CPUQuota=200%
 TasksMax=512
 LimitNOFILE=65536
 ```
+
+Options given on the command line take precedence over the file, e.g.
+`droot run --config /etc/droot/app.toml --user root -- sh` to debug.
 
 - `--unshare` makes the mounts in a private mount namespace: they disappear
   when the service stops, and old releases can be deleted safely.
@@ -158,6 +171,7 @@ instead: it removes the mounts with `droot umount` in `ExecStopPost=`, and in
 `ExecStartPre=` in case a crash left some behind.
 
 ```console
+# mkdir -p /etc/droot && cp app.toml /etc/droot/
 # cp app.service /etc/systemd/system/
 # systemctl daemon-reload
 # systemctl enable --now app

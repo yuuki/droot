@@ -76,11 +76,6 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
   symlink while keeping N releases (capze-like), then optionally restart a
   systemd unit.
 
-### Usability
-
-- **[ux]** A declarative file (e.g. `/etc/droot/app.toml`) describing the run
-  options of an application, usable from systemd units.
-
 ### Project and maintenance
 
 - **[project]** Automate the Homebrew tap with GoReleaser, or drop it.
