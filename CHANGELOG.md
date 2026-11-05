@@ -39,6 +39,12 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
   in the container is a mount point.
 - `droot run` requires root (euid 0) and refuses `--root /`;
   `droot umount --root /` is refused.
+- `DOCKER_CERT_PATH` alone no longer enables TLS: like the docker CLI, TLS is
+  used with `DOCKER_TLS_VERIFY` (verifying the daemon's certificate) or
+  `DOCKER_TLS` (without verification). droot 0.7 used TLS *without
+  verifying the certificate* when only `DOCKER_CERT_PATH` was set, even with
+  a `ca.pem`, which let a man in the middle serve a fake daemon and inject
+  files into archives later run as root.
 - Release assets are built with GoReleaser: `droot_<version>_<os>_<arch>.tar.gz`
   archives and bare `droot_<os>_<arch>` binaries for linux and darwin on amd64
   and arm64. 386 builds and zip archives are no longer provided.

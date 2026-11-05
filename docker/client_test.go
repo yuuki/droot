@@ -258,8 +258,13 @@ func TestEndpointFromEnv(t *testing.T) {
 			want: Endpoint{Host: "tcp://192.0.2.1:2376", UseTLS: true, CertDir: "/certs"},
 		},
 		{
-			name: "legacy DOCKER_CERT_PATH only",
+			name: "DOCKER_CERT_PATH alone does not enable TLS (like the docker CLI)",
 			env:  map[string]string{"DOCKER_HOST": "tcp://192.0.2.1:2376", "DOCKER_CERT_PATH": "/certs"},
+			want: Endpoint{Host: "tcp://192.0.2.1:2376"},
+		},
+		{
+			name: "DOCKER_TLS enables TLS without verification",
+			env:  map[string]string{"DOCKER_HOST": "tcp://192.0.2.1:2376", "DOCKER_TLS": "1", "DOCKER_CERT_PATH": "/certs"},
 			want: Endpoint{Host: "tcp://192.0.2.1:2376", UseTLS: true, CertDir: "/certs", SkipTLSVerify: true},
 		},
 		{
@@ -302,7 +307,7 @@ func TestEndpointFromEnv(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			for _, k := range []string{"DOCKER_HOST", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH", "DOCKER_CONTEXT", "DOCKER_API_VERSION"} {
+			for _, k := range []string{"DOCKER_HOST", "DOCKER_TLS", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH", "DOCKER_CONTEXT", "DOCKER_API_VERSION"} {
 				t.Setenv(k, tt.env[k])
 			}
 			t.Setenv("DOCKER_CONFIG", configDir)

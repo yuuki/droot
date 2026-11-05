@@ -197,8 +197,9 @@ be a file system of its own. The command is idempotent and refuses `/`.
 `droot export` finds the daemon like the `docker` CLI does:
 
 1. `DOCKER_HOST` (`unix:///path/to/docker.sock`, `tcp://host:2376`), with
-   `DOCKER_TLS_VERIFY` and `DOCKER_CERT_PATH` (`ca.pem`, `cert.pem`, `key.pem`)
-   for TLS;
+   `DOCKER_TLS_VERIFY` (TLS, verifying the daemon's certificate), `DOCKER_TLS`
+   (TLS without verification) and `DOCKER_CERT_PATH` (`ca.pem`, `cert.pem`,
+   `key.pem`; default `~/.docker`);
 2. otherwise the [docker context](https://docs.docker.com/engine/manage-resources/contexts/)
    named by `DOCKER_CONTEXT`;
 3. otherwise the current docker context (`docker context use ...`), read from

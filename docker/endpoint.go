@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/yuuki/droot/log"
 )
@@ -68,23 +69,23 @@ func endpointFromEnv() (Endpoint, error) {
 	return endpointFromHostEnv(DefaultHost, configDir), nil
 }
 
-// endpointFromHostEnv applies DOCKER_TLS_VERIFY and DOCKER_CERT_PATH.
-// For compatibility with droot <= 0.7 (which used the legacy Docker client),
-// setting DOCKER_CERT_PATH alone enables TLS without server verification.
+// endpointFromHostEnv applies DOCKER_TLS_VERIFY, DOCKER_TLS and
+// DOCKER_CERT_PATH like the docker CLI: TLS is used when DOCKER_TLS_VERIFY
+// is set (verifying the daemon's certificate) or DOCKER_TLS is set (without
+// verification). DOCKER_CERT_PATH alone does not enable TLS.
 func endpointFromHostEnv(host, configDir string) Endpoint {
 	ep := Endpoint{Host: host}
 	certPath := os.Getenv("DOCKER_CERT_PATH")
 	verify := os.Getenv("DOCKER_TLS_VERIFY") != ""
-	if certPath != "" || verify {
+	if verify || os.Getenv("DOCKER_TLS") != "" {
 		ep.UseTLS = true
 		ep.SkipTLSVerify = !verify
 		ep.CertDir = certPath
 		if ep.CertDir == "" {
 			ep.CertDir = configDir
 		}
-		if ep.SkipTLSVerify {
-			log.Warnf("DOCKER_CERT_PATH is set without DOCKER_TLS_VERIFY: the daemon's TLS certificate will not be verified")
-		}
+	} else if certPath != "" && strings.HasPrefix(host, "tcp://") {
+		log.Warnf("DOCKER_CERT_PATH is set but TLS is not enabled; set DOCKER_TLS_VERIFY=1 to use TLS")
 	}
 	return ep
 }
