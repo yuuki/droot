@@ -1,33 +1,65 @@
-BIN = droot
+BIN     := droot
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+LDFLAGS := -s -w -X main.version=$(VERSION)
 
-.PHONY: test
-test: vet
-	go test -v $$(go list ./... | grep -v vendor)
+GOLANGCI_LINT_VERSION := v2.15.0
+GORELEASER_VERSION    := v2.20.0
+
+.DEFAULT_GOAL := build
 
 .PHONY: build
-build:
-	CGO_ENABLED=1 go build -o $(BIN) ./cmd/droot/.../
+build: ## Build a static droot binary
+	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/droot
 
-.PHONY: fmt
-fmt:
-	gofmt -s -w $$(git ls | grep -e '\.go$$' | grep -v vendor)
+.PHONY: test
+test: ## Run unit tests (tests that need root are skipped)
+	go test -race ./...
+
+.PHONY: test-root
+test-root: ## Run unit tests as root, including the ones that mount file systems
+	sudo env "PATH=$$PATH" GOTOOLCHAIN=$$(go env GOTOOLCHAIN) GOFLAGS=$$(go env GOFLAGS) go test -race -count=1 ./...
+
+.PHONY: integration-test
+integration-test: build ## Run end-to-end tests against the local Docker daemon (needs sudo)
+	sudo ./script/integration-test.sh ./$(BIN)
+
+.PHONY: cover
+cover: ## Write a coverage report to coverage.out
+	go test -coverprofile=coverage.out ./...
+	go tool cover -func=coverage.out | tail -1
 
 .PHONY: vet
-vet:
-	go vet $$(go list ./... | grep -v vendor)
+vet: ## Run go vet for every supported platform
+	go vet ./...
+	GOOS=darwin go vet ./...
 
 .PHONY: lint
-lint:
-	golint $$(go list ./... | grep -v vendor)
+lint: ## Run golangci-lint
+	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run
 
-.PHONY: patch
-patch: gobump
-	./script/release.sh patch
+.PHONY: fmt
+fmt: ## Format the code
+	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) fmt
 
-.PHONY: minor
-minor: gobump
-	./script/release.sh minor
+.PHONY: tidy
+tidy: ## Tidy go.mod and go.sum
+	go mod tidy
 
-.PHONY: gobump
-gobump:
-	go get github.com/motemen/gobump/cmd/gobump
+.PHONY: cross
+cross: ## Check that droot builds for every released platform
+	for p in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do \
+		GOOS=$${p%/*} GOARCH=$${p#*/} CGO_ENABLED=0 go build -o /dev/null ./cmd/droot || exit 1; \
+	done
+
+.PHONY: snapshot
+snapshot: ## Build release archives locally into dist/ without publishing
+	go run github.com/goreleaser/goreleaser/v2@$(GORELEASER_VERSION) release --snapshot --clean
+
+.PHONY: clean
+clean: ## Remove build outputs
+	rm -f $(BIN) coverage.out
+	rm -rf dist
+
+.PHONY: help
+help: ## Show this help
+	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-18s %s\n", $$1, $$2}'
