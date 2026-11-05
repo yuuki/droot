@@ -7,6 +7,13 @@
 #
 #   make build && sudo ./script/integration-test.sh [path/to/droot]
 #
+# To test against Podman's Docker-compatible API, build the test images with
+# podman and point droot to its socket:
+#
+#   sudo systemctl start podman.socket
+#   sudo DOCKER=podman DOCKER_HOST=unix:///run/podman/podman.sock \
+#     ./script/integration-test.sh ./droot
+#
 # On exit, the test images are removed, and so is the work directory unless
 # KEEP_WORKDIR is set or mount points remain below it (deleting it would then
 # delete files through the bind mounts).
@@ -17,6 +24,8 @@ WORK=$(mktemp -d "${TMPDIR:-/tmp}/droot-e2e.XXXXXX")
 WORK=$(realpath "$WORK")
 IMAGE=droot-e2e:latest
 SCRATCH_IMAGE=droot-e2e-scratch:latest
+# The CLI used to build and remove the test images.
+DOCKER=${DOCKER:-docker}
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 assert_eq() { # name actual expected
@@ -30,7 +39,7 @@ cleanup() {
   for d in "$WORK"/*/; do
     "$DROOT" umount --root "$d" >/dev/null 2>&1 || true
   done
-  docker rmi -f "$IMAGE" "$SCRATCH_IMAGE" >/dev/null 2>&1 || true
+  $DOCKER rmi -f "$IMAGE" "$SCRATCH_IMAGE" >/dev/null 2>&1 || true
   if [[ -n "${KEEP_WORKDIR:-}" ]]; then
     echo "work directory kept: $WORK"
   elif [[ $(mounts_under "$WORK") -eq 0 ]]; then
@@ -45,20 +54,22 @@ trap cleanup EXIT
 [[ -x "$DROOT" ]] || fail "droot binary not found at $DROOT (run 'make build')"
 
 echo "# building test images"
-docker build -q -t "$IMAGE" - >/dev/null <<'EOF'
-FROM alpine:3.22
+$DOCKER build -q -t "$IMAGE" - >/dev/null <<'EOF'
+FROM docker.io/library/alpine:3.22
 RUN addgroup -g 1600 appgroup && adduser -D -u 1500 -G appgroup app \
  && addgroup -g 1700 extra && addgroup app extra \
  && mkdir -p /usr/local/myapp/bin \
- && printf '#!/bin/sh\necho myapp-ok\n' > /usr/local/myapp/bin/myapp \
+ && printf '#!/bin/sh\necho myapp-ok "$@"\n' > /usr/local/myapp/bin/myapp \
  && chmod 755 /usr/local/myapp/bin/myapp
 ENV PATH=/usr/local/myapp/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     JAVA_OPTS="-Dfoo=bar -Dx=y"
 USER app
-ENTRYPOINT ["/bin/false"]
+WORKDIR /usr/local/myapp
+ENTRYPOINT ["myapp", "from-entrypoint"]
+CMD ["from-cmd"]
 EOF
-docker build -q -t "$SCRATCH_IMAGE" - >/dev/null <<'EOF'
-FROM busybox:1.37-musl AS bb
+$DOCKER build -q -t "$SCRATCH_IMAGE" - >/dev/null <<'EOF'
+FROM docker.io/library/busybox:1.37-musl AS bb
 FROM scratch
 COPY --from=bb /bin/busybox /busybox
 ENV GREETING="no shell here"
@@ -69,8 +80,43 @@ echo "# export"
 assert_eq "export writes .drootenv from the image config" \
   "$(tar -xOf "$WORK/app.tar" .drootenv)" \
   "$(printf 'PATH=/usr/local/myapp/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\nJAVA_OPTS=-Dfoo=bar -Dx=y')"
+assert_eq "export writes the image config to .droot/config.json" \
+  "$(tar -xOf "$WORK/app.tar" .droot/config.json | grep -cE '"(WorkingDir": "/usr/local/myapp|User": "app|from-entrypoint|from-cmd)"')" "4"
 assert_eq "export leaves no temporary container" \
-  "$(docker ps -aq --filter label=io.github.yuuki.droot | wc -l)" "0"
+  "$($DOCKER ps -aq --filter label=io.github.yuuki.droot | wc -l)" "0"
+(cd "$WORK" && "$DROOT" export --compress gzip --checksum -o app.tar.gz "$IMAGE" && sha256sum --quiet -c app.tar.gz.sha256) ||
+  fail "--compress gzip --checksum: the checksum does not match"
+assert_eq "--compress gzip" "$(tar -tzf "$WORK/app.tar.gz" | grep -c '^\.droot/config\.json$')" "1"
+if command -v zstd >/dev/null; then
+  "$DROOT" export --compress zstd "$IMAGE" | zstd -dc | tar -t >/dev/null || fail "--compress zstd"
+  echo "ok - --compress zstd"
+fi
+"$DROOT" export --reproducible -o "$WORK/r1.tar" "$IMAGE"
+sleep 1.1
+"$DROOT" export --reproducible -o "$WORK/r2.tar" "$IMAGE"
+cmp -s "$WORK/r1.tar" "$WORK/r2.tar" || fail "--reproducible: two exports of the same image differ"
+echo "ok - --reproducible"
+assert_eq "--exclude and --drop-docker-files" \
+  "$("$DROOT" export --exclude /usr/share/apk --exclude '*.so.*' --drop-docker-files "$IMAGE" | tar -t | grep -cE '^(usr/share/apk|\.dockerenv$|.*\.so\.)' || true)" "0"
+rm -f "$WORK/r1.tar" "$WORK/r2.tar" "$WORK/app.tar.gz" "$WORK/app.tar.gz.sha256"
+PULL_IMAGE=docker.io/library/hello-world:latest
+$DOCKER rmi -f "$PULL_IMAGE" >/dev/null 2>&1 || true
+assert_eq "--pull" "$("$DROOT" export --pull "$PULL_IMAGE" 2>/dev/null | tar -t | grep -c '^hello$')" "1"
+$DOCKER rmi -f "$PULL_IMAGE" >/dev/null 2>&1 || true
+if [[ $DOCKER == docker ]] && docker system dial-stdio --help >/dev/null 2>&1; then
+  # A fake ssh running `docker system dial-stdio` locally, against the
+  # daemon of this test.
+  mkdir -p "$WORK/fakessh"
+  cat >"$WORK/fakessh/ssh" <<EOF
+#!/bin/sh
+while [ "\$1" != "--" ]; do shift; done
+shift 2 # -- and the host
+exec env DOCKER_HOST="${DOCKER_HOST:-unix:///var/run/docker.sock}" "\$@"
+EOF
+  chmod +x "$WORK/fakessh/ssh"
+  assert_eq "ssh:// DOCKER_HOST" \
+    "$(PATH="$WORK/fakessh:$PATH" DOCKER_HOST=ssh://user@remote:2222 "$DROOT" export "$IMAGE" | tar -t | grep -c '^\.droot/config\.json$')" "1"
+fi
 if "$DROOT" export does-not-exist:nope >/dev/null 2>&1; then fail "exporting a missing image should fail"; fi
 echo "ok - exporting a missing image fails"
 
@@ -79,6 +125,15 @@ tar -xpf "$WORK/app.tar" -C "$WORK/app"
 echo secret > "$WORK/data/file"
 
 echo "# run"
+assert_eq "without COMMAND, the image's ENTRYPOINT and CMD run as its USER" \
+  "$("$DROOT" run --root "$WORK/app"; "$DROOT" run --root "$WORK/app" -- id -u)" \
+  "$(printf 'myapp-ok from-entrypoint from-cmd\n1500')"
+assert_eq "WORKDIR, HOME, USER and LOGNAME" \
+  "$("$DROOT" run --root "$WORK/app" -- sh -c 'echo "$PWD $HOME $USER $LOGNAME"')" \
+  "/usr/local/myapp /home/app app app"
+assert_eq "--user and --workdir override the image" \
+  "$("$DROOT" run --root "$WORK/app" --user root -w /tmp -- sh -c 'echo "$(id -u) $PWD $HOME $USER"')" \
+  "0 /tmp /root root"
 assert_eq "user and groups are resolved in the container" \
   "$("$DROOT" run --root "$WORK/app" --user app -- id)" \
   "uid=1500(app) gid=1600(appgroup) groups=1600(appgroup),1700(extra)"
@@ -87,24 +142,56 @@ assert_eq "commands are looked up with the image's PATH" \
 assert_eq "environment from .drootenv and --env" \
   "$("$DROOT" run --root "$WORK/app" -e JAVA_OPTS=-Xmx1g,-Xms1g -e NEW=1 -- sh -c 'echo "$JAVA_OPTS $NEW"')" \
   "-Xmx1g,-Xms1g 1"
+printf 'FROM_FILE=1\nJAVA_OPTS=file\nPASSED\n' > "$WORK/app.env"
+assert_eq "--env-file and --env KEY take values from droot's environment" \
+  "$(PASSED=p FROM_HOST=h "$DROOT" run --root "$WORK/app" --env-file "$WORK/app.env" -e FROM_HOST -e UNSET_VAR -- \
+      sh -c 'echo "$FROM_FILE $JAVA_OPTS $PASSED $FROM_HOST ${UNSET_VAR-unset}"')" \
+  "1 file p h unset"
 assert_eq "capability bounding set" \
-  "$("$DROOT" run --root "$WORK/app" -- awk '/^CapBnd/ {print $2}' /proc/self/status)" "00000000000004cb"
+  "$("$DROOT" run --root "$WORK/app" --user root -- awk '/^CapBnd/ {print $2}' /proc/self/status)" "00000000000004cb"
+assert_eq "--ulimit" \
+  "$("$DROOT" run --root "$WORK/app" --ulimit nofile=1024:2048 --ulimit core=0 -- sh -c 'ulimit -Sn; ulimit -Hn; ulimit -c')" \
+  "$(printf '1024\n2048\n0')"
+assert_eq "--cap-drop and --cap-add" \
+  "$("$DROOT" run --root "$WORK/app" --user root --cap-drop ALL --cap-add net_raw --cap-add CAP_KILL -- awk '/^CapBnd/ {print $2}' /proc/self/status)" \
+  "0000000000002020"
+assert_eq "sensitive /proc files are masked, /proc/sys and /sys are read-only" \
+  "$("$DROOT" run --root "$WORK/app" --user root -- sh -c 'wc -c < /proc/interrupts; echo x 2>/dev/null > /proc/sys/kernel/hostname || echo ro; touch /sys/kernel/x 2>/dev/null || echo ro')" \
+  "$(printf '0\nro\nro')"
+"$DROOT" umount --root "$WORK/app"
+[[ $("$DROOT" run --root "$WORK/app" --user root --no-mask -- sh -c 'wc -c < /proc/interrupts') -gt 0 ]] ||
+  fail "--no-mask: /proc/interrupts is masked"
+echo "ok - --no-mask"
+"$DROOT" umount --root "$WORK/app"
 assert_eq "device nodes" \
-  "$("$DROOT" run --root "$WORK/app" --user app -- sh -c 'stat -c "%n %t:%T %a %u" /dev/null /dev/zero /dev/random /dev/urandom' | tr '\n' ' ')" \
-  "/dev/null 1:3 666 0 /dev/zero 1:5 666 0 /dev/random 1:8 666 0 /dev/urandom 1:9 666 0 "
+  "$("$DROOT" run --root "$WORK/app" --user app -- sh -c 'stat -c "%n %t:%T %a %u" /dev/null /dev/zero /dev/full /dev/random /dev/urandom /dev/tty' | tr '\n' ' ')" \
+  "/dev/null 1:3 666 0 /dev/zero 1:5 666 0 /dev/full 1:7 666 0 /dev/random 1:8 666 0 /dev/urandom 1:9 666 0 /dev/tty 5:0 666 0 "
+assert_eq "/dev/pts, /dev/ptmx, /dev/shm and /dev/fd" \
+  "$("$DROOT" run --root "$WORK/app" --user app -- sh -c 'readlink /dev/ptmx; stat -f -c %T /dev/pts /dev/shm; test -c /dev/pts/ptmx && echo ptmx; echo x > /dev/shm/f && cat /dev/shm/f; echo fd | cat /dev/stdin; ls /dev/fd/ >/dev/null && echo fds')" \
+  "$(printf 'pts/ptmx\ndevpts\ntmpfs\nptmx\nx\nfd\nfds')"
+assert_eq "--tmpfs" \
+  "$("$DROOT" run --root "$WORK/app" --user root --tmpfs /tmp:size=1m --tmpfs /run:exec -- sh -c 'stat -f -c %T /tmp; printf "#!/bin/sh\necho exec-ok\n" > /tmp/x; chmod +x /tmp/x; /tmp/x 2>/dev/null || echo noexec; cp /tmp/x /run/x && /run/x')" \
+  "$(printf 'tmpfs\nnoexec\nexec-ok')"
 mkdir -p "$WORK/hostdev"
 touch "$WORK/hostdev/marker" # not empty, so that no .droot.keep is created
 "$DROOT" run --root "$WORK/app" --bind "$WORK/hostdev:/dev" -- true 2>/dev/null
 assert_eq "a bind mounted /dev is left alone" "$(ls -A "$WORK/hostdev")" "marker"
 "$DROOT" umount --root "$WORK/app"
 assert_eq "read-only bind mount" \
-  "$("$DROOT" run --root "$WORK/app" --robind "$WORK/data:/mnt/data" -- sh -c 'cat /mnt/data/file; touch /mnt/data/x 2>/dev/null || echo ro')" \
+  "$("$DROOT" run --root "$WORK/app" --user root --robind "$WORK/data:/mnt/data" -- sh -c 'cat /mnt/data/file; touch /mnt/data/x 2>/dev/null || echo ro')" \
   "$(printf 'secret\nro')"
+assert_eq "--bind SRC:DEST:ro" \
+  "$("$DROOT" run --root "$WORK/app" --user root --bind "$WORK/data:/mnt/data2:ro" -- sh -c 'cat /mnt/data2/file; touch /mnt/data2/x 2>/dev/null || echo ro')" \
+  "$(printf 'secret\nro')"
+assert_eq "--bind-net-files" \
+  "$("$DROOT" run --root "$WORK/app" --user root --bind-net-files -- sh -c 'cat /etc/resolv.conf /etc/hosts; touch /etc/hosts 2>/dev/null || echo ro')" \
+  "$(cat /etc/resolv.conf /etc/hosts; echo ro)"
+"$DROOT" umount --root "$WORK/app"
 assert_eq "--no-new-privileges" \
   "$("$DROOT" run --root "$WORK/app" --user app --no-new-privileges -- awk '/^NoNewPrivs/ {print $2}' /proc/self/status)" "1"
 if command -v capsh >/dev/null; then
   assert_eq "inheritable capabilities of the caller are dropped" \
-    "$(capsh --inh=cap_sys_admin -- -c "\"$DROOT\" run --root \"$WORK/app\" -- awk '/^Cap(Inh|Eff)/ {print \$2}' /proc/self/status" | tr '\n' ' ')" \
+    "$(capsh --inh=cap_sys_admin -- -c "\"$DROOT\" run --root \"$WORK/app\" --user root -- awk '/^Cap(Inh|Eff)/ {print \$2}' /proc/self/status" | tr '\n' ' ')" \
     "0000000000000000 00000000000004cb "
 fi
 set +e
@@ -114,15 +201,54 @@ set -e
 assert_eq "exit status is propagated" "$code" "42"
 
 ln -sfn "$WORK/data/file" "$WORK/app/etc/hosts"
-"$DROOT" run --root "$WORK/app" --cp -- true
+"$DROOT" run --root "$WORK/app" --user root --cp -- true
 assert_eq "--cp does not follow symlinks out of the root" "$(cat "$WORK/data/file")" "secret"
 
 echo "# image without a shell"
 mkdir -p "$WORK/scratch"
 "$DROOT" export "$SCRATCH_IMAGE" | tar -xpf - -C "$WORK/scratch"
 assert_eq "FROM scratch image with an unknown numeric uid" \
-  "$("$DROOT" run --root "$WORK/scratch" --user 4242 --group 4343 -- /busybox sh -c 'echo "$GREETING"; /busybox id')" \
-  "$(printf 'no shell here\nuid=4242 gid=4343 groups=4343')"
+  "$("$DROOT" run --root "$WORK/scratch" --user 4242 --group 4343 -- /busybox sh -c 'echo "$GREETING $HOME ${USER-nouser}"; /busybox id')" \
+  "$(printf 'no shell here / nouser\nuid=4242 gid=4343 groups=4343')"
+
+echo "# mount lifecycle"
+"$DROOT" umount --root "$WORK/app"
+if "$DROOT" run --root "$WORK/app" --user root --bind "$WORK/data:/mnt/a" --bind "$WORK/nonexistent:/mnt/b" -- true 2>/dev/null; then
+  fail "a run with a missing bind source should fail"
+fi
+assert_eq "a failed setup removes the mounts it made" "$(mounts_under "$WORK/app")" "0"
+if "$DROOT" run --root "$WORK/app" --user root -- no-such-command 2>/dev/null; then
+  fail "running a missing command should fail"
+fi
+assert_eq "a missing COMMAND removes the mounts made for it" "$(mounts_under "$WORK/app")" "0"
+printf '#!/bin/sh\necho secret\n' > "$WORK/app/root-only" && chmod 700 "$WORK/app/root-only"
+if "$DROOT" run --root "$WORK/app" --user 1500 -- /root-only 2>/dev/null; then
+  fail "a COMMAND the user cannot execute should fail"
+fi
+assert_eq "a COMMAND the user cannot execute removes the mounts made for it" "$(mounts_under "$WORK/app")" "0"
+rm -f "$WORK/app/root-only"
+if "$DROOT" run --root "$WORK/app" --user "" -- id 2>/dev/null; then
+  fail "an empty --user must not run COMMAND (as root)"
+fi
+echo "ok - an empty --user is refused"
+assert_eq "--unshare: mounts in a private namespace" \
+  "$("$DROOT" run --root "$WORK/app" --user root --unshare --tmpfs /tmp -- sh -c 'stat -f -c %T /proc /tmp'; mounts_under "$WORK/app")" \
+  "$(printf 'proc\ntmpfs\n0')"
+assert_eq "--hostname" \
+  "$("$DROOT" run --root "$WORK/app" --user root --unshare --hostname droot-e2e -- sh -c 'echo "$(hostname) $HOSTNAME"'; [[ $(hostname) != droot-e2e ]] && echo host-unchanged)" \
+  "$(printf 'droot-e2e droot-e2e\nhost-unchanged')"
+assert_eq "--read-only" \
+  "$("$DROOT" run --root "$WORK/app" --user root --read-only --tmpfs /tmp -- sh -c 'touch /x 2>/dev/null || echo ro; touch /tmp/x && echo tmp-ok'; mounts_under "$WORK/app"; touch "$WORK/app/x" && echo host-rw)" \
+  "$(printf 'ro\ntmp-ok\n0\nhost-rw')"
+rm -f "$WORK/app/x"
+"$DROOT" run --root "$WORK/app" --user root -- sleep 30 &
+sleeper=$!
+for _ in $(seq 50); do "$DROOT" status --root "$WORK/app" | grep -q 'sleep 30' && break; sleep 0.1; done
+status=$("$DROOT" status --root "$WORK/app")
+kill "$sleeper"; wait "$sleeper" 2>/dev/null || true
+grep -q "^Processes in $WORK/app: 1" <<<"$status" && grep -q "sleep 30" <<<"$status" && grep -qE '^ +/proc +proc' <<<"$status" ||
+  fail "droot status: $status"
+echo "ok - droot status"
 
 echo "# umount"
 mount --bind "$WORK/data" "$WORK/app2/mnt"

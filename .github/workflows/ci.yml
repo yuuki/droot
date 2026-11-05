@@ -57,13 +57,75 @@ jobs:
       - name: Unit tests
         run: go test -race ./...
       - name: Unit tests as root (mount, mknod, capabilities)
-        run: sudo env "PATH=$PATH" GOTOOLCHAIN=local go test -race -count=1 ./mounter/... ./osutil/... ./identity/...
+        run: sudo env "PATH=$PATH" GOTOOLCHAIN=local go test -race -count=1 ./internal/mounter/... ./internal/osutil/... ./internal/identity/...
       - name: Vet for macOS
         run: GOOS=darwin go vet ./...
 
-  integration:
-    name: integration
+  fuzz:
+    name: fuzz
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+      # The seed corpora (f.Add and testdata/fuzz) also run with the unit
+      # tests; this explores beyond them for a little while.
+      - name: Fuzz every target
+        run: make fuzz FUZZTIME=30s
+
+  coverage:
+    name: coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+      # As root, so that the tests that mount file systems count too.
+      - name: Unit tests with coverage
+        run: sudo env "PATH=$PATH" go test -count=1 -covermode=atomic -coverprofile=coverage.out ./...
+      - name: Coverage report
+        run: |
+          go tool cover -html=coverage.out -o coverage.html
+          total=$(go tool cover -func=coverage.out | awk '/^total:/ {print $NF}')
+          echo "Total coverage: $total"
+          {
+            echo "### Coverage: $total"
+            echo
+            echo "| Package | Coverage |"
+            echo "|---|---|"
+            # Statement coverage per package, from the profile.
+            awk -F'[: ,]' 'NR > 1 {
+                pkg = $1; sub(/\/[^\/]*$/, "", pkg)
+                total[pkg] += $(NF-1); if ($NF > 0) covered[pkg] += $(NF-1)
+              }
+              END { for (p in total) printf "| `%s` | %.1f%% |\n", p, 100 * covered[p] / total[p] }' coverage.out | sort
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage
+          path: |
+            coverage.out
+            coverage.html
+          retention-days: 7
+
+  integration:
+    name: integration (${{ matrix.runner }}, ${{ matrix.engine }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+        engine: [docker]
+        include:
+          # Podman's Docker-compatible API.
+          - runner: ubuntu-latest
+            engine: podman
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -73,7 +135,14 @@ jobs:
           go-version: stable
       - run: make build
       - name: End-to-end tests against Docker
+        if: matrix.engine == 'docker'
         run: sudo ./script/integration-test.sh ./droot
+      - name: End-to-end tests against Podman
+        if: matrix.engine == 'podman'
+        run: |
+          podman --version
+          sudo systemctl start podman.socket
+          sudo DOCKER=podman DOCKER_HOST=unix:///run/podman/podman.sock ./script/integration-test.sh ./droot
 
   vulnerabilities:
     name: vulnerabilities

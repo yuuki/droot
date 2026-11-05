@@ -20,19 +20,23 @@ flowchart LR
 
 ## Source layout
 
+All packages but `main` live under `internal/`: droot is a command, not a
+library, and its packages carry no compatibility promise.
+
 | Package | Role |
 |---|---|
 | `cmd/droot` | `main`: signal handling, version stamping. |
-| `commands` | The CLI (urfave/cli v3): `export`, `run`, `umount`. |
-| `docker` | A minimal Docker Engine API client written with the standard library, and the export logic. |
-| `environ` | Reading, validating and merging `KEY=VALUE` environment variables (`/.drootenv`). |
-| `identity` | Resolving `--user`/`--group` to uid, gid and supplementary groups. |
-| `mounter` | Mounting `/proc`, `/sys` and bind mounts, parsing `/proc/self/mountinfo`, unmounting. |
-| `osutil` | File system and process helpers: secure path resolution, file copy, devices, capabilities, credentials, exec. |
-| `log` | A tiny leveled logger writing to STDERR. |
+| `internal/cli` | A small command line parser: flags, help, suggestions for typos, shell completion scripts. |
+| `internal/commands` | The commands: `export`, `run`, `umount`. |
+| `internal/docker` | A minimal Docker Engine API client written with the standard library, and the export logic. |
+| `internal/environ` | Reading, validating and merging `KEY=VALUE` environment variables (`/.drootenv`, `--env-file`). |
+| `internal/imageconfig` | The image configuration saved in `/.droot/config.json`. |
+| `internal/identity` | Resolving `--user`/`--group` to uid, gid and supplementary groups. |
+| `internal/mounter` | Mounting `/proc`, `/sys` and bind mounts, parsing `/proc/self/mountinfo`, unmounting. |
+| `internal/osutil` | File system and process helpers: secure path resolution, file copy, devices, capabilities, credentials, exec. |
+| `internal/log` | A tiny leveled logger writing to STDERR. |
 
-Only two third-party modules are used: `github.com/urfave/cli/v3` and
-`golang.org/x/sys`.
+Only one third-party module is used: `golang.org/x/sys`.
 
 ## `droot export`
 
@@ -41,19 +45,23 @@ sequenceDiagram
   participant D as droot
   participant E as Docker Engine API
   D->>E: GET /_ping (negotiate the API version)
+  opt --pull
+    D->>E: POST /images/create?fromImage=IMAGE (X-Registry-Auth from the docker CLI's credentials)
+  end
   D->>E: POST /containers/create {Image, placeholder Entrypoint, label}
   Note right of E: the container is never started
   D->>E: GET /containers/{id}/json (Image: the ID of the image used)
-  D->>E: GET /images/{image ID}/json (Config.Env)
+  D->>E: GET /images/{image ID}/json (Config: Env, WorkingDir, User, Entrypoint, Cmd, StopSignal)
   D->>E: GET /containers/{id}/export (tar stream)
-  D->>D: copy every tar entry, drop any existing .drootenv,<br/>append .drootenv with the image's environment
+  D->>D: copy every tar entry, drop any existing .drootenv and .droot,<br/>append .drootenv and .droot/config.json
   D->>E: DELETE /containers/{id}?force=1&v=1 (always, even after errors, Ctrl-C, SIGHUP or a broken pipe)
 ```
 
 Design notes:
 
-- **No Docker SDK.** The `docker` package implements the six endpoints above
-  over HTTP with `net/http`, on a unix socket or TCP (optionally TLS). The
+- **No Docker SDK.** The `docker` package implements the seven endpoints above
+  over HTTP with `net/http`, on a unix socket, TCP (optionally TLS) or the
+  standard input and output of `ssh HOST docker system dial-stdio`. The
   daemon address is resolved like the `docker` CLI does (`DOCKER_HOST`,
   `DOCKER_CONTEXT`, current context, default socket).
 - **API version.** droot uses the version advertised by the daemon in the
@@ -79,7 +87,26 @@ Design notes:
 
 The archive is the plain `docker export` tar of the container's file system
 (including the files Docker adds to every container such as `/.dockerenv`,
-`/etc/hosts` and `/etc/resolv.conf`), plus `/.drootenv`:
+`/etc/hosts` and `/etc/resolv.conf`), plus `/.droot/config.json`, the
+image's configuration:
+
+```json
+{
+  "Version": 1,
+  "Image": "dockerfiles/app",
+  "ImageID": "sha256:...",
+  "Env": ["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "JAVA_OPTS=-Dfoo=bar -Dbaz=qux"],
+  "WorkingDir": "/app",
+  "User": "app",
+  "Entrypoint": ["/app/bin/server"],
+  "Cmd": ["--port=8080"],
+  "StopSignal": "SIGTERM"
+}
+```
+
+`Version` is incremented when the format changes incompatibly; droot ignores
+fields it does not know. The environment is also written to `/.drootenv`,
+which droot 0.7 reads:
 
 ```
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
@@ -89,8 +116,10 @@ JAVA_OPTS=-Dfoo=bar -Dbaz=qux
 One `KEY=VALUE` per line, everything after the first `=` being the value.
 Blank lines and lines starting with `#` are ignored when reading. Variables
 that would not be read back exactly (values containing newlines, keys
-starting with `#` or surrounded by spaces) cannot be represented and are
-skipped with a warning at export time.
+starting with `#` or surrounded by spaces) cannot be represented: they are
+only in `/.droot/config.json`, with a warning at export time. When both files
+exist, `droot run` takes the environment of `config.json` and applies
+`/.drootenv` over it, so that edits to `/.drootenv` still take effect.
 
 Extract archives as root with `tar -xpf` so that ownership, permissions and
 setuid bits are preserved.
@@ -98,7 +127,10 @@ setuid bits are preserved.
 ## `droot run`
 
 1. Validate the options and resolve `--root` to an absolute path without
-   symlinks (which is how `/proc/self/mountinfo` reports mount points).
+   symlinks (which is how `/proc/self/mountinfo` reports mount points). Read
+   `/.droot/config.json` and `/.drootenv` through `osutil.Root` (see below)
+   for the defaults of COMMAND, `--user` and `--workdir` and the environment,
+   and read the `--env-file`s on the host.
 2. `--cp`: copy the host's `/etc/{group,passwd,resolv.conf,hosts}` into the
    root. Each destination is resolved with `osutil.Root`, which opens every
    path component with `openat(2)` and `O_NOFOLLOW` from the descriptor of its
@@ -119,17 +151,32 @@ setuid bits are preserved.
    container never propagate back to the host. Read-only bind mounts are
    remounted with `MS_RDONLY` *plus* the nosuid/nodev/noexec/atime flags of
    the source, which a plain remount would clear.
-5. Create `/var/lock -> ../run/lock` if missing, and the device nodes
-   `/dev/null` (1:3), `/dev/zero` (1:5), `/dev/random` (1:8) and
-   `/dev/urandom` (1:9), owned by root with mode 0666 — unless `/dev` is on
-   another mount than the root (e.g. a bind mount of the host's `/dev`), in
-   which case droot leaves it alone.
-6. Lock the goroutine to its OS thread. This matters: the capability bounding
-   set is a per-thread attribute and `execve(2)` uses the calling thread's
-   attributes. Without the lock, the Go scheduler may run the `exec` on
-   another thread than the one that dropped the capabilities.
-7. `chroot(2)` into the root and `chdir("/")`.
-8. Read `/.drootenv` (now inside the root) and merge `--env` over it.
+5. Create `/var/lock -> ../run/lock` if missing, and populate `/dev`: the
+   device nodes `/dev/null` (1:3), `/dev/zero` (1:5), `/dev/full` (1:7),
+   `/dev/random` (1:8), `/dev/urandom` (1:9) and `/dev/tty` (5:0), owned by
+   root with mode 0666; the symlinks `/dev/fd`, `/dev/std{in,out,err}` and
+   `/dev/ptmx -> pts/ptmx` (replacing a device node, which would allocate
+   pseudo-terminals in the host's devpts instance); a new devpts instance
+   (`newinstance,ptmxmode=0666,mode=0620,gid=5`) on `/dev/pts` and a tmpfs on
+   `/dev/shm` — unless `/dev` is on another mount than the root (e.g. a bind
+   mount of the host's `/dev`), in which case droot leaves it alone.
+6. The goroutine was locked to its OS thread before the first mount. This
+   matters: the capability bounding set is a per-thread attribute,
+   `execve(2)` uses the calling thread's attributes, and the namespaces of
+   `--unshare` are the thread's. Without the lock, the Go scheduler may run
+   the `exec` on another thread than the one that dropped the capabilities.
+   Before mounting, droot also takes an exclusive `flock(2)` on
+   `/run/droot/DEV-INODE.lock`, named after the root directory (a lock on
+   the directory itself could be held forever by any process able to open
+   it, including the container's), released at the exec (the descriptor is
+   close-on-exec), and
+   with `--unshare` moves the thread to a new mount namespace whose mounts
+   are slaves of the host's. Every mount droot makes is remembered by
+   descriptor: if anything fails before the exec, they are detached again,
+   newest first.
+7. `chroot(2)` into the root and `chdir(2)` to the working directory.
+8. Merge the environment: the image's, then `--env-file`, then `--env`, plus
+   the defaults of `PATH`, `HOME`, `USER` and `LOGNAME`.
 9. Drop every capability not in the keep list from the bounding set with
    `prctl(PR_CAPBSET_DROP)`, and empty the inheritable and ambient sets: the
    bounding set does not limit inheritable capabilities, which root keeps

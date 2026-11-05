@@ -1,0 +1,200 @@
+.\" Generated from the command definitions by `make docs`; do not edit.
+.TH DROOT 1 "" "droot" "User Commands"
+.SH NAME
+droot \- a super\-easy container with chroot, without docker
+.SH SYNOPSIS
+.B droot
+[\fIglobal options\fR] \fICOMMAND\fR [\fIoptions\fR] [\fIARG\fR...]
+.SH DESCRIPTION
+.PP
+droot exports the file system of a Docker image as a tar archive (export), runs a command inside an extracted archive with chroot(2) (run), cleans up the mounts made by run (umount) and shows them (status).
+.SH GLOBAL OPTIONS
+.PP
+Accepted before and after \fICOMMAND\fR.
+.TP
+\fB\-D, \-\-debug\fR
+enable debug output [$DROOT_DEBUG]
+.TP
+\fB\-q, \-\-quiet\fR
+print errors only: no warnings, informational messages nor progress [$DROOT_QUIET]
+.TP
+\fB\-\-log\-format\fR \fIFORMAT\fR
+format of the messages on STDERR: text or json (one log/slog JSON object per line) [$DROOT_LOG_FORMAT]
+.TP
+\fB\-h, \-\-help\fR
+show help
+.TP
+\fB\-v, \-\-version\fR
+print the version
+.SH COMMANDS
+.SS droot export [options] IMAGE[:TAG]
+.PP
+Export the file system of a Docker image as a tar archive.
+.PP
+Creates a temporary container from IMAGE (without starting it), streams its file system as a tar archive and removes the container. The image's configuration is saved as /.droot/config.json and its environment as /.drootenv in the archive, for 'droot run'.
+.PP
+The Docker daemon is selected like the docker CLI does, from DOCKER_HOST, DOCKER_TLS_VERIFY, DOCKER_CERT_PATH, DOCKER_CONTEXT or the current docker context.
+.TP
+\fB\-o,\fR \fI\-\-output FILE\fR
+write the archive to FILE instead of STDOUT (written atomically)
+.TP
+\fB\-\-platform\fR \fIPLATFORM\fR
+export the PLATFORM variant of a multi\-platform image, e.g. linux/amd64
+.TP
+\fB\-\-pull\fR
+pull IMAGE (for \-\-platform) from its registry first, with the credentials of the docker CLI
+.TP
+\fB\-\-compress\fR \fIALGO\fR
+compress the archive with gzip, or zstd (with the zstd command)
+.TP
+\fB\-\-checksum\fR
+also write the SHA\-256 checksum of the archive to FILE.sha256 (sha256sum format; needs \-o)
+.TP
+\fB\-\-reproducible\fR
+make the archive depend only on the image: modification times later than $SOURCE_DATE_EPOCH or the image's creation time are set to it
+.TP
+\fB\-\-exclude\fR \fIPATTERN\fR
+leave out the files matching PATTERN and everything below matching directories; a PATTERN with a / matches absolute paths (/usr/share/doc), one without a / base names (*.pyc) (repeatable)
+.TP
+\fB\-\-drop\-docker\-files\fR
+leave out the files Docker adds to every container: /.dockerenv and the empty /etc/hostname, /etc/hosts, /etc/resolv.conf and /dev/console
+.TP
+\fB\-h, \-\-help\fR
+show help
+.SS droot run [options] [\-\-] [COMMAND [ARG...]]
+.PP
+Run a command in a container root directory with chroot(2).
+.PP
+Mounts /proc, /sys and the requested bind mounts under ROOT_DIR, creates the basic device files, chroots into ROOT_DIR, drops capabilities from the bounding set, switches to \-\-user/\-\-group and executes COMMAND with the environment saved by 'droot export' plus \-\-env\-file and \-\-env.
+.PP
+Without COMMAND, the ENTRYPOINT and CMD of the image saved by 'droot export' (/.droot/config.json) are run; COMMAND replaces both. The image's USER and WORKDIR are the defaults of \-\-user and \-\-workdir.
+.PP
+The options must come before COMMAND: everything from COMMAND on is passed to it verbatim. Mounts are left in place after COMMAND exits; remove them with 'droot umount'. Must be run as root.
+.TP
+\fB\-r,\fR \fI\-\-root ROOT_DIR\fR
+root directory to chroot into (required)
+.TP
+\fB\-u,\fR \fI\-\-user USER\fR
+user (name or ID) to run COMMAND as (default: the image's USER, or droot's own user); names are looked up in ROOT_DIR/etc/passwd, then on the host
+.TP
+\fB\-g,\fR \fI\-\-group GROUP\fR
+group (name or ID) to run COMMAND as (default: the primary group of \-\-user)
+.TP
+\fB\-w,\fR \fI\-\-workdir DIR\fR
+working directory of COMMAND inside the container (default: the image's WORKDIR, or /)
+.TP
+\fB\-b,\fR \fI\-\-bind SRC[:DEST][:OPTS]\fR
+bind mount SRC from the host on DEST (default: SRC) in the container; OPTS is a comma\-separated list of ro, rw and rbind (recursive) (repeatable)
+.TP
+\fB\-\-robind\fR \fISRC[:DEST][:OPTS]\fR
+read\-only bind mount (same as \-\-bind SRC:DEST:ro) (repeatable)
+.TP
+\fB\-\-tmpfs\fR \fIPATH[:OPTS]\fR
+mount a tmpfs on PATH in the container; OPTS are mount flags (ro, exec, ...: nosuid,nodev,noexec by default) and tmpfs options (size=64m, mode=1777, ...) (repeatable)
+.TP
+\fB\-\-copy\-files, \-\-cp\fR
+copy the host's /etc/group, /etc/passwd, /etc/resolv.conf, /etc/hosts into the container
+.TP
+\fB\-\-bind\-net\-files\fR
+read\-only bind mount the host's /etc/resolv.conf and /etc/hosts into the container, so that COMMAND sees later changes made to them in place (unlike \-\-cp)
+.TP
+\fB\-\-no\-dropcaps\fR
+do not drop capabilities (dangerous)
+.TP
+\fB\-\-cap\-add\fR \fICAP\fR
+also keep the capability CAP (e.g. NET_RAW, SYS_PTRACE, or ALL) in the bounding set (repeatable)
+.TP
+\fB\-\-cap\-drop\fR \fICAP\fR
+drop the capability CAP (e.g. CHOWN, or ALL) from the ones kept by default (repeatable)
+.TP
+\fB\-\-ulimit\fR \fINAME=SOFT[:HARD]\fR
+set a resource limit of COMMAND, e.g. nofile=65536 or core=0:unlimited (names of ulimit, as in docker run) (repeatable)
+.TP
+\fB\-\-unshare\fR
+make the mounts in a private mount namespace: they disappear when COMMAND and its children exit, and need no 'droot umount'
+.TP
+\fB\-\-unshare\-ipc\fR
+run COMMAND in a private IPC namespace (System V IPC, POSIX message queues)
+.TP
+\fB\-\-hostname\fR \fINAME\fR
+run COMMAND in a private UTS namespace with the host name NAME
+.TP
+\fB\-\-read\-only\fR
+make the root directory read\-only for COMMAND (implies \-\-unshare); use \-\-tmpfs or \-\-bind for the paths it writes
+.TP
+\fB\-\-no\-mask\fR
+do not mask the sensitive files of /proc and /sys nor make /proc/sys, /sys and the like read\-only (dangerous)
+.TP
+\fB\-\-no\-new\-privileges\fR
+set no_new_privs: setuid programs and file capabilities cannot grant privileges to COMMAND
+.TP
+\fB\-e,\fR \fI\-\-env KEY[=VALUE]\fR
+set an environment variable, overriding /.drootenv and \-\-env\-file; a bare KEY takes its value from droot's own environment (repeatable)
+.TP
+\fB\-\-env\-file\fR \fIFILE\fR
+read KEY=VALUE lines from the host's FILE, overriding /.drootenv; a bare KEY takes its value from droot's own environment (repeatable)
+.TP
+\fB\-h, \-\-help\fR
+show help
+.SS droot umount [options]
+.PP
+Unmount everything mounted under a root directory by 'droot run'.
+.PP
+Lazily unmounts (MNT_DETACH) every mount point below ROOT_DIR, deepest first, and fails if some cannot be unmounted. ROOT_DIR itself is never unmounted. It is safe to run when nothing is mounted.
+.TP
+\fB\-r,\fR \fI\-\-root ROOT_DIR\fR
+root directory used with 'droot run' (required)
+.TP
+\fB\-h, \-\-help\fR
+show help
+.SS droot status [options]
+.PP
+Show the mounts and the processes of a root directory.
+.PP
+Lists the mount points below ROOT_DIR, i.e. the mounts made by 'droot run' that 'droot umount' would remove, and the processes whose root directory is ROOT_DIR: the commands started by 'droot run' and their children.
+.PP
+Processes of a 'droot run \-\-unshare' are listed, but their mounts are in a private mount namespace and are not. Run as root to see every process.
+.TP
+\fB\-r,\fR \fI\-\-root ROOT_DIR\fR
+root directory used with 'droot run' (required)
+.TP
+\fB\-h, \-\-help\fR
+show help
+.SS droot completion bash|zsh|fish
+.PP
+Print a shell completion script (bash, zsh, fish).
+.PP
+Prints a script that completes the commands and options of droot.
+.PP
+.nf
+.RS 4
+bash:  source <(droot completion bash)            # e.g. in ~/.bashrc
+zsh:   source <(droot completion zsh)             # e.g. in ~/.zshrc
+fish:  droot completion fish > ~/.config/fish/completions/droot.fish
+.RE
+.fi
+.TP
+\fB\-h, \-\-help\fR
+show help
+.SH ENVIRONMENT
+.TP
+.B DROOT_DEBUG, DROOT_QUIET, DROOT_LOG_FORMAT
+Defaults of \-\-debug, \-\-quiet and \-\-log\-format.
+.TP
+.B DOCKER_HOST
+Address of the Docker daemon used by droot export: unix:///path, tcp://host:port, https://host:port or ssh://[user@]host[:port].
+.TP
+.B DOCKER_TLS_VERIFY, DOCKER_TLS, DOCKER_CERT_PATH
+TLS for tcp:// hosts, verifying the daemon's certificate or not, with ca.pem, cert.pem and key.pem from DOCKER_CERT_PATH (default ~/.docker).
+.TP
+.B DOCKER_CONTEXT, DOCKER_CONFIG
+The docker context to use, and the directory of the docker CLI's configuration (default ~/.docker), which holds the current context and the registry credentials used by droot export \-\-pull.
+.TP
+.B DOCKER_API_VERSION
+Pins the version of the Docker Engine API.
+.TP
+.B SOURCE_DATE_EPOCH
+Time (in seconds since the epoch) to which droot export \-\-reproducible clamps modification times.
+.SH SEE ALSO
+.PP
+https://github.com/yuuki/droot

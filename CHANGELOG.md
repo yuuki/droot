@@ -13,9 +13,11 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
 ### Breaking changes
 
 - Go 1.26 or later is required to build. Release binaries are statically
-  linked (`CGO_ENABLED=0`); as a consequence, host user names served only by
-  NSS (LDAP, SSSD, ...) are no longer resolved — use numeric IDs (`--cp`
-  does not help: it copies `/etc/passwd`, which lacks such users).
+  linked (`CGO_ENABLED=0`), so droot cannot load NSS modules itself: host
+  users and groups that exist only through NSS (LDAP, SSSD, ...) are now
+  resolved by running `getent(1)` (looked for in `/usr/bin`, `/bin`,
+  `/usr/sbin` and `/sbin`, not in `$PATH`) when they are found neither in the
+  container nor in the host's `/etc/passwd` and `/etc/group`.
 - `--user NAME` is looked up in the container's `/etc/passwd` first and on the
   host second (previously only on the host). When `--group` is omitted, the
   user's primary group is used instead of droot's own group (`root` under
@@ -38,6 +40,11 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
 - Device nodes created by `droot run` are owned by root instead of
   `--user`/`--group` (mode 0666 as before), and none are created when `/dev`
   in the container is a mount point.
+- Like Docker, `droot run` masks the sensitive files of `/proc` and `/sys`
+  (`/proc/kcore`, `/proc/keys`, `/sys/firmware`, ...) and makes `/proc/sys`,
+  `/proc/sysrq-trigger`, `/proc/irq`, `/proc/bus`, `/proc/fs` and the whole
+  of `/sys` read-only. Applications that change kernel settings (e.g. with
+  `sysctl -w`) fail; use `--no-mask` to keep the old behavior.
 - `droot run` requires root (euid 0) and refuses `--root /`;
   `droot umount --root /` is refused.
 - `DOCKER_CERT_PATH` alone no longer enables TLS: like the docker CLI, TLS is
@@ -46,9 +53,12 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
   verifying the certificate* when only `DOCKER_CERT_PATH` was set, even with
   a `ca.pem`, which let a man in the middle serve a fake daemon and inject
   files into archives later run as root.
-- The CLI moved to urfave/cli v3: help output changed, and usage errors
-  (unknown commands, flags or help topics) print a short hint, with a
-  suggestion, instead of the full help, and exit with status 1.
+- The command line is parsed by droot itself instead of urfave/cli: help
+  output changed, and usage errors (unknown commands, flags or help topics)
+  print a short hint, with a suggestion, instead of the full help, and exit
+  with status 1. Repeatable options (`--env`, `--bind`, ...) never split
+  their values on commas. Only `droot help` remains as a help command
+  (`droot help run`, `droot run --help`); subcommands have none.
 - The options of `droot run` must come before COMMAND: `droot run CMD --root
   R`, which droot 0.7 accepted by moving the flags ahead, is now an error
   (everything after COMMAND belongs to COMMAND).
@@ -60,6 +70,16 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
 - When both are given, `--debug` takes precedence over `DROOT_DEBUG` (in 0.7,
   `DROOT_DEBUG=0` disabled `-D`).
 - `droot export -o -` writes to STDOUT; droot 0.7 created a file named `-`.
+- With archives exported by this version, `droot run` uses the image's
+  `USER` as the default of `--user` and its `WORKDIR` as the working
+  directory, like `docker run`; droot 0.7 always ran as root (unless `--user`
+  was given) in `/`. Give `--user root` or `--workdir /` to keep the old
+  behavior. Archives exported by droot 0.7 are run as before.
+- `droot run` sets `PATH`, `HOME`, `USER` and `LOGNAME` when the image's
+  environment and the options do not.
+- The Go packages moved under `internal/` (`internal/commands`,
+  `internal/docker`, ...): droot is a command, and its packages were never
+  meant to be imported by other modules.
 
 ### Fixed
 
@@ -82,7 +102,7 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
   second Ctrl-C terminates droot immediately.
 - `droot export` accepted a stream cut between two tar entries, or an empty
   `204` answer, as a complete archive. It now requires `200 OK` and the
-  end-of-archive marker. Redirects are no longer followed (they could resend
+  end-of-archive marker, which file data ending with zeros can no longer fake. Redirects are no longer followed (they could resend
   requests and the TLS client certificate elsewhere).
 - Docker Engine API version handling: a daemon not advertising its version
   got 1.24, which current Docker rejects (now 1.41); `DOCKER_API_VERSION`
@@ -96,7 +116,12 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
 - Images that already contained a `/.drootenv` hard-linked from another
   file, or a `/.drootenv` directory, produced archives that `tar` failed to
   extract. Entries below such a directory are dropped too, and hard links
-  to dropped files become regular files with the original content.
+  to dropped files become regular files with the original content (or
+  copies of a dropped symlink, FIFO or device).
+- `/proc/self/mountinfo` was split on any white space: mount points
+  containing characters the kernel does not escape (`\v`, `\f`, `\r`,
+  non-breaking spaces, ...) and mounts with an empty source were misread by
+  `droot umount`. Found by fuzzing.
 - The environment saved in `/.drootenv` is read from the image's
   configuration instead of the temporary container's, to which Podman adds
   `container=podman` (and reorders the variables).
@@ -173,38 +198,88 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
 
 - Docker contexts (`DOCKER_CONTEXT`, `docker context use`, including contexts
   with `skip-tls-verify` and no TLS files), `DOCKER_CONFIG`,
-  `DOCKER_API_VERSION` and `https://` hosts. A clear error is printed for
-  unsupported `ssh://` hosts. Works with Docker Desktop, Colima, OrbStack and
-  Podman's Docker-compatible socket.
+  `DOCKER_API_VERSION`, `https://` hosts and `ssh://` hosts (through `ssh
+  HOST docker system dial-stdio`, like the docker CLI). Works with Docker
+  Desktop, Colima, OrbStack and Podman's Docker-compatible socket.
+- `droot export --pull` pulls the image first, with the credentials of the
+  docker CLI (credential helpers, `credsStore`, `auths`), for `--platform` if
+  given.
 - `droot export --platform` to pick a variant of a multi-platform image.
+- `droot export` options for the ship step: `--compress gzip|zstd`,
+  `--checksum` (`FILE.sha256`), `--reproducible` archives, `--exclude
+  PATTERN` and `--drop-docker-files`; the progress is shown on a terminal.
+- `droot export` saves the image configuration (`Env`, `WorkingDir`, `User`,
+  `Entrypoint`, `Cmd`, `StopSignal`) as `/.droot/config.json`, which, unlike
+  `/.drootenv`, represents every environment variable. `droot run` uses it:
+  `droot run --root DIR` alone runs the image's `ENTRYPOINT` and `CMD`.
+- `droot run --workdir`/`-w`.
 - `droot run --no-new-privileges` sets the `no_new_privs` flag.
+- `droot run --cap-add` and `--cap-drop` adjust the capabilities kept in the
+  bounding set.
+- `droot run --env-file FILE` and `--env KEY` (without a value, taking it from
+  droot's environment), like `docker run`.
+- `droot run --bind SRC:DEST:OPTS` with the options `ro`, `rw` and `rbind`
+  (recursive bind mount; read-only recursively with `ro`).
+- `droot run` populates `/dev` like Docker: `/dev/full`, `/dev/tty`, a
+  private `devpts` instance on `/dev/pts` with the `/dev/ptmx` symlink, a
+  tmpfs on `/dev/shm`, and the `/dev/fd`, `/dev/stdin`, `/dev/stdout` and
+  `/dev/stderr` symlinks, in addition to the four devices of droot 0.7.
+- `droot run --tmpfs PATH[:OPTS]`, e.g. for `/tmp` and `/run`.
+- `droot run --ulimit NAME=SOFT[:HARD]` sets resource limits; the README
+  shows how to apply cgroup limits with systemd.
+- `droot run --unshare` makes the mounts in a private mount namespace, so
+  that they disappear with the command; `--unshare-ipc` and `--hostname NAME`
+  give it a private IPC or UTS namespace, and `--read-only` a read-only root.
+- `droot status --root DIR` lists the mounts below DIR and the processes
+  running in it.
+- When `droot run` fails before executing COMMAND (a missing bind source, a
+  missing command, Ctrl-C, ...), it removes the mounts it made.
+- Concurrent `droot run` and `droot umount` on the same root wait for each
+  other's setup (`flock(2)` on a file of `/run/droot`, which only root can
+  access, so that a container cannot block droot).
+- `droot run --bind-net-files` bind mounts the host's `/etc/resolv.conf` and
+  `/etc/hosts` read-only, as a live alternative to the copies of `--cp`.
 - A warning when `--user NAME` maps to uid 0 in the image.
 - Temporary export containers are labeled `io.github.yuuki.droot`.
 - Bind mounting single files with `--bind`/`--robind`.
-- `droot completion bash|zsh|fish`.
+- `--quiet`/`-q` and `--log-format json` (structured messages with
+  `log/slog`, e.g. for journald), also set by `DROOT_QUIET` and
+  `DROOT_LOG_FORMAT`.
+- `droot --version` also prints the commit, its date and the Go version.
+- A command line reference (`documentation/cli.md`) and a man page
+  (`documentation/droot.1`, in the release archives), generated from the
+  command definitions by `make docs`.
+- `droot completion bash|zsh|fish` prints a completion script for the
+  commands and options, including the users, groups and directories taken by
+  `droot run` options, and the command line after `droot run`'s COMMAND.
 - `--debug` can be given after the subcommand.
 - Helpful error messages: missing images, a command whose ELF/script
   interpreter is missing in the container, writing an archive to a terminal.
-- linux/arm64 and darwin/arm64 binaries and a `checksums.txt` in releases.
-  The assets keep the names and layout of 0.7.7 (`droot_linux_amd64.tar.gz`,
-  `droot_darwin_amd64.zip`, bare `droot_linux_amd64`, ...).
+- linux/arm64, linux/arm (ARMv7, `droot_linux_armv7`) and darwin/arm64
+  binaries and a `checksums.txt` in releases. The assets keep the names and
+  layout of 0.7.7 (`droot_linux_amd64.tar.gz`, `droot_darwin_amd64.zip`, bare
+  `droot_linux_amd64`, ...); the archives also contain the man page.
 - Signed SLSA build provenance attestations for every release asset
   (`gh attestation verify`), an SPDX SBOM for every archive, and
   reproducible binaries and archives.
+- `SECURITY.md`: how to report vulnerabilities privately.
 - Documentation: architecture, security considerations, development guide,
-  known issues and ideas.
+  known issues and ideas, and a deployment tutorial with example systemd
+  units (`examples/systemd`). A Japanese README (`README.ja.md`).
 - CI on GitHub Actions (lint, unit tests as user and root on the minimum and
-  latest Go, end-to-end tests against Docker, govulncheck, a security linter
-  for the workflows, release snapshots), Dependabot, and a release workflow
-  that runs CI on the tagged commit, builds a draft release with GoReleaser
-  and takes its notes from this changelog.
+  latest Go, coverage report, fuzzing, end-to-end tests against Docker on
+  amd64 and arm64 and against Podman, govulncheck, a security linter for the
+  workflows, release snapshots), Dependabot, issue and pull request
+  templates, and a release workflow that runs CI on the tagged commit, builds
+  a draft release with GoReleaser and takes its notes from this changelog.
 
 ### Removed
 
 - The dependency on `github.com/docker/docker` and its transitive modules
   (`docker/distribution`, `docker/go-connections`, `docker/go-units`,
   `docker/libtrust`, `opencontainers/go-digest`, `sirupsen/logrus`), as well as
-  `pkg/errors` and `golang.org/x/net`. droot now depends only on
-  `github.com/urfave/cli/v3` and `golang.org/x/sys`.
+  `pkg/errors` and `golang.org/x/net`, and `github.com/urfave/cli` (replaced
+  by a small parser in `internal/cli`). droot now depends only on
+  `golang.org/x/sys`.
 - The goxc/ghr/gobump release scripts and the Dockerfile used to build in a
   container (cross compilation needs no cgo any more).

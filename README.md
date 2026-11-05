@@ -1,6 +1,8 @@
 droot
 =====
 
+English | [日本語](README.ja.md)
+
 [![CI](https://github.com/yuuki/droot/actions/workflows/ci.yml/badge.svg)](https://github.com/yuuki/droot/actions/workflows/ci.yml)
 [![Latest Version](https://img.shields.io/github/release/yuuki/droot.svg?style=flat-square)](https://github.com/yuuki/droot/releases)
 [![Go Report Card](https://goreportcard.com/badge/github.com/yuuki/droot)](https://goreportcard.com/report/github.com/yuuki/droot)
@@ -44,20 +46,23 @@ Building from source requires Go 1.26 or later.
 
 ### Prebuilt binaries
 
-Static binaries for Linux and macOS (amd64 and arm64) are attached to every
+Static binaries for Linux (amd64, arm64 and 32-bit ARMv7, e.g. a Raspberry
+Pi with a 32-bit OS) and macOS (amd64 and arm64) are attached to every
 [GitHub release](https://github.com/yuuki/droot/releases), both as archives
-(`droot_linux_amd64.tar.gz`, `droot_darwin_arm64.zip`, ...) and as bare
-binaries:
+(`droot_linux_amd64.tar.gz`, `droot_linux_armv7.tar.gz`,
+`droot_darwin_arm64.zip`, ...) and as bare binaries:
 
 ```console
 $ curl -fsSL -o droot https://github.com/yuuki/droot/releases/latest/download/droot_linux_amd64
 $ chmod +x droot && sudo mv droot /usr/local/bin/
 ```
 
-Every asset has a signed build provenance attestation, and every archive an
-SPDX SBOM (`*.sbom.json`). To check that a download was built by the release
-workflow of this repository from a release tag, use the
-[GitHub CLI](https://cli.github.com):
+#### Verifying a release
+
+droot runs as root, so check what you install. Every asset has a signed
+build provenance attestation, and every archive an SPDX SBOM (`*.sbom.json`).
+To check that a download was built by the release workflow of this repository
+from a release tag, use the [GitHub CLI](https://cli.github.com):
 
 ```console
 $ gh attestation verify droot --repo yuuki/droot --signer-workflow yuuki/droot/.github/workflows/release.yml
@@ -98,26 +103,36 @@ Build an image and export its file system:
 
 ```console
 $ docker build -t dockerfiles/app .
-$ droot export dockerfiles/app | gzip -c | aws s3 cp - s3://drootexamples/app.tar.gz
+$ droot export --compress gzip --checksum -o app.tar.gz dockerfiles/app
+$ aws s3 cp app.tar.gz s3://drootexamples/app.tar.gz
+$ aws s3 cp app.tar.gz.sha256 s3://drootexamples/app.tar.gz.sha256
 ```
 
 Deploy and run it on a server (extract as root so that file ownership and
 setuid bits are preserved):
 
 ```console
-$ sudo droot umount --root /var/containers/app   # it is safe to umount before run if you use --bind
-$ sudo mkdir -p /tmp/app /var/containers/app
-$ aws s3 cp s3://drootexamples/app.tar.gz - | sudo tar -xpzf - -C /tmp/app
-$ sudo mv -T /tmp/app /var/containers/app
+$ aws s3 cp s3://drootexamples/app.tar.gz . && aws s3 cp s3://drootexamples/app.tar.gz.sha256 .
+$ sha256sum -c app.tar.gz.sha256
+$ sudo mkdir -p /var/containers/app
+$ sudo tar -xpzf app.tar.gz -C /var/containers/app
 $ sudo droot run --cp --user appuser --group appgroup --bind /var/log/app --root /var/containers/app -- command
 ```
 
-`droot run` leaves its mounts in place after the command exits. Remove them
-before deleting or replacing the directory:
+`droot run` leaves its mounts in place after the command exits (unless
+`--unshare` is given). Remove them before deleting or replacing the directory,
+for instance to deploy a new version — deleting it with mounts below would
+delete files of the host through the bind mounts:
 
 ```console
 $ sudo droot umount --root /var/containers/app
 ```
+
+To deploy new versions, extract each one into a new directory and switch
+between them, e.g. with capze (below).
+
+See [Deploying an application](documentation/deployment.md) for a complete
+walkthrough, including systemd units.
 
 ### Integration with capze
 
@@ -125,7 +140,7 @@ $ sudo droot umount --root /var/containers/app
 directory layout and keeps the last releases:
 
 ```console
-$ aws s3 cp s3://drootexamples/app.tar.gz - | sudo tar -xpzf - -C /tmp/app
+$ sudo mkdir /tmp/app && sudo tar -xpzf app.tar.gz -C /tmp/app   # after verifying the checksum as above
 $ sudo capze --keep 5 /tmp/app /var/containers/app
 ```
 
@@ -142,44 +157,79 @@ droot export [-o FILE] [--platform PLATFORM] IMAGE[:TAG]
 Exports the file system of a local Docker image as a tar archive, to STDOUT or
 to `FILE`. droot creates a temporary container from the image **without
 starting it**, streams its file system and removes the container. The image's
-environment variables (`ENV` in the Dockerfile) are saved as `/.drootenv` in
-the archive so that `droot run` can restore them. Images without a shell, such
-as distroless or `FROM scratch` images, are supported.
+configuration — `ENV`, `WORKDIR`, `USER`, `ENTRYPOINT`, `CMD` and
+`STOPSIGNAL` — is saved as `/.droot/config.json` in the archive, and its
+environment variables also as `/.drootenv` (read by older droot versions), so
+that `droot run` can use them. Images without a shell, such as distroless or
+`FROM scratch` images, are supported.
 
 | Option | Description |
 |---|---|
 | `-o`, `--output FILE` | Write the archive to `FILE` instead of STDOUT (`-` means STDOUT). The file is replaced atomically, so an interrupted export never leaves a truncated archive behind; like a plain `> FILE` redirection, a new file follows the umask, an existing file keeps its mode and owner, and symlinks are followed. |
 | `--platform PLATFORM` | Export the given variant (e.g. `linux/amd64`) of a multi-platform image. |
+| `--pull` | Pull `IMAGE` from its registry first (the `--platform` variant, if given), as `docker pull` would, with the credentials of the docker CLI: the credential helpers (`credHelpers`, `credsStore`) and the `auths` of `$DOCKER_CONFIG/config.json`. Without a tag, `latest` is pulled. |
+| `--compress ALGO` | Compress the archive with `gzip`, or `zstd` (with the `zstd` command). |
+| `--checksum` | Also write the SHA-256 checksum of the archive (as written, compressed or not) to `FILE.sha256`, in the format of `sha256sum`; needs `-o FILE`. Verify it with `sha256sum -c FILE.sha256` before extracting the archive as root. |
+| `--reproducible` | Make the archive depend only on the image, so that exporting the same image again gives the same bytes (for caches, deduplication or signatures): modification times later than `$SOURCE_DATE_EPOCH`, or else the image's creation time, are set to it (the files Docker creates in every container and the files added by droot are dated from it), and access and change times are dropped. Entries keep the order of the daemon. |
+| `--exclude PATTERN` | Leave out the entries matching `PATTERN`, and everything below a matching directory. A pattern containing `/` is matched against absolute paths (`/usr/share/doc`, `/var/cache/apk/*`), a pattern without `/` against base names (`*.pyc`); the syntax is that of Go's [`path.Match`](https://pkg.go.dev/path#Match). A hard link to a left out file is left out too, with a warning. Repeatable. |
+| `--drop-docker-files` | Leave out the files Docker adds to every container: `/.dockerenv`, and the empty placeholders `/etc/hostname`, `/etc/hosts`, `/etc/resolv.conf` and `/dev/console` (use `--cp` or `--bind-net-files` with `droot run`). |
 
-The image must exist locally (`docker pull` or `docker build` it first).
-droot refuses to write the archive to a terminal.
+Without `--pull`, the image must exist locally (`docker pull` or `docker
+build` it first).
+droot refuses to write the archive to a terminal. When STDERR is a terminal,
+the size exported so far is shown there.
+
+To sign archives, sign the checksum file with your tool of choice, e.g.
+`cosign sign-blob --bundle app.tar.gz.sha256.sigstore.json app.tar.gz.sha256`
+or `minisign -Sm app.tar.gz.sha256`, and verify the signature, then the
+checksum, before extracting.
 
 ### `droot run`
 
 ```
-droot run --root ROOT_DIR [OPTIONS] [--] COMMAND [ARG...]
+droot run --root ROOT_DIR [OPTIONS] [--] [COMMAND [ARG...]]
 ```
 
-Runs `COMMAND` inside `ROOT_DIR` (an extracted archive). In order, droot:
+Runs `COMMAND` inside `ROOT_DIR` (an extracted archive). Without `COMMAND`,
+the image's `ENTRYPOINT` followed by its `CMD` is run. Unlike `docker run`,
+a `COMMAND` replaces both: give the entrypoint explicitly to pass it
+arguments. The image's `USER` and `WORKDIR` are the defaults of `--user` and
+`--workdir`. These defaults come from `/.droot/config.json`, written by
+`droot export` since droot 0.8; with archives exported by older versions,
+`COMMAND` is required and droot runs as root in `/` unless told otherwise.
+
+In order, droot:
 
 1. optionally copies the host's `/etc/group`, `/etc/passwd`, `/etc/resolv.conf` and `/etc/hosts` into `ROOT_DIR` (`--cp`);
-2. mounts `proc` on `/proc`, bind mounts the host's `/sys` on `/sys` (as an rslave mount) and performs the `--bind`/`--robind` mounts;
-3. creates `/dev/null`, `/dev/zero`, `/dev/random`, `/dev/urandom` (unless `/dev` is a mount point, e.g. `--bind /dev`) and the `/var/lock -> ../run/lock` symlink;
+2. mounts `proc` on `/proc` and bind mounts the host's `/sys` on `/sys` (as an rslave mount), masks their sensitive files and makes `/proc/sys`, `/proc/sysrq-trigger`, `/proc/irq`, `/proc/bus`, `/proc/fs` and `/sys` read-only like Docker (unless `--no-mask`), and performs the `--bind`/`--robind`/`--tmpfs` mounts (parents first) and the `--bind-net-files` mounts;
+3. creates the `/var/lock -> ../run/lock` symlink if `/var` exists and `/var/lock` does not, and populates `/dev` like Docker — unless `/dev` is a mount point (e.g. `--bind /dev`), in which case it is left alone: the devices `null`, `zero`, `full`, `random`, `urandom` and `tty` (owned by root, mode 0666), the symlinks `fd -> /proc/self/fd`, `stdin`, `stdout`, `stderr` and `ptmx -> pts/ptmx`, a private `devpts` instance on `/dev/pts` (pseudo-terminals) and a 64 MiB tmpfs on `/dev/shm`;
 4. `chroot`s into `ROOT_DIR`;
-5. drops every capability except `CAP_CHOWN`, `CAP_DAC_OVERRIDE`, `CAP_FOWNER`, `CAP_SETGID`, `CAP_SETUID` and `CAP_NET_BIND_SERVICE` from the bounding set and empties the inheritable and ambient sets (unless `--no-dropcaps`);
+5. drops every capability except `CAP_CHOWN`, `CAP_DAC_OVERRIDE`, `CAP_FOWNER`, `CAP_SETGID`, `CAP_SETUID` and `CAP_NET_BIND_SERVICE` (adjusted by `--cap-add`/`--cap-drop`) from the bounding set and empties the inheritable and ambient sets (unless `--no-dropcaps`);
 6. switches to the requested user and groups;
-7. executes `COMMAND` with the environment of `/.drootenv` overridden by `--env`. droot *replaces itself* with `COMMAND`, so the exit status and signals are those of `COMMAND`.
+7. changes to the working directory and executes `COMMAND` with the environment of the image (the `Env` of `/.droot/config.json` overridden by `/.drootenv`), overridden by `--env-file`, then by `--env`. `PATH` (`/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`), `HOME`, `USER` and `LOGNAME` (from the user's entry in `ROOT_DIR/etc/passwd`; `HOME=/` without entry) are set when missing. droot *replaces itself* with `COMMAND`, so the exit status and signals are those of `COMMAND`.
 
 | Option | Description |
 |---|---|
 | `-r`, `--root ROOT_DIR` | Root directory to chroot into (required). |
-| `-u`, `--user USER` | User name or ID to run as. Names are looked up in `ROOT_DIR/etc/passwd` first, then on the host, so the image decides what a name maps to (droot warns when a name other than `root` maps to uid 0); numeric IDs do not depend on the image. Unknown numeric IDs are accepted. |
-| `-g`, `--group GROUP` | Group name or ID to run as. Defaults to the primary group of `--user`; for a numeric `--user` without an entry in `ROOT_DIR/etc/passwd`, to droot's own group (usually 0, with a warning), like Docker. |
-| `-b`, `--bind SRC[:DEST]` | Bind mount the host's `SRC` (directory or file) on `DEST` (default: `SRC`) in the container. Repeatable. |
-| `--robind SRC[:DEST]` | Same as `--bind`, but read-only. Repeatable. |
+| `-u`, `--user USER` | User name or ID to run as. Defaults to the image's `USER` (which may also name a group, as `USER app:staff`), or to droot's own user (root). Names are looked up in `ROOT_DIR/etc/passwd` first, then on the host (`/etc/passwd`, then `getent passwd` for users served by NSS such as LDAP or SSSD), so the image decides what a name maps to (droot warns when a name other than `root` maps to uid 0); numeric IDs do not depend on the image. Unknown numeric IDs are accepted. |
+| `-g`, `--group GROUP` | Group name or ID to run as, looked up like `--user` (`ROOT_DIR/etc/group`, the host's `/etc/group`, `getent group`). Defaults to the primary group of `--user`; for a numeric `--user` without an entry in `ROOT_DIR/etc/passwd`, to droot's own group (usually 0, with a warning), like Docker. |
+| `-w`, `--workdir DIR` | Working directory of `COMMAND`, an absolute path inside the container. Defaults to the image's `WORKDIR`, or `/`. It must exist. |
+| `-b`, `--bind SRC[:DEST][:OPTS]` | Bind mount the host's `SRC` (directory or file) on `DEST` (default: `SRC`) in the container. `OPTS` is a comma-separated list of `ro` (read-only), `rw` (the default) and `rbind` (also bind the mounts below `SRC`; with `ro`, they are all read-only), as in `--bind /srv/data:/data:ro` or `--bind /srv:rbind`. A last part that is not such a list belongs to `DEST` (`--bind /a:/b:c` mounts on `/b:c`). Repeatable. |
+| `--robind SRC[:DEST][:OPTS]` | Same as `--bind SRC:DEST:ro`. Repeatable. |
+| `--tmpfs PATH[:OPTS]` | Mount a new tmpfs on `PATH` in the container, e.g. `--tmpfs /tmp --tmpfs /run`. `OPTS` is a comma-separated list of mount flags — `ro`, `rw`, `nosuid`/`suid`, `nodev`/`dev`, `noexec`/`exec`, `noatime`; the default is `nosuid,nodev,noexec` — and [tmpfs options](https://man7.org/linux/man-pages/man5/tmpfs.5.html) such as `size=64m`, `mode=1777`, `uid=`, `gid=`. `--tmpfs /dev/shm:OPTS` replaces the default `/dev/shm`. Repeatable. |
 | `--cp`, `--copy-files` | Copy the host's `/etc/group`, `/etc/passwd`, `/etc/resolv.conf` and `/etc/hosts` into the container. |
-| `-e`, `--env KEY=VALUE` | Set an environment variable, overriding `/.drootenv`. Repeatable. Commas are not separators. |
+| `--bind-net-files` | Bind mount the host's `/etc/resolv.conf` and `/etc/hosts` read-only on the same paths in the container, so that `COMMAND` sees later changes to them (e.g. after a DHCP renewal) instead of the snapshot copied by `--cp`. Each run binds the current files afresh; note that a file bind mount follows changes made *in place*: a host file replaced with `rename(2)` while `COMMAND` runs (some DHCP clients, `resolvconf`) is only seen by the next run. With `--cp`, only `/etc/group` and `/etc/passwd` are copied. |
+| `-e`, `--env KEY[=VALUE]` | Set an environment variable, overriding `/.drootenv` and `--env-file`. A bare `KEY` takes its value from droot's own environment and is left out if unset, like `docker run -e KEY` (under `sudo`, keep it with `sudo --preserve-env=KEY`). Repeatable. Commas are not separators. |
+| `--env-file FILE` | Read environment variables from the host's `FILE`: `KEY=VALUE` lines (the format of `/.drootenv`; `#` starts a comment line) and bare `KEY` lines, taken from droot's environment. Overrides `/.drootenv`; later files override earlier ones. Repeatable. |
+| `--cap-add CAP` | Also keep the capability `CAP` in the bounding set: a name with or without `CAP_`, in any case (`NET_RAW`, `cap_sys_ptrace`), or `ALL`. Repeatable. |
+| `--cap-drop CAP` | Drop `CAP` from the capabilities kept by default, or `ALL` of them (then `--cap-add` adds back). Repeatable. |
 | `--no-dropcaps` | Do not drop capabilities (dangerous). |
+| `--ulimit NAME=SOFT[:HARD]` | Set a resource limit of `COMMAND` (`setrlimit(2)`), with the names of `docker run --ulimit`: `nofile`, `nproc`, `core`, `memlock`, `stack`, `as`, `cpu`, ... `HARD` defaults to `SOFT`; `unlimited` or `-1` means no limit. Repeatable. |
+| `--unshare` | Make the mounts in a private mount namespace: they are not visible on the host, disappear when `COMMAND` and its children have exited, and need no `droot umount`. Host mounts made later still propagate into the container. |
+| `--unshare-ipc` | Run `COMMAND` in a private IPC namespace (System V IPC objects, POSIX message queues). |
+| `--hostname NAME` | Run `COMMAND` in a private UTS namespace whose host name is `NAME` (also the default of `HOSTNAME`). The host's name is not changed. |
+| `--read-only` | Make `ROOT_DIR` read-only for `COMMAND` (bind mounts and tmpfs keep their own mode: add `--tmpfs /tmp`, `--bind`, ... for what it writes). Implies `--unshare`, so that the read-only mount disappears with `COMMAND`. |
+| `--no-mask` | Leave `/proc` and `/sys` as they are: do not mask their sensitive files nor make `/proc/sys`, `/sys` and the like read-only (dangerous). Masks made by a previous run stay until `droot umount`. |
 | `--no-new-privileges` | Set the `no_new_privs` flag: setuid programs (`su`, `sudo`, ...) and file capabilities cannot grant privileges to `COMMAND`. Recommended with `--user`. |
 
 Notes:
@@ -189,10 +239,48 @@ Notes:
   host's file system. A bind mount target may not be `ROOT_DIR` itself nor lie
   inside `/proc` or `/sys`.
 - The supplementary groups are those listing the user in `ROOT_DIR/etc/group`.
+- Mounts left by a previous run are reused as they are: run `droot umount`
+  first to change the options of a `--tmpfs` or a `--bind`.
+- If the setup fails, or `COMMAND` cannot be found or executed by the user,
+  the mounts made by the failed run are removed again; those of previous runs
+  stay. Only a failure of `execve(2)` itself after switching to the user
+  (e.g. a missing ELF interpreter) leaves them, with a warning.
+- Concurrent `droot run` and `droot umount` on the same `ROOT_DIR` take turns
+  until `COMMAND` is executed (`flock(2)` on a file of `/run/droot`, which
+  only root can access).
 - `COMMAND` is looked up in the `PATH` of the container environment (falling
   back to `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`), not in
   the `PATH` of the shell that started droot.
-- The working directory is `/`.
+- The image's `STOPSIGNAL` is saved but not used: droot is not a supervisor.
+  Set it as `KillSignal=` in a systemd unit, for instance.
+- With `--cp`, the container's `/etc/passwd` and `/etc/group` are the host's,
+  so the image's `USER` must exist on the host too, or be overridden with
+  `--user`.
+
+#### Resource limits
+
+droot sets the per-process limits of `--ulimit` but creates no cgroups.
+Limit memory, CPU and the number of tasks with your service manager, which
+already manages cgroups — for a one-off command:
+
+```console
+$ sudo systemd-run --scope -p MemoryMax=1G -p CPUQuota=50% -p TasksMax=512 \
+    droot run --root /var/containers/app -- app
+```
+
+or in the unit running the application:
+
+```ini
+[Service]
+ExecStart=/usr/local/bin/droot run --root /var/containers/app --user app -- app
+MemoryMax=1G
+CPUQuota=50%
+TasksMax=512
+LimitNOFILE=65536
+```
+
+`LimitNOFILE=` and the other `Limit*=` settings of the unit are inherited by
+`COMMAND` too, unless `--ulimit` overrides them.
 
 ### `droot umount`
 
@@ -204,23 +292,66 @@ Lazily unmounts every mount point below `ROOT_DIR`, deepest first, and fails
 if some cannot be unmounted. `ROOT_DIR` itself is never unmounted, so it can
 be a file system of its own. The command is idempotent and refuses `/`.
 
+### `droot status`
+
+```
+droot status --root ROOT_DIR
+```
+
+Lists the mount points below `ROOT_DIR` (what `droot umount` would remove) and
+the processes whose root directory is `ROOT_DIR` — `COMMAND`s started by
+`droot run` and their children — with their PID, uid and command line:
+
+```console
+$ sudo droot status --root /var/containers/app
+Mounts below /var/containers/app: 17
+  MOUNT POINT      TYPE      SOURCE     OPTIONS
+  /dev/pts         devpts    devpts     rw,nosuid,noexec,relatime
+  /dev/shm         tmpfs     tmpfs      rw,nosuid,nodev,noexec,relatime
+  /proc            proc      proc       rw,nosuid,nodev,noexec,relatime
+  /proc/acpi       tmpfs     tmpfs      ro,nosuid,nodev,noexec,relatime
+  /proc/keys       devtmpfs  devtmpfs   ro,relatime
+  ...
+  /sys             sysfs     sysfs      ro,relatime
+  /var/log/app     ext4      /dev/sda1  rw,relatime
+
+Processes in /var/containers/app: 1
+  PID   UID   COMMAND
+  4242  1500  /usr/local/bin/app --port 8080
+```
+
+Processes of a `droot run --unshare` are listed, but not their mounts, which
+are private.
+
 ### Global options
 
 | Option | Description |
 |---|---|
 | `-D`, `--debug` | Print debug messages to STDERR. Also enabled by `DROOT_DEBUG=1`. |
-| `-v`, `--version` | Print the version. |
+| `-q`, `--quiet` | Print errors only: no warnings, informational messages nor progress. Also enabled by `DROOT_QUIET=1`. |
+| `--log-format FORMAT` | Format of the messages on STDERR: `text` (the default) or `json`, one [`log/slog`](https://pkg.go.dev/log/slog) JSON object per line (`{"time":...,"level":"WARN","msg":...}`) for log collectors. Also set by `DROOT_LOG_FORMAT`. |
+| `-v`, `--version` | Print the version, with the commit and its date. |
+
+The [command line reference](documentation/cli.md) and the man page
+([`documentation/droot.1`](documentation/droot.1), also in the release
+archives: `man -l droot.1`) list every option.
 
 ### Shell completion
 
-`droot completion bash|zsh|fish` prints a completion script, e.g.
-`source <(droot completion bash)`.
+`droot completion bash|zsh|fish` prints a completion script:
+
+```console
+$ source <(droot completion bash)     # in ~/.bashrc
+$ source <(droot completion zsh)      # in ~/.zshrc, after compinit
+$ droot completion fish > ~/.config/fish/completions/droot.fish
+```
 
 ## Choosing the Docker daemon
 
 `droot export` finds the daemon like the `docker` CLI does:
 
-1. `DOCKER_HOST` (`unix:///path/to/docker.sock`, `tcp://host:2376`), with
+1. `DOCKER_HOST` (`unix:///path/to/docker.sock`, `tcp://host:2376`,
+   `ssh://[user@]host[:port]`), with
    `DOCKER_TLS_VERIFY` (TLS, verifying the daemon's certificate), `DOCKER_TLS`
    (TLS without verification) and `DOCKER_CERT_PATH` (`ca.pem`, `cert.pem`,
    `key.pem`; default `~/.docker`);
@@ -238,12 +369,20 @@ $ DOCKER_HOST=unix://$XDG_RUNTIME_DIR/podman/podman.sock droot export -o app.tar
 $ DOCKER_HOST=tcp://192.0.2.10:2376 DOCKER_TLS_VERIFY=1 DOCKER_CERT_PATH=~/.docker/remote droot export app > app.tar
 ```
 
-`ssh://` hosts are not supported; forward the remote socket instead:
-`ssh -nNT -L /tmp/docker.sock:/var/run/docker.sock host` and
-`DOCKER_HOST=unix:///tmp/docker.sock`.
+With an `ssh://` host, droot runs `ssh [-l user] [-p port] host docker system
+dial-stdio` for each connection, like the docker CLI: the local `ssh` must log
+in without a password prompt (keys, an agent), and the remote host needs the
+`docker` command.
+
+```console
+$ DOCKER_HOST=ssh://deploy@build.example.com droot export -o app.tar app
+```
 
 ## Documentation
 
+- [Deploying an application](documentation/deployment.md): from `docker build`
+  to a systemd service, with [example units](examples/systemd)
+- [Command line reference](documentation/cli.md)
 - [How droot works](documentation/architecture.md)
 - [Security considerations](documentation/security.md)
 - [Development guide](documentation/development.md)

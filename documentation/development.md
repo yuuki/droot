@@ -20,6 +20,8 @@ $ make build              # static ./droot (CGO_ENABLED=0), version from git des
 $ make test               # unit tests with the race detector; root-only tests are skipped
 $ make test-root          # unit tests as root, including real mounts and mknod (sudo)
 $ make integration-test   # build and run script/integration-test.sh against Docker (sudo)
+$ make fuzz               # run every fuzz target for FUZZTIME (default 30s)
+$ make docs               # regenerate documentation/cli.md and droot.1 (a test checks them)
 $ make lint               # golangci-lint (configuration in .golangci.yml)
 $ make fmt                # gofmt + goimports
 $ make vet                # go vet for Linux and macOS
@@ -42,9 +44,10 @@ distribution's Go). `make snapshot` also makes the SBOMs when
 
 | Level | Where | Needs |
 |---|---|---|
-| Unit | `*_test.go` | nothing; Docker is faked (`docker/export_test.go`) or served by `httptest` (`docker/client_test.go`) |
-| Privileged unit | `mounter/mount_linux_test.go`, `osutil/sys_linux_test.go` | root on Linux; skipped otherwise |
-| End-to-end | `script/integration-test.sh` | root, Docker, network access to pull `alpine` and `busybox` |
+| Unit | `*_test.go` | nothing; Docker is faked (`internal/docker/export_test.go`) or served by `httptest` (`internal/docker/client_test.go`) |
+| Privileged unit | `internal/mounter/mount_linux_test.go`, `internal/osutil/sys_linux_test.go` | root on Linux; skipped otherwise |
+| Fuzz | `fuzz_test.go` of `environ` (`/.drootenv` parsing), `mounter` (`/proc/self/mountinfo` parsing), `osutil` (path resolution of `osutil.Root`, Linux) and `docker` (rewriting of the exported archive) | nothing; `make fuzz` explores for `FUZZTIME` (30s) per target, their seeds and `testdata/fuzz` run with the unit tests |
+| End-to-end | `script/integration-test.sh` | root, Docker (or Podman: `DOCKER=podman DOCKER_HOST=unix:///run/podman/podman.sock`), network access to pull `alpine` and `busybox` |
 
 The privileged mount tests create their scratch directory with
 `os.MkdirTemp` and only delete it when nothing is mounted below it any more,
@@ -56,7 +59,11 @@ CI (`.github/workflows/ci.yml`) runs on every push and pull request:
 - `lint`: golangci-lint, `go mod tidy -diff` and `make test-scripts`;
 - `test`: the unit tests with the minimum and the latest supported Go
   versions, unprivileged and as root;
-- `integration`: the end-to-end tests;
+- `fuzz`: `make fuzz`, every fuzz target for 30 seconds;
+- `coverage`: the unit tests as root with a coverage report, shown in the
+  job summary and kept as the `coverage` artifact;
+- `integration`: the end-to-end tests on amd64 and arm64 runners against
+  Docker, and on amd64 against Podman's Docker-compatible API;
 - `vulnerabilities`: govulncheck with the Go version releases are built
   with, so that a vulnerable dependency or standard library fails CI;
 - `workflows`: [zizmor](https://docs.zizmor.sh), a security linter for
@@ -69,10 +76,11 @@ CI (`.github/workflows/ci.yml`) runs on every push and pull request:
 ## Dependencies
 
 droot intentionally depends on as little as possible: only
-`github.com/urfave/cli/v3` and `golang.org/x/sys`. Talking to Docker is done
-with the standard library (`docker` package) instead of the Docker SDK, which
-pulls in dozens of modules. Please keep it that way; update
-`LICENSE_OF_DEPENDENCIES.md` when adding a dependency.
+`golang.org/x/sys`. The command line is parsed by a small package
+(`internal/cli`), and Docker is spoken to with the standard library
+(`internal/docker`) instead of the Docker SDK, which pulls in dozens of
+modules. Please keep it that way; update `LICENSE_OF_DEPENDENCIES.md` when
+adding a dependency.
 
 Dependabot (`.github/dependabot.yml`) proposes monthly, grouped updates of Go
 modules and GitHub Actions, once they have been released for a week. The
@@ -133,11 +141,12 @@ changelog. The release is marked as a pre-release and its notes are the
 ### Assets
 
 The assets keep the names and layout of droot 0.7.7, so that download
-scripts using `releases/latest/download/...` keep working:
+scripts using `releases/latest/download/...` keep working. `<arch>` is
+`amd64`, `arm64` or, for Linux only, `armv7` (32-bit ARM):
 
 | Asset | Content |
 |---|---|
-| `droot_linux_<arch>.tar.gz`, `droot_darwin_<arch>.zip` | `droot_<os>_<arch>/droot`, the licenses, `README.md`, `CHANGELOG.md` |
+| `droot_linux_<arch>.tar.gz`, `droot_darwin_<arch>.zip` | `droot_<os>_<arch>/droot`, the licenses, `README.md`, `CHANGELOG.md`, the man page `droot.1` |
 | `droot_<os>_<arch>` | the bare binary |
 | `<archive>.sbom.json` | an SPDX SBOM of the archive (Go modules and Go version) |
 | `checksums.txt` | the SHA-256 of every other asset |
@@ -164,8 +173,9 @@ the binary:
 $ go version -m droot_linux_amd64 | head -n 1
 droot_linux_amd64: go1.27.3
 $ git clone --branch v0.8.0 https://github.com/yuuki/droot && cd droot
-$ GOTOOLCHAIN=go1.27.3 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build -trimpath -ldflags "-s -w -X main.version=0.8.0" -o droot_linux_amd64 ./cmd/droot
+$ GOTOOLCHAIN=go1.27.3 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
+    -ldflags "-s -w -X main.version=0.8.0 -X main.commit=$(git rev-parse HEAD) -X main.date=$(date -u -d @$(git log -1 --format=%ct) +%Y-%m-%dT%H:%M:%SZ)" \
+    -o droot_linux_amd64 ./cmd/droot
 $ sha256sum droot_linux_amd64   # the same as in checksums.txt
 ```
 
@@ -184,8 +194,17 @@ These settings are not stored in the repository; set them once:
   maintainers create, update or delete release tags.
 - *Settings → Environments → release*: limit the environment to the tags
   `v*` and, optionally, require a reviewer before the release job runs.
+- *Settings → Security → Private vulnerability reporting*: enable it, so
+  that vulnerabilities can be reported privately as `SECURITY.md` asks.
 
 ### Version
 
 The version printed by `droot --version` comes from `-X main.version` (set by
-GoReleaser and `make build`) or, for `go install`, from the module version.
+GoReleaser and `make build`) or, for `go install`, from the module version;
+the commit and its date from `-X main.commit` and `-X main.date` (set by
+GoReleaser) or from the VCS information Go embeds when building from a git
+checkout.
+
+`documentation/cli.md` and `documentation/droot.1` are generated from the
+command definitions (`internal/commands`) by `make docs`; a unit test fails
+when they are out of date.

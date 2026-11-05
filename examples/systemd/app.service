@@ -1,0 +1,38 @@
+# A service run by droot in a private mount namespace (--unshare): its mounts
+# disappear when it stops, so no `droot umount` is needed.
+# See documentation/deployment.md.
+[Unit]
+Description=app (droot container)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=exec
+# Messages of droot itself as JSON objects in the journal.
+Environment=DROOT_LOG_FORMAT=json
+# Passed to the application with --env APP_ENV (a bare KEY takes its value
+# from droot's environment).
+Environment=APP_ENV=production
+ExecStart=/usr/local/bin/droot run --root /var/containers/app/current \
+    --unshare \
+    --user app --no-new-privileges --cap-drop ALL \
+    --robind /etc/app/config.yml:/app/config.yml \
+    --bind /var/log/app \
+    --bind-net-files \
+    --tmpfs /tmp \
+    --env APP_ENV \
+    -- /app/bin/server --config /app/config.yml
+# droot replaces itself with the command: systemd signals the application
+# directly. Use the STOPSIGNAL of the image, if any.
+KillSignal=SIGTERM
+Restart=on-failure
+RestartSec=5s
+
+# Resource limits: droot creates no cgroups, systemd does.
+MemoryMax=1G
+CPUQuota=200%
+TasksMax=512
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

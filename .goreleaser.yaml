@@ -13,26 +13,34 @@ builds:
     env:
       - CGO_ENABLED=0
     goos: [linux, darwin]
-    goarch: [amd64, arm64]
+    goarch: [amd64, arm64, arm]
+    # 32-bit ARM (e.g. a Raspberry Pi running a 32-bit OS) is only built
+    # for Linux, as ARMv7 with hardware floating point.
+    goarm: ["7"]
+    ignore:
+      - goos: darwin
+        goarch: arm
     # Reproducible: no local paths, and file times taken from the commit.
     # Rebuilding the tag with the Go version reported by `go version -m
     # droot` gives identical binaries.
     flags: [-trimpath]
     ldflags:
-      - -s -w -X main.version={{ .Version }}
+      # The commit date rather than the build date: reproducible builds.
+      - -s -w -X main.version={{ .Version }} -X main.commit={{ .FullCommit }} -X main.date={{ .CommitDate }}
     mod_timestamp: "{{ .CommitTimestamp }}"
 
 # The assets are named and laid out like those of droot 0.7.7, so that
 # download scripts using releases/latest/download/... and the Homebrew
 # formula keep working: droot_linux_amd64.tar.gz and droot_darwin_amd64.zip
 # containing droot_<os>_<arch>/droot, and bare droot_<os>_<arch> binaries.
+# 32-bit ARM assets are named droot_linux_armv7.
 archives:
   - id: archive
     formats: [tar.gz]
     format_overrides:
       - goos: darwin
         formats: [zip]
-    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}"
     wrap_in_directory: true
     # Fixed owners, modes and times, so that the archives are reproducible
     # too, whoever builds them.
@@ -54,9 +62,13 @@ archives:
         info: *doc
       - src: CHANGELOG.md
         info: *doc
+      # The man page, at the top of the archive: man -l droot.1
+      - src: documentation/droot.1
+        strip_parent: true
+        info: *doc
   - id: binary
     formats: [binary]
-    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}"
 
 # An SPDX SBOM per archive (droot_linux_amd64.tar.gz.sbom.json, ...), made
 # by syft, which must be in PATH.
