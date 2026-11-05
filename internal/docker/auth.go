@@ -130,7 +130,7 @@ func RegistryAuth(ctx context.Context, ref string) (string, error) {
 	}
 	auth.ServerAddress = server
 	log.Debugf("using the credentials of %s for %s", auth.Username, host)
-	j, err := json.Marshal(auth)
+	j, err := json.Marshal(auth) //nolint:gosec // G117: the credentials are for the daemon, like with the docker CLI
 	if err != nil {
 		return "", err
 	}

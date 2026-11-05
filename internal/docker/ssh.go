@@ -57,7 +57,7 @@ func sshDialer(args []string) func(ctx context.Context, _, _ string) (net.Conn, 
 		}
 		// The command must outlive the dial context, which only bounds
 		// the connection setup.
-		cmd := exec.Command(path, args...) //nolint:gosec // G204: the arguments are validated by sshArgs
+		cmd := exec.Command(path, args...)
 		c := &cmdConn{cmd: cmd}
 		cmd.Stderr = &c.stderr
 		if c.w, err = cmd.StdinPipe(); err != nil {
