@@ -160,8 +160,8 @@ Runs `COMMAND` inside `ROOT_DIR` (an extracted archive). In order, droot:
 | Option | Description |
 |---|---|
 | `-r`, `--root ROOT_DIR` | Root directory to chroot into (required). |
-| `-u`, `--user USER` | User name or ID to run as. Names are looked up in `ROOT_DIR/etc/passwd` first, then on the host, so the image decides what a name maps to (droot warns when a name other than `root` maps to uid 0); numeric IDs do not depend on the image. Unknown numeric IDs are accepted. |
-| `-g`, `--group GROUP` | Group name or ID to run as. Defaults to the primary group of `--user`; for a numeric `--user` without an entry in `ROOT_DIR/etc/passwd`, to droot's own group (usually 0, with a warning), like Docker. |
+| `-u`, `--user USER` | User name or ID to run as. Names are looked up in `ROOT_DIR/etc/passwd` first, then on the host (`/etc/passwd`, then `getent passwd` for users served by NSS such as LDAP or SSSD), so the image decides what a name maps to (droot warns when a name other than `root` maps to uid 0); numeric IDs do not depend on the image. Unknown numeric IDs are accepted. |
+| `-g`, `--group GROUP` | Group name or ID to run as, looked up like `--user` (`ROOT_DIR/etc/group`, the host's `/etc/group`, `getent group`). Defaults to the primary group of `--user`; for a numeric `--user` without an entry in `ROOT_DIR/etc/passwd`, to droot's own group (usually 0, with a warning), like Docker. |
 | `-b`, `--bind SRC[:DEST]` | Bind mount the host's `SRC` (directory or file) on `DEST` (default: `SRC`) in the container. Repeatable. |
 | `--robind SRC[:DEST]` | Same as `--bind`, but read-only. Repeatable. |
 | `--cp`, `--copy-files` | Copy the host's `/etc/group`, `/etc/passwd`, `/etc/resolv.conf` and `/etc/hosts` into the container. |

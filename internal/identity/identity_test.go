@@ -241,3 +241,73 @@ func TestResolveWarnsWhenANameMapsToRoot(t *testing.T) {
 		t.Fatalf("uid=%d, log=%q", cred.UID, buf.String())
 	}
 }
+
+func TestResolveWithGetent(t *testing.T) {
+	root := openRoot(t, newRoot(t))
+	var calls []string
+	orig := getent
+	t.Cleanup(func() { getent = orig })
+	getent = func(database, key string) ([]byte, error) {
+		calls = append(calls, database+" "+key)
+		switch database + " " + key {
+		case "passwd ldap.user", "passwd 70001":
+			return []byte("ldap.user:*:70001:70002:LDAP user:/home/ldap.user:/bin/bash\n"), nil
+		case "passwd liar":
+			return []byte("someone-else:*:70003:70003::/:/bin/sh\n"), nil
+		case "group ldap-group":
+			return []byte("ldap-group:*:70010:ldap.user\n"), nil
+		case "group broken":
+			return []byte("broken:*:x:\n"), nil
+		}
+		return nil, nil
+	}
+
+	tests := []struct {
+		user, group string
+		want        Credential
+		wantErr     bool
+	}{
+		{user: "ldap.user", want: Credential{UID: 70001, GID: 70002, Groups: []int{70002}, Username: "ldap.user", Home: "/home/ldap.user"}},
+		{user: "70001", want: Credential{UID: 70001, GID: 70002, Groups: []int{70002}, Username: "ldap.user", Home: "/home/ldap.user"}},
+		{user: "ldap.user", group: "ldap-group", want: Credential{UID: 70001, GID: 70010, Groups: []int{70010}, Username: "ldap.user", Home: "/home/ldap.user"}},
+		// The container's database still comes first.
+		{user: "app", group: "ldap-group", want: Credential{UID: 1500, GID: 70010, Groups: []int{70010, 1700, 1800}, Username: "app", Home: "/home/app"}},
+		{user: "liar", wantErr: true},
+		{group: "broken", wantErr: true},
+		{user: "-ldap.user", wantErr: true},
+	}
+	for _, tt := range tests {
+		got, err := Resolve(root, tt.user, tt.group)
+		if tt.wantErr {
+			if err == nil {
+				t.Errorf("--user %q --group %q: want error, got %+v", tt.user, tt.group, got)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("--user %q --group %q: %v", tt.user, tt.group, err)
+			continue
+		}
+		if got.UID != tt.want.UID || got.GID != tt.want.GID || !slices.Equal(got.Groups, tt.want.Groups) ||
+			got.Username != tt.want.Username || got.Home != tt.want.Home {
+			t.Errorf("--user %q --group %q: got %+v, want %+v", tt.user, tt.group, *got, tt.want)
+		}
+	}
+	if slices.Contains(calls, "passwd app") || slices.Contains(calls, "passwd -ldap.user") {
+		t.Errorf("getent was called needlessly: %q", calls)
+	}
+}
+
+func TestGetent(t *testing.T) {
+	if _, err := os.Stat("/usr/bin/getent"); err != nil {
+		t.Skip("getent is not installed")
+	}
+	out, err := getent("passwd", "root")
+	if err != nil || !bytes.HasPrefix(out, []byte("root:")) {
+		t.Fatalf("getent passwd root: %q, %v", out, err)
+	}
+	out, err = getent("group", "no-such-group-droot")
+	if err != nil || out != nil {
+		t.Fatalf("a missing key must give no output and no error: %q, %v", out, err)
+	}
+}

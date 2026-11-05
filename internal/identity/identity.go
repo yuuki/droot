@@ -3,21 +3,28 @@
 // Names are looked up in the container's /etc/passwd and /etc/group first,
 // because that is what the process will see once chrooted, and on the host
 // second, for compatibility with droot <= 0.7 which only used the host's
-// databases.
+// databases. On the host, /etc/passwd and /etc/group are read first, then
+// getent(1) is asked, so that users and groups served only by NSS modules
+// (LDAP, SSSD, ...) are found although the static droot binary cannot load
+// them.
 package identity
 
 import (
 	"bufio"
+	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"math"
 	"os"
+	"os/exec"
 	osuser "os/user"
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/yuuki/droot/internal/log"
 	"github.com/yuuki/droot/internal/osutil"
@@ -130,22 +137,9 @@ func lookupUser(users []User, spec string) (User, error) {
 		}
 	}
 
-	// Fall back to the host's database.
-	var hu *osuser.User
-	var err error
-	if numeric {
-		hu, err = osuser.LookupId(spec)
-	} else {
-		hu, err = osuser.Lookup(spec)
+	if u, ok := lookupHostUser(spec); ok {
+		return u, nil
 	}
-	if err == nil {
-		uid, ok1 := parseID(hu.Uid)
-		gid, ok2 := parseID(hu.Gid)
-		if ok1 && ok2 {
-			return User{Name: hu.Username, UID: uid, GID: gid, Home: hu.HomeDir}, nil
-		}
-	}
-
 	if numeric {
 		return User{UID: id, GID: -1}, nil
 	}
@@ -162,12 +156,122 @@ func lookupGroup(groups []Group, spec string) (Group, error) {
 	if numeric {
 		return Group{GID: id}, nil
 	}
-	if hg, err := osuser.LookupGroup(spec); err == nil {
-		if gid, ok := parseID(hg.Gid); ok {
-			return Group{Name: hg.Name, GID: gid}, nil
-		}
+	if g, ok := lookupHostGroup(spec); ok {
+		return g, nil
 	}
 	return Group{}, fmt.Errorf("group %q not found in the container's /etc/group nor on the host", spec)
+}
+
+// lookupHostUser looks a user up on the host: in /etc/passwd (or through
+// the C library when droot is built with cgo), then with getent(1).
+func lookupHostUser(spec string) (User, bool) {
+	id, numeric := parseID(spec)
+	var hu *osuser.User
+	var err error
+	if numeric {
+		hu, err = osuser.LookupId(spec)
+	} else {
+		hu, err = osuser.Lookup(spec)
+	}
+	if err == nil {
+		uid, ok1 := parseID(hu.Uid)
+		gid, ok2 := parseID(hu.Gid)
+		if ok1 && ok2 {
+			return User{Name: hu.Username, UID: uid, GID: gid, Home: hu.HomeDir}, true
+		}
+	}
+
+	f := getentEntry("passwd", spec, 7)
+	if f == nil {
+		return User{}, false
+	}
+	uid, ok1 := parseID(f[2])
+	gid, ok2 := parseID(f[3])
+	if f[0] == "" || !ok1 || !ok2 || (numeric && uid != id) || (!numeric && f[0] != spec) {
+		return User{}, false
+	}
+	log.Debugf("user %s found with getent: uid=%d gid=%d", spec, uid, gid)
+	return User{Name: f[0], UID: uid, GID: gid, Home: f[5]}, true
+}
+
+// lookupHostGroup looks a group name up on the host: in /etc/group (or
+// through the C library when droot is built with cgo), then with getent(1).
+func lookupHostGroup(name string) (Group, bool) {
+	if hg, err := osuser.LookupGroup(name); err == nil {
+		if gid, ok := parseID(hg.Gid); ok {
+			return Group{Name: hg.Name, GID: gid}, true
+		}
+	}
+	f := getentEntry("group", name, 3)
+	if f == nil {
+		return Group{}, false
+	}
+	gid, ok := parseID(f[2])
+	if !ok || f[0] != name {
+		return Group{}, false
+	}
+	log.Debugf("group %s found with getent: gid=%d", name, gid)
+	return Group{Name: f[0], GID: gid}, true
+}
+
+// getentPaths are where getent(1) is looked for. $PATH is deliberately not
+// used: droot runs as root, possibly with the PATH of the user who called
+// sudo.
+var getentPaths = []string{"/usr/bin/getent", "/bin/getent", "/usr/sbin/getent", "/sbin/getent"}
+
+// getentTimeout bounds a lookup by an unreachable directory server.
+const getentTimeout = 30 * time.Second
+
+// getent runs `getent database key` and returns its output. It returns nil
+// output and no error when the key is not found.
+var getent = func(database, key string) ([]byte, error) {
+	var path string
+	for _, p := range getentPaths {
+		if fi, err := os.Stat(p); err == nil && fi.Mode().IsRegular() {
+			path = p
+			break
+		}
+	}
+	if path == "" {
+		return nil, errors.New("getent not found in " + strings.Join(getentPaths, ", "))
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), getentTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, path, database, key)
+	cmd.Env = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL=C"}
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 2 {
+		return nil, nil // "One or more supplied key could not be found"
+	}
+	if err != nil {
+		return nil, fmt.Errorf("%s %s %s: %w: %s", path, database, key, err, bytes.TrimSpace(stderr.Bytes()))
+	}
+	return out, nil
+}
+
+// getentEntry returns the fields of the first entry getent(1) prints for
+// key in database, or nil.
+func getentEntry(database, key string, minFields int) []string {
+	// A key starting with "-" would be taken as an option, and such names
+	// are not valid user or group names anyway.
+	if key == "" || strings.HasPrefix(key, "-") {
+		return nil
+	}
+	out, err := getent(database, key)
+	if err != nil {
+		log.Debugf("cannot look up %s in the %s database: %v", key, database, err)
+		return nil
+	}
+	var fields []string
+	_ = parseColonFile(bytes.NewReader(out), minFields, func(f []string) {
+		if fields == nil {
+			fields = f
+		}
+	})
+	return fields
 }
 
 func readPasswd(root *osutil.Root, path string) ([]User, error) {
