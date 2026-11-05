@@ -148,6 +148,10 @@ type UsageError struct {
 
 func (e *UsageError) Error() string { return fmt.Sprintf("%s (see '%s')", e.msg, e.help) }
 
+// Output returns the writer of the help and of the command output: Stdout,
+// or os.Stdout if it is nil.
+func (a *App) Output() io.Writer { return a.stdout() }
+
 func (a *App) stdout() io.Writer {
 	if a.Stdout != nil {
 		return a.Stdout

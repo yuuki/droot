@@ -156,3 +156,44 @@ func Exec(argv0 string, argv, env []string) error {
 	}
 	return nil
 }
+
+// UnshareMountNamespace moves the calling thread into a new mount namespace,
+// a copy of the current one in which every mount is made a slave of the
+// host's: mounts made from now on never propagate back to the host, and
+// they disappear when the last process of the namespace exits.
+//
+// The new namespace is the calling thread's only: the caller must have
+// locked its goroutine to the thread (runtime.LockOSThread), must do every
+// mount and the chroot from it, and must exec from it.
+func UnshareMountNamespace() error {
+	if err := unix.Unshare(unix.CLONE_NEWNS); err != nil {
+		return fmt.Errorf("unshare the mount namespace: %w", err)
+	}
+	if err := unix.Mount("", "/", "", unix.MS_REC|unix.MS_SLAVE, ""); err != nil {
+		return fmt.Errorf("make the mounts of the new namespace slaves: %w", err)
+	}
+	return nil
+}
+
+// UnshareIPCNamespace moves the calling thread into a new IPC namespace
+// (System V IPC objects and POSIX message queues). Like
+// UnshareMountNamespace, it must be called from a locked thread that execs.
+func UnshareIPCNamespace() error {
+	if err := unix.Unshare(unix.CLONE_NEWIPC); err != nil {
+		return fmt.Errorf("unshare the IPC namespace: %w", err)
+	}
+	return nil
+}
+
+// SetHostname moves the calling thread into a new UTS namespace and sets its
+// host name, leaving the host's unchanged. Like UnshareMountNamespace, it
+// must be called from a locked thread that execs.
+func SetHostname(name string) error {
+	if err := unix.Unshare(unix.CLONE_NEWUTS); err != nil {
+		return fmt.Errorf("unshare the UTS namespace: %w", err)
+	}
+	if err := unix.Sethostname([]byte(name)); err != nil {
+		return fmt.Errorf("set the host name: %w", err)
+	}
+	return nil
+}

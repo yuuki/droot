@@ -156,10 +156,17 @@ setuid bits are preserved.
    (`newinstance,ptmxmode=0666,mode=0620,gid=5`) on `/dev/pts` and a tmpfs on
    `/dev/shm` — unless `/dev` is on another mount than the root (e.g. a bind
    mount of the host's `/dev`), in which case droot leaves it alone.
-6. Lock the goroutine to its OS thread. This matters: the capability bounding
-   set is a per-thread attribute and `execve(2)` uses the calling thread's
-   attributes. Without the lock, the Go scheduler may run the `exec` on
-   another thread than the one that dropped the capabilities.
+6. The goroutine was locked to its OS thread before the first mount. This
+   matters: the capability bounding set is a per-thread attribute,
+   `execve(2)` uses the calling thread's attributes, and the namespaces of
+   `--unshare` are the thread's. Without the lock, the Go scheduler may run
+   the `exec` on another thread than the one that dropped the capabilities.
+   Before mounting, droot also takes an exclusive `flock(2)` on the root
+   directory (released at the exec: the descriptor is close-on-exec), and
+   with `--unshare` moves the thread to a new mount namespace whose mounts
+   are slaves of the host's. Every mount droot makes is remembered by
+   descriptor: if anything fails before the exec, they are detached again,
+   newest first.
 7. `chroot(2)` into the root and `chdir(2)` to the working directory.
 8. Merge the environment: the image's, then `--env-file`, then `--env`, plus
    the defaults of `PATH`, `HOME`, `USER` and `LOGNAME`.

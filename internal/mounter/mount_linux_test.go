@@ -599,3 +599,58 @@ func TestProtectKernelFS(t *testing.T) {
 		t.Error("the host's /sys and /proc/sys must stay writable")
 	}
 }
+
+func TestRollback(t *testing.T) {
+	dir := privilegedDir(t)
+	host := filepath.Join(dir, "host")
+	root := filepath.Join(dir, "root")
+	for _, d := range []string{host, root} {
+		if err := os.Mkdir(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r, err := osutil.OpenRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+
+	// A first run leaves /data mounted.
+	first := NewMounter(r)
+	if err := first.BindMount(host, "/data", BindOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	first.Release()
+
+	// A second run reuses it, mounts more, then fails.
+	m := NewMounter(r)
+	defer func() { _, _ = m.UmountAll() }()
+	if err := m.BindMount(host, "/data", BindOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.MountSysProc(); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.ProtectKernelFS(); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.MountFS("tmpfs", "/tmp", FSOptions{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.BindMount(host, "/data/inner", BindOptions{ReadOnly: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	mounts, err := m.Mounts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{filepath.Join(root, "data")}; !slices.Equal(mounts, want) {
+		t.Fatalf("after the rollback: %q, want only the mount of the first run %q", mounts, want)
+	}
+	if err := m.Rollback(); err != nil {
+		t.Fatalf("a second rollback has nothing to do: %v", err)
+	}
+}

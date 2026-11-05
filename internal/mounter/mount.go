@@ -20,6 +20,9 @@ import (
 type Mounter struct {
 	rootDir string
 	root    *osutil.Root
+	// made are descriptors of the mounts made by this Mounter, for
+	// Rollback.
+	made []*os.File
 }
 
 // NewMounter returns a Mounter for root, whose path must have been resolved

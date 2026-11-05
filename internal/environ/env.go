@@ -151,6 +151,14 @@ func Merge(base, overrides []string) ([]string, error) {
 	return merged, nil
 }
 
+// SetDefault returns env with KEY=value appended unless key is already set.
+func SetDefault(env []string, key, value string) []string {
+	if _, ok := Lookup(env, key); ok {
+		return env
+	}
+	return append(env, key+"="+value)
+}
+
 // Lookup returns the value of key in env.
 func Lookup(env []string, key string) (string, bool) {
 	value, found := "", false

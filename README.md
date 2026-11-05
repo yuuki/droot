@@ -203,6 +203,10 @@ In order, droot:
 | `--cap-add CAP` | Also keep the capability `CAP` in the bounding set: a name with or without `CAP_`, in any case (`NET_RAW`, `cap_sys_ptrace`), or `ALL`. Repeatable. |
 | `--cap-drop CAP` | Drop `CAP` from the capabilities kept by default, or `ALL` of them (then `--cap-add` adds back). Repeatable. |
 | `--no-dropcaps` | Do not drop capabilities (dangerous). |
+| `--unshare` | Make the mounts in a private mount namespace: they are not visible on the host, disappear when `COMMAND` and its children have exited, and need no `droot umount`. Host mounts made later still propagate into the container. |
+| `--unshare-ipc` | Run `COMMAND` in a private IPC namespace (System V IPC objects, POSIX message queues). |
+| `--hostname NAME` | Run `COMMAND` in a private UTS namespace whose host name is `NAME` (also the default of `HOSTNAME`). The host's name is not changed. |
+| `--read-only` | Make `ROOT_DIR` read-only for `COMMAND` (bind mounts and tmpfs keep their own mode: add `--tmpfs /tmp`, `--bind`, ... for what it writes). Implies `--unshare`, so that the read-only mount disappears with `COMMAND`. |
 | `--no-mask` | Leave `/proc` and `/sys` as they are: do not mask their sensitive files nor make `/proc/sys`, `/sys` and the like read-only (dangerous). Masks made by a previous run stay until `droot umount`. |
 | `--no-new-privileges` | Set the `no_new_privs` flag: setuid programs (`su`, `sudo`, ...) and file capabilities cannot grant privileges to `COMMAND`. Recommended with `--user`. |
 
@@ -215,6 +219,10 @@ Notes:
 - The supplementary groups are those listing the user in `ROOT_DIR/etc/group`.
 - Mounts left by a previous run are reused as they are: run `droot umount`
   first to change the options of a `--tmpfs` or a `--bind`.
+- If the setup fails, or `COMMAND` cannot be found, the mounts made by the
+  failed run are removed again; those of previous runs stay.
+- Concurrent `droot run` and `droot umount` on the same `ROOT_DIR` take turns
+  (`flock(2)` on the directory) until `COMMAND` is executed.
 - `COMMAND` is looked up in the `PATH` of the container environment (falling
   back to `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`), not in
   the `PATH` of the shell that started droot.
@@ -233,6 +241,37 @@ droot umount --root ROOT_DIR
 Lazily unmounts every mount point below `ROOT_DIR`, deepest first, and fails
 if some cannot be unmounted. `ROOT_DIR` itself is never unmounted, so it can
 be a file system of its own. The command is idempotent and refuses `/`.
+
+### `droot status`
+
+```
+droot status --root ROOT_DIR
+```
+
+Lists the mount points below `ROOT_DIR` (what `droot umount` would remove) and
+the processes whose root directory is `ROOT_DIR` — `COMMAND`s started by
+`droot run` and their children — with their PID, uid and command line:
+
+```console
+$ sudo droot status --root /var/containers/app
+Mounts below /var/containers/app: 17
+  MOUNT POINT      TYPE      SOURCE     OPTIONS
+  /dev/pts         devpts    devpts     rw,nosuid,noexec,relatime
+  /dev/shm         tmpfs     tmpfs      rw,nosuid,nodev,noexec,relatime
+  /proc            proc      proc       rw,nosuid,nodev,noexec,relatime
+  /proc/acpi       tmpfs     tmpfs      ro,nosuid,nodev,noexec,relatime
+  /proc/keys       devtmpfs  devtmpfs   ro,relatime
+  ...
+  /sys             sysfs     sysfs      ro,relatime
+  /var/log/app     ext4      /dev/sda1  rw,relatime
+
+Processes in /var/containers/app: 1
+  PID   UID   COMMAND
+  4242  1500  /usr/local/bin/app --port 8080
+```
+
+Processes of a `droot run --unshare` are listed, but their mounts, private,
+are not.
 
 ### Global options
 

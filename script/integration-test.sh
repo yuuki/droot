@@ -175,6 +175,35 @@ assert_eq "FROM scratch image with an unknown numeric uid" \
   "$("$DROOT" run --root "$WORK/scratch" --user 4242 --group 4343 -- /busybox sh -c 'echo "$GREETING $HOME ${USER-nouser}"; /busybox id')" \
   "$(printf 'no shell here / nouser\nuid=4242 gid=4343 groups=4343')"
 
+echo "# mount lifecycle"
+"$DROOT" umount --root "$WORK/app"
+if "$DROOT" run --root "$WORK/app" --user root --bind "$WORK/data:/mnt/a" --bind "$WORK/nonexistent:/mnt/b" -- true 2>/dev/null; then
+  fail "a run with a missing bind source should fail"
+fi
+assert_eq "a failed setup removes the mounts it made" "$(mounts_under "$WORK/app")" "0"
+if "$DROOT" run --root "$WORK/app" --user root -- no-such-command 2>/dev/null; then
+  fail "running a missing command should fail"
+fi
+assert_eq "a missing COMMAND removes the mounts made for it" "$(mounts_under "$WORK/app")" "0"
+assert_eq "--unshare: mounts in a private namespace" \
+  "$("$DROOT" run --root "$WORK/app" --user root --unshare --tmpfs /tmp -- sh -c 'stat -f -c %T /proc /tmp'; mounts_under "$WORK/app")" \
+  "$(printf 'proc\ntmpfs\n0')"
+assert_eq "--hostname" \
+  "$("$DROOT" run --root "$WORK/app" --user root --unshare --hostname droot-e2e -- sh -c 'echo "$(hostname) $HOSTNAME"'; [[ $(hostname) != droot-e2e ]] && echo host-unchanged)" \
+  "$(printf 'droot-e2e droot-e2e\nhost-unchanged')"
+assert_eq "--read-only" \
+  "$("$DROOT" run --root "$WORK/app" --user root --read-only --tmpfs /tmp -- sh -c 'touch /x 2>/dev/null || echo ro; touch /tmp/x && echo tmp-ok'; mounts_under "$WORK/app"; touch "$WORK/app/x" && echo host-rw)" \
+  "$(printf 'ro\ntmp-ok\n0\nhost-rw')"
+rm -f "$WORK/app/x"
+"$DROOT" run --root "$WORK/app" --user root -- sleep 30 &
+sleeper=$!
+for _ in $(seq 50); do "$DROOT" status --root "$WORK/app" | grep -q 'sleep 30' && break; sleep 0.1; done
+status=$("$DROOT" status --root "$WORK/app")
+kill "$sleeper"; wait "$sleeper" 2>/dev/null || true
+grep -q "^Processes in $WORK/app: 1" <<<"$status" && grep -q "sleep 30" <<<"$status" && grep -qE '^ +/proc +proc' <<<"$status" ||
+  fail "droot status: $status"
+echo "ok - droot status"
+
 echo "# umount"
 mount --bind "$WORK/data" "$WORK/app2/mnt"
 [[ $(mounts_under "$WORK/app") -gt 0 ]] || fail "run should leave mounts behind"

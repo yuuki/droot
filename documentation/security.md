@@ -10,7 +10,7 @@ running on the host with a different root directory.
 | Aspect | droot | Docker (default) |
 |---|---|---|
 | File system root | `chroot(2)` | `pivot_root(2)` in a mount namespace |
-| Mounts | Made in the host's mount namespace; persist after exit | Private mount namespace |
+| Mounts | Made in the host's mount namespace and persist after exit; private with `--unshare` | Private mount namespace |
 | Processes | Host PID namespace: `/proc` shows every host process | PID namespace |
 | Network | Host network | Network namespace |
 | Users | Host user IDs | Host user IDs (or a user namespace) |

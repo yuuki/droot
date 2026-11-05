@@ -23,7 +23,7 @@ func umountCommand() *cli.Command {
 	}
 }
 
-func doUmount(_ context.Context, cmd *cli.Invocation) error {
+func doUmount(ctx context.Context, cmd *cli.Invocation) error {
 	setup(cmd)
 	if cmd.String("root") == "" {
 		return cmd.UsageError("--root is required")
@@ -35,6 +35,14 @@ func doUmount(_ context.Context, cmd *cli.Invocation) error {
 	if err != nil {
 		return err
 	}
+	// Wait for a droot run that is setting the root up.
+	unlock, err := osutil.LockDir(ctx, rootDir, func() {
+		log.Infof("waiting for another droot working on %s", rootDir)
+	})
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	root, err := osutil.OpenRoot(rootDir)
 	if err != nil {
 		return err

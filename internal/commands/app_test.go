@@ -179,6 +179,9 @@ func TestUsageErrors(t *testing.T) {
 		{"export", "a", "b"},               // two images
 		{"umount"},                         // no --root
 		{"umount", "--root", "/", "extra"}, // stray argument
+		{"status"},                         // no --root
+		{"status", "--root", "/tmp", "x"},  // stray argument
+		{"run", "--root", "/tmp", "--hostname", "", "true"},
 	} {
 		app := NewApp("test")
 		app.Stdout = io.Discard

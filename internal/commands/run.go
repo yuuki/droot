@@ -65,6 +65,14 @@ func runCommand() *cli.Command {
 				Usage: "also keep the capability CAP (e.g. NET_RAW, SYS_PTRACE, or ALL) in the bounding set"},
 			{Name: "cap-drop", Kind: cli.Strings, Placeholder: "CAP",
 				Usage: "drop the capability CAP (e.g. CHOWN, or ALL) from the ones kept by default"},
+			{Name: "unshare", Kind: cli.Bool,
+				Usage: "make the mounts in a private mount namespace: they disappear when COMMAND and its children exit, and need no 'droot umount'"},
+			{Name: "unshare-ipc", Kind: cli.Bool,
+				Usage: "run COMMAND in a private IPC namespace (System V IPC, POSIX message queues)"},
+			{Name: "hostname", Kind: cli.String, Placeholder: "NAME",
+				Usage: "run COMMAND in a private UTS namespace with the host name NAME"},
+			{Name: "read-only", Kind: cli.Bool,
+				Usage: "make the root directory read-only for COMMAND (implies --unshare); use --tmpfs or --bind for the paths it writes"},
 			{Name: "no-mask", Kind: cli.Bool,
 				Usage: "do not mask the sensitive files of /proc and /sys nor make /proc/sys, /sys and the like read-only (dangerous)"},
 			{Name: "no-new-privileges", Kind: cli.Bool,
@@ -203,7 +211,7 @@ type bindMount struct {
 	opts            mounter.BindOptions
 }
 
-func doRun(ctx context.Context, cmd *cli.Invocation) error {
+func doRun(ctx context.Context, cmd *cli.Invocation) (err error) {
 	setup(cmd)
 	if runtime.GOOS != "linux" {
 		return fmt.Errorf("droot run is only supported on Linux (running on %s)", runtime.GOOS)
@@ -215,6 +223,9 @@ func doRun(ctx context.Context, cmd *cli.Invocation) error {
 	}
 	if cmd.String("root") == "" {
 		return cmd.UsageError("--root is required")
+	}
+	if cmd.IsSet("hostname") && (cmd.String("hostname") == "" || len(cmd.String("hostname")) > 64) {
+		return cmd.UsageError("--hostname must have 1 to 64 characters")
 	}
 	workdir := cmd.String("workdir")
 	if cmd.IsSet("workdir") && !filepath.IsAbs(workdir) {
@@ -285,7 +296,7 @@ func doRun(ctx context.Context, cmd *cli.Invocation) error {
 	if err != nil {
 		return err
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }() // root may be opened again below
 
 	// The image configuration saved by droot export, if any, gives the
 	// defaults of COMMAND, --user and --workdir, and the environment.
@@ -303,6 +314,50 @@ func doRun(ctx context.Context, cmd *cli.Invocation) error {
 	if os.Geteuid() != 0 {
 		return errors.New("droot run must be run as root (it needs to mount, chroot and switch users)")
 	}
+
+	// From now on and up to the exec, everything happens on this OS
+	// thread: the capability bounding set is a per-thread attribute, and
+	// so are the namespaces of --unshare. The thread is never unlocked;
+	// on error the process exits.
+	runtime.LockOSThread()
+	// Serialize the setup of concurrent runs on the same root (they would
+	// race on the --cp copies and on the creation of mount points and
+	// devices). The lock is released at the exec.
+	unlock, err := osutil.LockDir(ctx, rootDir, func() {
+		log.Infof("waiting for another droot working on %s", rootDir)
+	})
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	readOnly := cmd.Bool("read-only")
+	if cmd.Bool("unshare") || readOnly {
+		if err := osutil.UnshareMountNamespace(); err != nil {
+			return err
+		}
+		if readOnly {
+			if err := mounter.BindRootOnItself(rootDir); err != nil {
+				return err
+			}
+		}
+		// The descriptor of the root refers to a mount of the host's
+		// namespace, where this thread can no longer mount.
+		_ = root.Close()
+		if root, err = osutil.OpenRoot(rootDir); err != nil {
+			return err
+		}
+	}
+	if cmd.Bool("unshare-ipc") {
+		if err := osutil.UnshareIPCNamespace(); err != nil {
+			return err
+		}
+	}
+	if cmd.IsSet("hostname") {
+		if err := osutil.SetHostname(cmd.String("hostname")); err != nil {
+			return err
+		}
+	}
+
 	userSpec, groupSpec := cmd.String("user"), cmd.String("group")
 	imageUser := !cmd.IsSet("user") && cfg != nil && cfg.User != ""
 	if imageUser {
@@ -354,8 +409,20 @@ func doRun(ctx context.Context, cmd *cli.Invocation) error {
 	}
 	log.Debugf("running as uid=%d gid=%d groups=%v", cred.UID, cred.GID, cred.Groups)
 	env = defaultEnv(env, cred)
+	if cmd.IsSet("hostname") {
+		env = environ.SetDefault(env, "HOSTNAME", cmd.String("hostname"))
+	}
 
 	mnt := mounter.NewMounter(root)
+	// If anything fails before COMMAND is executed, remove the mounts made
+	// so far (mounts of a previous run that were reused are kept).
+	defer func() {
+		if err != nil {
+			if rbErr := mnt.Rollback(); rbErr != nil {
+				log.Warnf("could not remove the mounts made before the failure (use 'droot umount'): %v", rbErr)
+			}
+		}
+	}()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -412,6 +479,11 @@ func doRun(ctx context.Context, cmd *cli.Invocation) error {
 	shm := !slices.ContainsFunc(tmpfs, func(t tmpfsMount) bool { return t.path == "/dev/shm" })
 	if err := setupDev(root, mnt, shm); err != nil {
 		return err
+	}
+	if readOnly {
+		if err := mnt.RemountRootReadonly(); err != nil {
+			return err
+		}
 	}
 
 	return execInRoot(ctx, rootDir, argv, env, cred, execOptions{
@@ -592,17 +664,23 @@ type execOptions struct {
 
 // execInRoot chroots into rootDir, drops privileges and executes argv. It only
 // returns on error.
+//
+// The caller must have locked the goroutine to its OS thread: the capability
+// bounding set is a per-thread attribute and execve(2) uses the calling
+// thread's.
 func execInRoot(ctx context.Context, rootDir string, argv, env []string, cred *identity.Credential, opts execOptions) error {
-	// The capability bounding set is a per-thread attribute and execve(2)
-	// uses the calling thread's: stay on this OS thread until exec. The
-	// thread is never unlocked; on error the process exits.
-	runtime.LockOSThread()
-
 	if err := osutil.Chroot(rootDir); err != nil {
 		return err
 	}
 	if err := os.Chdir(opts.workdir); err != nil {
 		return fmt.Errorf("working directory: %w", err)
+	}
+	// Fail on a missing COMMAND while droot is still privileged, so that
+	// the mounts it made can be removed. It is looked up again below with
+	// the credentials of COMMAND.
+	pathEnv, _ := environ.Lookup(env, "PATH")
+	if _, err := osutil.LookPath(argv[0], pathEnv, osutil.IsExecutable); err != nil {
+		return err
 	}
 
 	if opts.dropCaps {
@@ -625,7 +703,6 @@ func execInRoot(ctx context.Context, rootDir string, argv, env []string, cred *i
 	// Resolve the command with the container's PATH and the new
 	// credentials, not with the PATH of the (sudo) environment droot was
 	// started from.
-	pathEnv, _ := environ.Lookup(env, "PATH")
 	argv0, err := osutil.LookPath(argv[0], pathEnv, osutil.IsExecutable)
 	if err != nil {
 		return err

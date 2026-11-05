@@ -16,7 +16,7 @@ func NewApp(version string) *cli.App {
 		Version: version,
 		Description: "droot exports the file system of a Docker image as a tar archive (export),\n" +
 			"runs a command inside an extracted archive with chroot(2) (run),\n" +
-			"and cleans up the mounts made by run (umount).",
+			"cleans up the mounts made by run (umount) and shows them (status).",
 		Flags: []*cli.Flag{
 			{
 				Name:    "debug",
@@ -30,6 +30,7 @@ func NewApp(version string) *cli.App {
 			exportCommand(),
 			runCommand(),
 			umountCommand(),
+			statusCommand(),
 		},
 	}
 }

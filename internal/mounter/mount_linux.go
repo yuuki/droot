@@ -21,8 +21,13 @@ import (
 // droot <= 0.7).
 const keepFile = ".droot.keep"
 
+// readMountInfo returns the mounts of the calling thread's mount namespace,
+// which differs from the process's after UnshareMountNamespace.
 func readMountInfo() ([]MountInfo, error) {
-	f, err := os.Open("/proc/self/mountinfo")
+	f, err := os.Open("/proc/thread-self/mountinfo")
+	if errors.Is(err, fs.ErrNotExist) {
+		f, err = os.Open("/proc/self/mountinfo") // Linux < 3.17
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -127,7 +132,7 @@ func mount(source, target, fstype string, flags uintptr, data string) error {
 // host's peer group, and the mounts made under it in the container (e.g. a
 // read-only bind inside a read-write one) would propagate back to the host's
 // directory — without the read-only flag, which does not propagate.
-func mountOn(t *osutil.MountTarget, source, fstype string, flags uintptr, data string, replace bool) (*os.File, error) {
+func (m *Mounter) mountOn(t *osutil.MountTarget, source, fstype string, flags uintptr, data string, replace bool) (*os.File, error) {
 	target := t.File
 	mounted, err := isMountRoot(t.ParentFd(), int(target.Fd()))
 	if err != nil {
@@ -169,6 +174,9 @@ func mountOn(t *osutil.MountTarget, source, fstype string, flags uintptr, data s
 	if ok, err := isMountRoot(t.ParentFd(), int(f.Fd())); err != nil || !ok {
 		_ = f.Close()
 		return nil, fmt.Errorf("mount on %s did not take effect (raced?)", t.File.Name())
+	}
+	if !mounted {
+		m.track(f)
 	}
 	propagation := uintptr(unix.MS_SLAVE)
 	if flags&unix.MS_REC != 0 {
@@ -223,7 +231,7 @@ func (m *Mounter) MountSysProc() error {
 		return err
 	}
 	defer proc.Close()
-	p, err := mountOn(proc, "proc", "proc", unix.MS_NOSUID|unix.MS_NODEV|unix.MS_NOEXEC, "", false)
+	p, err := m.mountOn(proc, "proc", "proc", unix.MS_NOSUID|unix.MS_NODEV|unix.MS_NOEXEC, "", false)
 	if err != nil {
 		return err
 	}
@@ -234,7 +242,7 @@ func (m *Mounter) MountSysProc() error {
 		return err
 	}
 	defer sys.Close()
-	s, err := mountOn(sys, "/sys", "", unix.MS_BIND|unix.MS_REC, "", false) // made an rslave mount
+	s, err := m.mountOn(sys, "/sys", "", unix.MS_BIND|unix.MS_REC, "", false) // made an rslave mount
 	if err != nil {
 		return err
 	}
@@ -281,13 +289,13 @@ func (m *Mounter) ProtectKernelFS() error {
 	}
 	for _, p := range maskedPaths {
 		b, rel := base(p)
-		if err := maskPath(b, rel, p); err != nil {
+		if err := m.maskPath(b, rel, p); err != nil {
 			return fmt.Errorf("mask %s: %w", p, err)
 		}
 	}
 	for _, p := range readonlyPaths {
 		b, rel := base(p)
-		if err := readonlyPath(b, rel, p); err != nil {
+		if err := m.readonlyPath(b, rel, p); err != nil {
 			return fmt.Errorf("make %s read-only: %w", p, err)
 		}
 	}
@@ -346,7 +354,7 @@ func openBelow(base *os.File, rel string) (parent, fd int, err error) {
 	return -1, -1, unix.EINVAL
 }
 
-func maskPath(base *os.File, rel, display string) error {
+func (m *Mounter) maskPath(base *os.File, rel, display string) error {
 	parent, fd, err := openBelow(base, rel)
 	if errors.Is(err, unix.ENOENT) {
 		log.Debugf("not masking %s: not present", display)
@@ -366,17 +374,25 @@ func maskPath(base *os.File, rel, display string) error {
 	}
 	ro := uintptr(unix.MS_RDONLY | unix.MS_NOSUID | unix.MS_NODEV | unix.MS_NOEXEC)
 	if st.Mode&unix.S_IFMT == unix.S_IFDIR {
-		return mount("tmpfs", osutil.FdPath(fd), "tmpfs", ro, "size=4k,mode=0555")
+		if err := mount("tmpfs", osutil.FdPath(fd), "tmpfs", ro, "size=4k,mode=0555"); err != nil {
+			return err
+		}
+		f, err := reopenMount(parent, rel, display)
+		if err != nil {
+			return err
+		}
+		m.track(f)
+		return f.Close()
 	}
 	// Read-only, so that chmod/chown through the mask cannot change the
 	// host's /dev/null.
 	if err := mount("/dev/null", osutil.FdPath(fd), "", unix.MS_BIND, ""); err != nil {
 		return err
 	}
-	return remountReopened(parent, rel, display)
+	return m.remountReopened(parent, rel, display, true)
 }
 
-func readonlyPath(base *os.File, rel, display string) error {
+func (m *Mounter) readonlyPath(base *os.File, rel, display string) error {
 	parent, fd, err := openBelow(base, rel)
 	if errors.Is(err, unix.ENOENT) {
 		return nil
@@ -395,22 +411,76 @@ func readonlyPath(base *os.File, rel, display string) error {
 			return err
 		}
 	}
-	return remountReopened(parent, rel, display)
+	return m.remountReopened(parent, rel, display, !mounted)
 }
 
-// remountReopened makes the mount just made on the last component of rel,
-// in the directory parent, read-only.
-func remountReopened(parent int, rel, display string) error {
+// reopenMount opens the mount just made on the last component of rel, in the
+// directory parent.
+func reopenMount(parent int, rel, display string) (*os.File, error) {
 	fd, err := unix.Openat(parent, path.Base(rel), unix.O_PATH|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, err
+	}
+	f := os.NewFile(uintptr(fd), display)
+	if ok, err := isMountRoot(parent, fd); err != nil || !ok {
+		_ = f.Close()
+		return nil, fmt.Errorf("mount on %s did not take effect (raced?)", display)
+	}
+	return f, nil
+}
+
+// remountReopened makes the mount on the last component of rel, in the
+// directory parent, read-only, and tracks it if it was made now.
+func (m *Mounter) remountReopened(parent int, rel, display string, made bool) error {
+	f, err := reopenMount(parent, rel, display)
 	if err != nil {
 		return err
 	}
-	f := os.NewFile(uintptr(fd), display)
 	defer f.Close()
-	if ok, err := isMountRoot(parent, fd); err != nil || !ok {
-		return fmt.Errorf("mount on %s did not take effect (raced?)", display)
+	if made {
+		m.track(f)
 	}
 	return remountReadonly(f)
+}
+
+// track records a mount made by this Mounter, for Rollback.
+func (m *Mounter) track(f *os.File) {
+	fd, err := unix.FcntlInt(f.Fd(), unix.F_DUPFD_CLOEXEC, 0)
+	if err != nil {
+		log.Debugf("cannot track the mount on %s: %v", f.Name(), err)
+		return
+	}
+	m.made = append(m.made, os.NewFile(uintptr(fd), f.Name()))
+}
+
+// Rollback detaches the mounts made by this Mounter, newest first, so that
+// a droot run that fails before executing COMMAND leaves the mounts as it
+// found them. Reused mounts are left alone. Mounts are unmounted through
+// descriptors kept since they were made, never by path.
+func (m *Mounter) Rollback() error {
+	var errs []error
+	for _, f := range slices.Backward(m.made) {
+		err := unix.Unmount(osutil.FdPath(int(f.Fd())), unix.MNT_DETACH)
+		switch {
+		case err == nil:
+			log.Debugf("rolled back the mount on %s", f.Name())
+		case errors.Is(err, unix.EINVAL):
+			// Already detached together with its parent.
+		default:
+			errs = append(errs, &fs.PathError{Op: "umount", Path: f.Name(), Err: err})
+		}
+		_ = f.Close()
+	}
+	m.made = nil
+	return errors.Join(errs...)
+}
+
+// Release forgets the mounts made so far: they are kept.
+func (m *Mounter) Release() {
+	for _, f := range m.made {
+		_ = f.Close()
+	}
+	m.made = nil
 }
 
 // BindMount bind mounts hostPath (a directory or a file) on containerPath
@@ -440,7 +510,7 @@ func (m *Mounter) BindMount(hostPath, containerPath string, opts BindOptions) er
 	if opts.Recursive {
 		flags |= unix.MS_REC
 	}
-	mnt, err := mountOn(t, hostPath, "", flags, "", opts.Replace)
+	mnt, err := m.mountOn(t, hostPath, "", flags, "", opts.Replace)
 	if err != nil {
 		return err
 	}
@@ -488,7 +558,7 @@ func (m *Mounter) MountFS(fstype, containerPath string, opts FSOptions, check os
 	if opts.NoAtime {
 		flags |= unix.MS_NOATIME
 	}
-	mnt, err := mountOn(t, fstype, fstype, flags, strings.Join(opts.Data, ","), false)
+	mnt, err := m.mountOn(t, fstype, fstype, flags, strings.Join(opts.Data, ","), false)
 	if err != nil {
 		return err
 	}
@@ -591,6 +661,38 @@ func lockedFlags(stFlags uint64) uintptr {
 		}
 	}
 	return flags
+}
+
+// BindRootOnItself bind mounts the directory dir on itself, recursively, so
+// that it can be made read-only with RemountRootReadonly. droot umount never
+// unmounts a root directory itself, so this is only meant for a private
+// mount namespace (UnshareMountNamespace). A Root opened on dir before must
+// be opened again to see the new mount.
+func BindRootOnItself(dir string) error {
+	return mount(dir, dir, "", unix.MS_BIND|unix.MS_REC, "")
+}
+
+// RemountRootReadonly makes the mount of the root directory read-only,
+// keeping its other flags; the mounts below it are not changed.
+func (m *Mounter) RemountRootReadonly() error {
+	fd, err := unix.FcntlInt(uintptr(m.root.Fd()), unix.F_DUPFD_CLOEXEC, 0)
+	if err != nil {
+		return err
+	}
+	f := os.NewFile(uintptr(fd), m.rootDir)
+	defer f.Close()
+	return remountReadonly(f)
+}
+
+// MountInfos returns the mounts below the root, parents first.
+func (m *Mounter) MountInfos() ([]MountInfo, error) {
+	mounts, err := readMountInfo()
+	if err != nil {
+		return nil, err
+	}
+	below := mountsBelow(mounts, m.rootDir)
+	slices.Reverse(below)
+	return below, nil
 }
 
 // Mounts returns the mount points below the root, deepest first.

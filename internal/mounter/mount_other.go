@@ -32,6 +32,21 @@ func (m *Mounter) BindMount(string, string, BindOptions) error { return unsuppor
 // MountFS is only supported on Linux.
 func (m *Mounter) MountFS(string, string, FSOptions, osutil.DirCheck) error { return unsupported() }
 
+// Rollback is only supported on Linux.
+func (m *Mounter) Rollback() error { return unsupported() }
+
+// Release is only supported on Linux.
+func (m *Mounter) Release() {}
+
+// BindRootOnItself is only supported on Linux.
+func BindRootOnItself(string) error { return unsupported() }
+
+// RemountRootReadonly is only supported on Linux.
+func (m *Mounter) RemountRootReadonly() error { return unsupported() }
+
+// MountInfos is only supported on Linux.
+func (m *Mounter) MountInfos() ([]MountInfo, error) { return nil, unsupported() }
+
 // Mounts is only supported on Linux.
 func (m *Mounter) Mounts() ([]string, error) { return nil, unsupported() }
 

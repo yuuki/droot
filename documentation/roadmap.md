@@ -19,9 +19,9 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
 - **[security]** No seccomp filter or LSM profile, and `no_new_privs` is
   opt-in (`--no-new-privileges`): by default setuid-root binaries in the image
   regain the capabilities left in the bounding set.
-- **[bug]** Mounts are made in the host's mount namespace and persist after
-  the command exits; a failure halfway leaves the mounts already made. Users
-  must remember `droot umount`, and concurrent runs share mounts.
+- **[ux]** By default, mounts are made in the host's mount namespace and
+  persist after the command exits: users must remember `droot umount`, and
+  concurrent runs share mounts (`--unshare` avoids both).
 - **[compat]** `STOPSIGNAL` is saved but not used (droot does not supervise
   COMMAND), and `HOSTNAME` is not set.
 - **[compat]** Nothing is created in `/dev` when it is a mount point, including
@@ -31,8 +31,6 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
   `.droot.keep` file in empty host directories. Decide whether to keep it.
 - **[compat]** `droot run` needs real root; rootless operation with user
   namespaces is not supported.
-- **[ux]** Two concurrent `droot run` on the same root race on `--cp` copies
-  and device creation (harmless in practice, but not guaranteed).
 
 ### `droot export`
 
@@ -61,18 +59,16 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
 
 ### Running
 
-- **[feature]** `--unshare` (opt-in): a private mount namespace so that mounts
-  disappear with the process, optionally PID/UTS/IPC namespaces, keeping the
-  default as simple as today.
+- **[feature]** A PID namespace (`--unshare` covers the mount, IPC and UTS
+  namespaces): droot would have to stay as the parent of COMMAND instead of
+  replacing itself with it.
 - **[feature]** An optional seccomp profile (e.g. Docker's default); consider
   enabling `no_new_privs` by default (with an opt-out: it breaks `sudo`/`su`).
 - **[feature]** Bind propagation modes (`shared`, `private`, ...); droot makes
   every mount a slave mount today.
 - **[feature]** Resource limits: `--ulimit`, cgroup v2 (`--memory`, `--cpus`,
   `--pids-limit`), or documented `systemd-run --scope` integration.
-- **[feature]** `droot status --root DIR` (mounts and processes using a root)
-  and `droot umount --all`.
-- **[feature]** Roll back the mounts made by a failed `droot run`.
+- **[feature]** `droot umount --all`.
 - **[feature]** Rootless mode with user namespaces.
 
 ### Building and shipping

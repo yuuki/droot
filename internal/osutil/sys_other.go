@@ -31,3 +31,12 @@ func IsExecutable(string) error { return unsupported("exec") }
 
 // Exec is only supported on Linux.
 func Exec(string, []string, []string) error { return unsupported("exec") }
+
+// UnshareMountNamespace is only supported on Linux.
+func UnshareMountNamespace() error { return unsupported("namespaces") }
+
+// UnshareIPCNamespace is only supported on Linux.
+func UnshareIPCNamespace() error { return unsupported("namespaces") }
+
+// SetHostname is only supported on Linux.
+func SetHostname(string) error { return unsupported("namespaces") }
