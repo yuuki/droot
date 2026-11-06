@@ -17,7 +17,7 @@ Droot は chroot ベースのシンプルなアプリケーションコンテナ
 
 [Docker](https://www.docker.com) は、アプリケーションのデプロイプロセスについて Build、Ship、Run という強力なコンセプトを持っています。しかし、特に本番環境では、Docker のランタイムが複雑すぎて、現在の私たちの手に負えないケースが多くあります。Droot は、Linux の名前空間やユニオンファイルシステムといった複雑なスタックを使わない、よりシンプルなコンテナランタイムを提供します。`docker` でビルドしたコンテナイメージの実行には `chroot(2)`、Linux の `capabilities(7)`、バインドマウントというシンプルな Linux の機能を使い、その配布にはただの tar アーカイブを使います。
 
-- **Build**: `docker build` でイメージをビルドし、`droot export` で tar アーカイブに変換します。
+- **Build**: `docker build`（または OCI イメージをビルドできる任意のツール）でイメージをビルドし、`droot export` で tar アーカイブに変換します。変換元は Docker デーモン、レジストリ、`docker save` のアーカイブ、OCI レイアウトのいずれでも構いません。
 - **Ship**: アーカイブを任意のストレージ（Amazon S3、HTTP、rsync など）にアップロードし、各サーバーでダウンロードします。
 - **Run**: `droot run` = `chroot(2)` + capabilities の削減 + バインドマウント。
 
@@ -30,8 +30,9 @@ Droot は意図的に、Docker のようなプロセス、ネットワーク、�
 
 | コマンド | 要件 |
 |---|---|
-| `droot export` | Linux または macOS と、Docker Engine API に対応したデーモン: Docker Engine、Docker Desktop、Colima、OrbStack、Podman（`podman system service`）など |
-| `droot run`, `droot umount` | Linux、root 権限 |
+| `droot export` | Linux または macOS。デーモンのイメージには、Docker Engine API に対応したデーモン（Docker Engine、Docker Desktop、Colima、OrbStack、Podman（`podman system service`）など）が必要です。レジストリのイメージ、`docker save` のアーカイブ、OCI レイアウトにはデーモンは不要です。 |
+| `droot run` | Linux。root、または[ユーザー名前空間](#root-を使わない実行)を使える任意のユーザー（rootless） |
+| `droot umount` | Linux、root 権限 |
 
 ソースからビルドするには Go 1.26 以降が必要です。
 
@@ -133,23 +134,34 @@ $ sudo capze --keep 5 /tmp/app /var/containers/app
 ### `droot export`
 
 ```
-droot export [-o FILE] [--platform PLATFORM] IMAGE[:TAG]
+droot export [-o FILE] [--platform PLATFORM] IMAGE
 ```
 
-ローカルの Docker イメージのファイルシステムを、tar アーカイブとして標準出力または `FILE` にエクスポートします。droot はイメージから一時的なコンテナを作成し（ただし**起動はしません**）、そのファイルシステムをストリームで読み出してから、コンテナを削除します。`droot run` が利用できるように、イメージの設定（`ENV`、`WORKDIR`、`USER`、`ENTRYPOINT`、`CMD`、`STOPSIGNAL`）はアーカイブ内の `/.droot/config.json` として保存され、環境変数は `/.drootenv`（古いバージョンの droot が読み込むファイル）としても保存されます。distroless や `FROM scratch` のイメージなど、シェルを含まないイメージにも対応しています。
+コンテナイメージのファイルシステムを、tar アーカイブとして標準出力または `FILE` にエクスポートします。`droot run` が利用できるように、イメージの設定（`ENV`、`WORKDIR`、`USER`、`ENTRYPOINT`、`CMD`、`STOPSIGNAL`）はアーカイブ内の `/.droot/config.json` として保存され、環境変数は `/.drootenv`（古いバージョンの droot が読み込むファイル）としても保存されます。distroless や `FROM scratch` のイメージなど、シェルを含まないイメージにも対応しています。
+
+`IMAGE` が Docker デーモンのイメージ（`NAME[:TAG]`、ID など）の場合、droot はイメージから一時的なコンテナを作成し（ただし**起動はしません**）、そのファイルシステムをストリームで読み出してから、コンテナを削除します。`IMAGE` には、[デーモンを使わずに](#docker-デーモンを使わないエクスポート)読み込む次のイメージも指定できます。
+
+| `IMAGE` | |
+|---|---|
+| `docker://[REGISTRY/]NAME[:TAG\|@DIGEST]` | レジストリのイメージ: Docker Hub（`docker://alpine:3.22`）、`ghcr.io` など |
+| `docker-archive:FILE[:NAME:TAG]` | `docker save` または `podman save` が書き出したアーカイブ |
+| `oci:DIR[:NAME]` | [OCI イメージレイアウト](https://github.com/opencontainers/image-spec/blob/main/image-layout.md)（`skopeo`、`buildah`、`docker buildx build --output type=oci,tar=false` などが書き出すもの） |
+| `oci-archive:FILE[:NAME]` | OCI イメージレイアウトの tar アーカイブ（Docker 25 以降の `docker save`、`podman save --format oci-archive` など） |
+
+名前がこれらと同じ形で始まるデーモンのイメージ（`oci:latest` など）は、`docker.io/library/oci:latest` のように完全な名前で指定してください。
 
 | オプション | 説明 |
 |---|---|
 | `-o`, `--output FILE` | アーカイブを標準出力ではなく `FILE` に書き出します（`-` は標準出力を意味します）。ファイルはアトミックに置き換えられるため、エクスポートが中断されても途中で切れたアーカイブが残ることはありません。通常の `> FILE` によるリダイレクトと同様に、新しいファイルは umask に従い、既存のファイルはモードと所有者を保持し、シンボリックリンクはたどられます。 |
-| `--platform PLATFORM` | マルチプラットフォームイメージのうち、指定したバリアント（例: `linux/amd64`）をエクスポートします。 |
-| `--pull` | 先に `IMAGE` をそのレジストリから pull します（`--platform` を指定した場合はそのバリアント）。`docker pull` と同様に、docker CLI の認証情報、つまりクレデンシャルヘルパー（`credHelpers`、`credsStore`）と `$DOCKER_CONFIG/config.json` の `auths` を使用します。タグを省略すると `latest` が pull されます。 |
+| `--platform PLATFORM` | マルチプラットフォームイメージのうち、指定したバリアント（例: `linux/amd64`、`linux/arm/v7`）をエクスポートします。デフォルトはデーモンのプラットフォーム、デーモンを使わない場合は droot が動作しているプラットフォームのバリアントです。 |
+| `--pull` | デーモンのイメージの場合: 先に `IMAGE` をそのレジストリからデーモンへ pull します（`--platform` を指定した場合はそのバリアント）。`docker pull` と同様に、docker CLI の認証情報、つまりクレデンシャルヘルパー（`credHelpers`、`credsStore`）と `$DOCKER_CONFIG/config.json` の `auths` を使用します。タグを省略すると `latest` が pull されます。 |
 | `--compress ALGO` | アーカイブを `gzip` または `zstd`（`zstd` コマンドを使用）で圧縮します。 |
 | `--checksum` | アーカイブ（書き出したとおりのもの。圧縮の有無は問いません）の SHA-256 チェックサムを、`sha256sum` の形式で `FILE.sha256` にも書き出します。`-o FILE` が必要です。root としてアーカイブを展開する前に、`sha256sum -c FILE.sha256` で検証してください。 |
-| `--reproducible` | アーカイブがイメージだけに依存するようにし、同じイメージを再度エクスポートしたときに同じバイト列が得られるようにします（キャッシュ、重複排除、署名のため）。更新時刻のうち `$SOURCE_DATE_EPOCH`（未設定の場合はイメージの作成時刻）より新しいものは、その時刻に設定されます（Docker がすべてのコンテナに作成するファイルと droot が追加するファイルの日時は、その時刻になります）。アクセス時刻と状態変更時刻は含めません。エントリの順序はデーモンが返す順序のままです。 |
+| `--reproducible` | アーカイブがイメージだけに依存するようにし、同じイメージを再度エクスポートしたときに同じバイト列が得られるようにします（キャッシュ、重複排除、署名のため）。更新時刻のうち `$SOURCE_DATE_EPOCH`（未設定の場合はイメージの作成時刻）より新しいものは、その時刻に設定されます（Docker がすべてのコンテナに作成するファイルと droot が追加するファイルの日時は、その時刻になります）。アクセス時刻と状態変更時刻は含めません。エントリの順序はデーモンが返す順序（またはレイヤーの順序）のままです。 |
 | `--exclude PATTERN` | `PATTERN` に一致するエントリと、一致したディレクトリ以下のすべてを除外します。`/` を含むパターンは絶対パス（`/usr/share/doc`、`/var/cache/apk/*`）に対して、`/` を含まないパターンはベース名（`*.pyc`）に対して照合されます。構文は Go の [`path.Match`](https://pkg.go.dev/path#Match) と同じです。除外されたファイルへのハードリンクも、警告を出したうえで除外されます。複数回指定できます。 |
-| `--drop-docker-files` | Docker がすべてのコンテナに追加するファイル、つまり `/.dockerenv` と、空のプレースホルダーである `/etc/hostname`、`/etc/hosts`、`/etc/resolv.conf`、`/dev/console` を除外します（`droot run` では `--cp` または `--bind-net-files` を使ってください）。 |
+| `--drop-docker-files` | Docker がすべてのコンテナに追加するファイル、つまり `/.dockerenv` と、空のプレースホルダーである `/etc/hostname`、`/etc/hosts`、`/etc/resolv.conf`、`/dev/console` を除外します（`droot run` では `--cp` または `--bind-net-files` を使ってください）。デーモンを使わずに読み込んだイメージには、これらのファイルはありません。 |
 
-`--pull` を指定しない場合、イメージはローカルに存在している必要があります（先に `docker pull` または `docker build` してください）。droot はアーカイブを端末に書き出すことを拒否します。標準エラー出力が端末の場合は、そこにエクスポート済みのサイズが表示されます。
+デーモンのイメージで `--pull` を指定しない場合、イメージはローカルに存在している必要があります（先に `docker pull` または `docker build` してください）。droot はアーカイブを端末に書き出すことを拒否します。標準エラー出力が端末の場合は、そこにエクスポート済みのサイズが表示されます。
 
 アーカイブに署名するには、お好みのツールでチェックサムファイルに署名してください（例: `cosign sign-blob --bundle app.tar.gz.sha256.sigstore.json app.tar.gz.sha256` や `minisign -Sm app.tar.gz.sha256`）。展開する前に、まず署名を、次にチェックサムを検証してください。
 
@@ -173,7 +185,8 @@ droot は次の順に処理を行います。
 
 | オプション | 説明 |
 |---|---|
-| `-r`, `--root ROOT_DIR` | chroot するルートディレクトリ（必須）。 |
+| `--config FILE` | オプションを `FILE`（例: `/etc/droot/app.toml`）から読み込みます。systemd ユニットには `droot run --config FILE` と書くだけで済みます（[`examples/droot/app.toml`](examples/droot/app.toml) を参照）。キーはオプションの長い名前（`root`、`user`、`bind`、`unshare` など）で、`command` で `COMMAND` を指定します。値は文字列、`true`/`false`、文字列の配列で、TOML のサブセットとして解釈されます（それ以外はエラーになります）。コマンドラインで指定したオプションが優先され、繰り返し指定できるオプションはファイルの値に追加されます。 |
+| `-r`, `--root ROOT_DIR` | chroot するルートディレクトリ（必須。コマンドラインまたは `--config` で指定）。 |
 | `-u`, `--user USER` | 実行するユーザーの名前または ID。デフォルトはイメージの `USER`（`USER app:staff` のようにグループも指定されている場合があります）、それがなければ droot 自身のユーザー（root）です。名前はまず `ROOT_DIR/etc/passwd` で検索され、次にホスト上（`/etc/passwd`、次に LDAP や SSSD など NSS が提供するユーザーのための `getent passwd`）で検索されます。そのため、名前がどのユーザーに対応するかはイメージが決めます（`root` 以外の名前が uid 0 に対応する場合、droot は警告を出します）。数値の ID はイメージに依存しません。未知の数値 ID も受け付けます。 |
 | `-g`, `--group GROUP` | 実行するグループの名前または ID。`--user` と同様に検索されます（`ROOT_DIR/etc/group`、ホストの `/etc/group`、`getent group`）。デフォルトは `--user` のプライマリグループです。`ROOT_DIR/etc/passwd` にエントリのない数値の `--user` の場合は、Docker と同様に droot 自身のグループ（通常は 0。警告が出ます）になります。 |
 | `-w`, `--workdir DIR` | `COMMAND` の作業ディレクトリ。コンテナ内の絶対パスで指定します。デフォルトはイメージの `WORKDIR`、それがなければ `/` です。ディレクトリは存在している必要があります。 |
@@ -193,7 +206,8 @@ droot は次の順に処理を行います。
 | `--hostname NAME` | ホスト名が `NAME` であるプライベートな UTS 名前空間で `COMMAND` を実行します（`NAME` は `HOSTNAME` のデフォルト値にもなります）。ホスト自体の名前は変更されません。 |
 | `--read-only` | `COMMAND` から見て `ROOT_DIR` を読み取り専用にします（バインドマウントと tmpfs はそれぞれのモードを保ちます。書き込みが必要な場所には `--tmpfs /tmp` や `--bind` などを追加してください）。読み取り専用のマウントが `COMMAND` とともに消えるように、`--unshare` も有効になります。 |
 | `--no-mask` | `/proc` と `/sys` をそのままにします。機密性の高いファイルのマスクも、`/proc/sys` や `/sys` などの読み取り専用化も行いません（危険）。以前の実行で行われたマスクは、`droot umount` するまで残ります。 |
-| `--no-new-privileges` | `no_new_privs` フラグを設定します。setuid プログラム（`su`、`sudo` など）やファイル capability によって `COMMAND` に権限が付与されることはなくなります。`--user` と併用することをおすすめします。 |
+| `--no-new-privileges` | `no_new_privs` フラグを設定します。setuid プログラム（`su`、`sudo` など）やファイル capability によって `COMMAND` に権限が付与されることはなくなります。デフォルトで有効です。`sudo` や `su` を必要とするアプリケーションでは `--no-new-privileges=false` で無効にできます。 |
+| `--seccomp PROFILE` | `default` を指定すると、Docker のデフォルトプロファイルと同様に、アプリケーションが本来行う必要のないシステムコールを拒否する seccomp フィルタを設定します。名前空間の作成（`unshare`、`setns`、名前空間フラグ付きの `clone`）、マウント、モジュールやカーネルのロード、キーリング、`bpf`、perf イベント、`userfaultfd`、io_uring、時刻の設定、スワップ、再起動などが `EPERM` で失敗します（`clone3` は C ライブラリが `clone` を使うよう `ENOSYS` で失敗します）。amd64、arm64、arm、386 に対応しています。他のアーキテクチャのプログラム（64 ビットカーネル上の 32 ビットプログラムなど）はシステムコールを一切実行できません。デフォルトの `unconfined` ではフィルタを設定しません。 |
 
 注意事項:
 
@@ -263,7 +277,20 @@ Processes in /var/containers/app: 1
   4242  1500  /usr/local/bin/app --port 8080
 ```
 
-`droot run --unshare` のプロセスは一覧に表示されますが、そのマウントはプライベートであるため表示されません。
+`droot run --unshare`（または rootless）のプロセスは一覧に表示されますが、そのマウントはプライベートであるため表示されません。
+
+### `droot unshare`
+
+```
+droot unshare [COMMAND [ARG...]]
+```
+
+root 以外のユーザー向けのコマンドです。[rootless](#root-を使わない実行) の `droot run` と同じ ID マッピングのユーザー名前空間で、`COMMAND`（デフォルトは `$SHELL`）を root として実行します。これにより、アーカイブのファイルの所有者がそのまま保たれます。
+
+```console
+$ droot unshare tar -xpf app.tar -C app
+$ droot unshare rm -rf app      # サブ ID が所有するファイル
+```
 
 <a id="global-options"></a>
 ### グローバルオプション
@@ -289,6 +316,44 @@ $ droot completion fish > ~/.config/fish/completions/droot.fish
 ```
 
 <a id="choosing-the-docker-daemon"></a>
+## root を使わない実行
+
+root 以外のユーザーが `droot run` を実行すると、**rootless** で動作します。droot は新しい[ユーザー名前空間](https://man7.org/linux/man-pages/man7/user_namespaces.7.html)の root として自分自身を再実行し（その名前空間に対してだけ、マウントや chroot の権限を持ちます）、`COMMAND` の終了を待ちます。受け取ったシグナルは `COMMAND` に転送し、その終了ステータスで終了します。名前空間の中では次のようになります。
+
+- 自分のユーザーが root になり、**サブ ID**（`/etc/subuid` と `/etc/subgid` の範囲。`newuidmap` と `newgidmap` コマンドでマッピングされます。Debian と Ubuntu では `uidmap` パッケージ、Fedora では `shadow-utils`）がユーザー 1、2、... になります。サブ ID がない場合、ユーザーは root だけです。`--user 0` で実行し、アーカイブは通常の `tar -xf` で展開してください。
+- マウントは `--unshare` と同じくプライベートなマウント名前空間で行われ、`COMMAND` とともに消えます。`droot umount` は不要です。
+- `/proc` とデバイスファイルはホストのもののバインドマウントです（新しい procfs には PID 名前空間が必要で、デバイスノードは作成できないため）。
+- ファイルの所有者はそのまま使われます。イメージのユーザーが自分のファイルを所有するように、アーカイブは `droot unshare tar -xpf` で展開し、`droot unshare rm -rf` で削除してください。root の場合は、これまでどおり `tar -xpf` で展開します。
+
+```console
+$ grep "^$USER:" /etc/subuid /etc/subgid
+/etc/subuid:alice:100000:65536
+/etc/subgid:alice:100000:65536
+$ mkdir app && droot unshare tar -xpf app.tar -C app
+$ droot run --root app --bind ~/app-data:/data
+```
+
+rootless では、ハードリミットを引き上げること（`--ulimit`）はできず、バインドマウントできるのは自分のユーザーが読めるものだけです。ディストリビューションによっては、非特権ユーザー名前空間が制限されています。Ubuntu 24.04 以降では、`kernel.apparmor_restrict_unprivileged_userns` が 0 であるか、AppArmor プロファイルが droot を許可していない限り、ユーザー名前空間でケーパビリティが使えません。それ以外の環境では `user.max_user_namespaces` と `kernel.unprivileged_userns_clone` を確認してください。ロックは `$XDG_RUNTIME_DIR/droot` に作成されます。
+
+systemd のユニット（ユーザーサービスなど）では `KillMode=mixed` を設定してください。systemd が `SIGTERM` をユニットのすべてのプロセスではなく droot だけに送り、droot がそれを `COMMAND` に転送します（設定しないと `COMMAND` は `SIGTERM` を 2 回受け取ります）。
+
+## Docker デーモンを使わないエクスポート
+
+`docker://`、`docker-archive:`、`oci:`、`oci-archive:` のイメージでは、`droot export` はデーモンを必要としません。Docker のない CI ランナーでも、Podman、Buildah、containerd のストアからでも（それぞれの `save` や `push` コマンドを介して）、レジストリから直接でもエクスポートできます。droot はイメージのマニフェスト（マルチプラットフォームイメージでは `--platform` のバリアント）を読み、コンテナエンジンと同じようにレイヤーを順に適用し（レイヤーの whiteout は下位レイヤーのファイルを削除します）、得られたファイルシステムを書き出します。
+
+```console
+$ droot export -o app.tar docker://ghcr.io/example/app:1.2.3
+$ droot export --platform linux/arm64 -o app-arm64.tar docker://registry.example.com/app@sha256:4f2c…
+$ docker save app:1.2.3 -o app-image.tar && droot export -o app.tar docker-archive:app-image.tar
+$ droot export -o app.tar oci:build/oci-layout:1.2.3
+```
+
+- マニフェスト、設定、レイヤー（格納されている形式と非圧縮の形式の両方）のダイジェストを検証します。ダイジェストによる参照（`NAME@sha256:…`）でイメージを固定できます。
+- レジストリには、`--pull` と同じく docker CLI の認証情報（`docker login`）でアクセスします。`localhost` とループバックアドレスのレジストリは平文の HTTP でも構いませんが、それ以外のレジストリは HTTPS である必要があります。`HTTPS_PROXY` と `NO_PROXY` に従います。
+- レジストリのレイヤーは、エクスポートの間 `$TMPDIR`（デフォルトは `/tmp`）にダウンロードされ、その後削除されます。zstd で圧縮されたレイヤーには `zstd` コマンドが必要です。
+- アーカイブにはイメージのファイルだけが含まれます。デーモンがすべてのコンテナに追加するファイル（`/.dockerenv`、プレースホルダーの `/etc/hostname`、`/etc/hosts`、`/etc/resolv.conf`、`/dev/console` など）は含まれず、イメージ自身の `/etc/hosts` や `/etc/hostname` があればそれが残ります。
+- アーカイブやレイアウトに複数のイメージがある場合は、1 つを指定します: `docker-archive:images.tar:app:1.2.3`、`oci:DIR:1.2.3`。
+
 ## Docker デーモンの選択
 
 `droot export` は、`docker` CLI と同じ方法でデーモンを探します。

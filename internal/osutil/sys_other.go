@@ -40,3 +40,15 @@ func UnshareIPCNamespace() error { return unsupported("namespaces") }
 
 // SetHostname is only supported on Linux.
 func SetHostname(string) error { return unsupported("namespaces") }
+
+// InUserNamespace is false outside Linux.
+func InUserNamespace() bool { return false }
+
+// UIDMapped is true outside Linux.
+func UIDMapped(int) bool { return true }
+
+// GIDMapped is true outside Linux.
+func GIDMapped(int) bool { return true }
+
+// SetgroupsAllowed is true outside Linux.
+func SetgroupsAllowed() bool { return true }

@@ -12,7 +12,7 @@ Type=exec
 Environment=DROOT_LOG_FORMAT=json
 ExecStartPre=/usr/local/bin/droot umount --root /var/containers/app/current
 ExecStart=/usr/local/bin/droot run --root /var/containers/app/current \
-    --user app --no-new-privileges \
+    --user app \
     --robind /etc/app/config.yml:/app/config.yml \
     --bind /var/log/app \
     --cp \

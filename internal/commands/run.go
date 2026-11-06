@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"maps"
 	"os"
@@ -15,12 +16,15 @@ import (
 	"syscall"
 
 	"github.com/yuuki/droot/internal/cli"
+	"github.com/yuuki/droot/internal/conffile"
 	"github.com/yuuki/droot/internal/environ"
 	"github.com/yuuki/droot/internal/identity"
 	"github.com/yuuki/droot/internal/imageconfig"
 	"github.com/yuuki/droot/internal/log"
 	"github.com/yuuki/droot/internal/mounter"
 	"github.com/yuuki/droot/internal/osutil"
+	"github.com/yuuki/droot/internal/seccomp"
+	"github.com/yuuki/droot/internal/userns"
 )
 
 func runCommand() *cli.Command {
@@ -37,10 +41,28 @@ func runCommand() *cli.Command {
 			"WORKDIR are the defaults of --user and --workdir.\n\n" +
 			"The options must come before COMMAND: everything from COMMAND on is passed\n" +
 			"to it verbatim. Mounts are left in place after COMMAND exits; remove them\n" +
-			"with 'droot umount'. Must be run as root.",
+			"with 'droot umount'.\n\n" +
+			"Run by another user than root, droot runs rootless: it runs again as root of\n" +
+			"a new user namespace, where your user is root and your subordinate IDs\n" +
+			"(/etc/subuid and /etc/subgid, with the newuidmap and newgidmap commands) are\n" +
+			"the other users, and waits for COMMAND, passing signals on to it. The mounts\n" +
+			"are private (as with --unshare), /proc and the device files are bind mounts of\n" +
+			"the host's. Extract archives with 'droot unshare' so that their files keep\n" +
+			"their owners.\n\n" +
+			"--config FILE reads options from FILE, in a subset of TOML: lines KEY = VALUE,\n" +
+			"where KEY is the long name of an option and VALUE a string (\"...\" or '...'),\n" +
+			"true or false, or an array of strings for repeatable options; command, an\n" +
+			"array of strings, gives COMMAND. # starts a comment. The options given on the\n" +
+			"command line take precedence, and repeatable ones are added to the file's:\n\n" +
+			"   root = \"/var/containers/app/current\"\n" +
+			"   unshare = true\n" +
+			"   bind = [\"/var/log/app\", \"/srv/data:/data:ro\"]\n" +
+			"   command = [\"/app/bin/server\", \"--port=8080\"]",
 		StopAtFirstArg: true, // everything from COMMAND on belongs to COMMAND
 		ArgsComplete:   "command",
 		Flags: []*cli.Flag{
+			{Name: "config", Kind: cli.String, Placeholder: "FILE", Complete: "file",
+				Usage: "read options from FILE: the long names of the options of droot run as keys, and command, in a subset of TOML (see droot(1)); the command line takes precedence"},
 			{Name: "root", Aliases: []string{"r"}, Kind: cli.String, Placeholder: "ROOT_DIR", Complete: "dir",
 				Usage: "root directory to chroot into (required)"},
 			{Name: "user", Aliases: []string{"u"}, Kind: cli.String, Placeholder: "USER", Complete: "user",
@@ -68,7 +90,7 @@ func runCommand() *cli.Command {
 			{Name: "ulimit", Kind: cli.Strings, Placeholder: "NAME=SOFT[:HARD]",
 				Usage: "set a resource limit of COMMAND, e.g. nofile=65536 or core=0:unlimited (names of ulimit, as in docker run)"},
 			{Name: "unshare", Kind: cli.Bool,
-				Usage: "make the mounts in a private mount namespace: they disappear when COMMAND and its children exit, and need no 'droot umount'"},
+				Usage: "make the mounts in a private mount namespace: they disappear when COMMAND and its children exit, and need no 'droot umount' (always the case rootless)"},
 			{Name: "unshare-ipc", Kind: cli.Bool,
 				Usage: "run COMMAND in a private IPC namespace (System V IPC, POSIX message queues)"},
 			{Name: "hostname", Kind: cli.String, Placeholder: "NAME",
@@ -78,7 +100,9 @@ func runCommand() *cli.Command {
 			{Name: "no-mask", Kind: cli.Bool,
 				Usage: "do not mask the sensitive files of /proc and /sys nor make /proc/sys, /sys and the like read-only (dangerous)"},
 			{Name: "no-new-privileges", Kind: cli.Bool,
-				Usage: "set no_new_privs: setuid programs and file capabilities cannot grant privileges to COMMAND"},
+				Usage: "set no_new_privs: setuid programs and file capabilities cannot grant privileges to COMMAND (default: true; --no-new-privileges=false lets programs such as sudo or su work)"},
+			{Name: "seccomp", Kind: cli.String, Placeholder: "PROFILE",
+				Usage: "seccomp profile: default (deny the system calls Docker's default profile denies, such as unshare, mount, keyctl, bpf; amd64, arm64, arm and 386) or unconfined (the default)"},
 			{Name: "env", Aliases: []string{"e"}, Kind: cli.Strings, Placeholder: "KEY[=VALUE]",
 				Usage: "set an environment variable, overriding /.drootenv and --env-file; a bare KEY takes its value from droot's own environment"},
 			{Name: "env-file", Kind: cli.Strings, Placeholder: "FILE", Complete: "file",
@@ -175,6 +199,9 @@ var devLinks = []struct{ path, target string }{
 	{"/dev/ptmx", "pts/ptmx"},
 }
 
+// ttyGID is the group of the pseudo-terminals, tty.
+const ttyGID = 5
+
 // devpts are the options of the devpts instance mounted on /dev/pts, like
 // Docker's.
 var devpts = mounter.FSOptions{NoSuid: true, NoExec: true, Data: []string{"newinstance", "ptmxmode=0666", "mode=0620", "gid=5"}}
@@ -220,13 +247,34 @@ func doRun(ctx context.Context, cmd *cli.Invocation) (err error) {
 	if runtime.GOOS != "linux" {
 		return fmt.Errorf("droot run is only supported on Linux (running on %s)", runtime.GOOS)
 	}
+	// Rootless, droot runs again as root of a user namespace (see
+	// runRootless), after the checks it can make without reading the
+	// files of --config and --env-file, which may be pipes: only the
+	// child must read them. With --config, which may give any option,
+	// the child makes every check.
+	rootless := os.Geteuid() != 0
+	if rootless && cmd.IsSet("config") {
+		return runRootless(ctx)
+	}
 
 	argv := cmd.Args()
+	if cmd.IsSet("config") {
+		command, err := applyConfigFile(cmd, cmd.String("config"))
+		if err != nil {
+			return err
+		}
+		if len(argv) == 0 {
+			argv = command
+		}
+	}
 	if len(argv) > 0 && argv[0] == "" {
 		return cmd.UsageError("COMMAND must not be empty")
 	}
 	if cmd.String("root") == "" {
 		return cmd.UsageError("--root is required")
+	}
+	if p := cmd.String("seccomp"); cmd.IsSet("seccomp") && !slices.Contains(seccomp.Profiles, p) {
+		return cmd.UsageError("unknown seccomp profile %q: want %s", p, strings.Join(seccomp.Profiles, " or "))
 	}
 	// An empty --user, e.g. from an unset variable in a unit file, must not
 	// silently run COMMAND as root instead of the image's USER.
@@ -245,26 +293,6 @@ func doRun(ctx context.Context, cmd *cli.Invocation) (err error) {
 
 	rootDir, err := mounter.ResolveRootDir(cmd.String("root"))
 	if err != nil {
-		return err
-	}
-
-	// The environment given on the command line, in increasing order of
-	// precedence: --env-file, then --env. Files and values are read on the
-	// host, before the chroot.
-	var extraEnv []string
-	for _, file := range cmd.Strings("env-file") {
-		env, err := environ.ReadEnvFileFrom(file, os.LookupEnv)
-		if err != nil {
-			return fmt.Errorf("--env-file: %w", err)
-		}
-		extraEnv = append(extraEnv, env...)
-	}
-	cliEnv, err := environ.ExpandBare(cmd.Strings("env"), os.LookupEnv)
-	if err != nil {
-		return err
-	}
-	extraEnv = append(extraEnv, cliEnv...)
-	if err := environ.Validate(extraEnv); err != nil {
 		return err
 	}
 
@@ -330,9 +358,32 @@ func doRun(ctx context.Context, cmd *cli.Invocation) (err error) {
 		}
 		return cmd.UsageError("a command to run is required")
 	}
-	if os.Geteuid() != 0 {
-		return errors.New("droot run must be run as root (it needs to mount, chroot and switch users)")
+	if rootless {
+		return runRootless(ctx)
 	}
+
+	// The environment given on the command line, in increasing order of
+	// precedence: --env-file, then --env. Files and values are read on the
+	// host, before the chroot.
+	var extraEnv []string
+	for _, file := range cmd.Strings("env-file") {
+		env, err := environ.ReadEnvFileFrom(file, os.LookupEnv)
+		if err != nil {
+			return fmt.Errorf("--env-file: %w", err)
+		}
+		extraEnv = append(extraEnv, env...)
+	}
+	cliEnv, err := environ.ExpandBare(cmd.Strings("env"), os.LookupEnv)
+	if err != nil {
+		return err
+	}
+	extraEnv = append(extraEnv, cliEnv...)
+	if err := environ.Validate(extraEnv); err != nil {
+		return err
+	}
+
+	// Root of a user namespace: rootless, or in a container.
+	rootless = osutil.InUserNamespace()
 
 	// From now on and up to the exec, everything happens on this OS
 	// thread: the capability bounding set is a per-thread attribute, and
@@ -342,16 +393,27 @@ func doRun(ctx context.Context, cmd *cli.Invocation) (err error) {
 	// Serialize the setup of concurrent runs on the same root (they would
 	// race on the --cp copies and on the creation of mount points and
 	// devices). The lock is released at the exec.
-	unlock, err := osutil.LockRoot(ctx, rootDir, func() {
-		log.Infof("waiting for another droot working on %s", rootDir)
-	})
+	waiting := func() { log.Infof("waiting for another droot working on %s", rootDir) }
+	lock := osutil.LockRoot
+	if userns.Supervised() {
+		lock = func(ctx context.Context, rootDir string, waiting func()) (func(), error) {
+			return osutil.LockRootUser(ctx, os.Getenv("XDG_RUNTIME_DIR"), rootDir, waiting)
+		}
+	}
+	unlock, err := lock(ctx, rootDir, waiting)
 	if err != nil {
 		return err
 	}
 	defer unlock()
 	readOnly := cmd.Bool("read-only")
-	if cmd.Bool("unshare") || readOnly {
+	// In a user namespace, only the mounts of a mount namespace it owns
+	// can be changed.
+	privateNS := cmd.Bool("unshare") || readOnly || rootless
+	if privateNS {
 		if err := osutil.UnshareMountNamespace(); err != nil {
+			if rootless && errors.Is(err, syscall.EPERM) {
+				err = fmt.Errorf("%w (in a user namespace without privileges: on Ubuntu, see the sysctl kernel.apparmor_restrict_unprivileged_userns)", err)
+			}
 			return err
 		}
 		if readOnly {
@@ -428,6 +490,11 @@ func doRun(ctx context.Context, cmd *cli.Invocation) (err error) {
 		}
 		return err
 	}
+	if rootless {
+		if err := checkMapped(cred); err != nil {
+			return err
+		}
+	}
 	log.Debugf("running as uid=%d gid=%d groups=%v", cred.UID, cred.GID, cred.Groups)
 	env = defaultEnv(env, cred)
 	if cmd.IsSet("hostname") {
@@ -443,7 +510,7 @@ func doRun(ctx context.Context, cmd *cli.Invocation) (err error) {
 		if err == nil {
 			return
 		}
-		if released > 0 {
+		if released > 0 && !privateNS {
 			log.Warnf("%d mount(s) made for COMMAND are left in place: remove them with 'droot umount --root %s'", released, rootDir)
 		} else if rbErr := mnt.Rollback(); rbErr != nil {
 			log.Warnf("could not remove the mounts made before the failure (use 'droot umount'): %v", rbErr)
@@ -503,7 +570,7 @@ func doRun(ctx context.Context, cmd *cli.Invocation) (err error) {
 	linkVarLock(root)
 
 	shm := !slices.ContainsFunc(tmpfs, func(t tmpfsMount) bool { return t.path == "/dev/shm" })
-	if err := setupDev(root, mnt, shm); err != nil {
+	if err := setupDev(root, mnt, shm, rootless); err != nil {
 		return err
 	}
 	if readOnly {
@@ -518,8 +585,88 @@ func doRun(ctx context.Context, cmd *cli.Invocation) (err error) {
 		dropCaps:        !cmd.Bool("no-dropcaps"),
 		keepCaps:        keep,
 		rlimits:         rlimits,
-		noNewPrivileges: cmd.Bool("no-new-privileges"),
+		noNewPrivileges: !cmd.IsSet("no-new-privileges") || cmd.Bool("no-new-privileges"),
+		seccomp:         cmd.String("seccomp") == "default",
 	})
+}
+
+// runRootless runs droot again as root of a new user namespace, mapping the
+// user to root and their subordinate IDs, if any, to the other users (see
+// package userns), and waits for it.
+func runRootless(ctx context.Context) error {
+	m, err := userns.CurrentMapping()
+	if err != nil {
+		return err
+	}
+	return userns.Run(ctx, m)
+}
+
+// checkMapped checks, in a user namespace, that the user and the groups of
+// COMMAND exist there: droot could not switch to them. Supplementary groups
+// that do not exist are left out.
+func checkMapped(cred *identity.Credential) error {
+	if !osutil.UIDMapped(cred.UID) || !osutil.GIDMapped(cred.GID) {
+		return fmt.Errorf("cannot run as uid %d and gid %d: they do not exist in the user namespace of rootless droot, "+
+			"where your user is root and your subordinate IDs (/etc/subuid and /etc/subgid, mapped with "+
+			"newuidmap and newgidmap) are the other users; give your user subordinate IDs, or run as root with --user 0",
+			cred.UID, cred.GID)
+	}
+	if cred.Groups == nil {
+		// Not the supplementary groups of the user on the host, which
+		// do not exist in the namespace (kept only if setgroups(2) is
+		// denied).
+		cred.Groups = []int{cred.GID}
+	}
+	if cred.Groups != nil {
+		cred.Groups = slices.DeleteFunc(cred.Groups, func(g int) bool {
+			if !osutil.GIDMapped(g) {
+				log.Debugf("leaving out the group %d, which does not exist in the user namespace", g)
+				return true
+			}
+			return false
+		})
+	}
+	return nil
+}
+
+// maxConfigSize bounds the size of a --config file.
+const maxConfigSize = 1 << 20
+
+// applyConfigFile applies the options of the --config file to cmd, and
+// returns its command, if any.
+func applyConfigFile(cmd *cli.Invocation, path string) ([]string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	b, err := io.ReadAll(io.LimitReader(f, maxConfigSize+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(b) > maxConfigSize {
+		return nil, fmt.Errorf("%s: larger than %d bytes", path, maxConfigSize)
+	}
+	values, err := conffile.Parse(b)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	var command []string
+	if v, ok := values["command"]; ok {
+		command, ok = v.([]string)
+		if !ok || len(command) == 0 {
+			return nil, fmt.Errorf("%s: command must be a non-empty array of strings, e.g. [\"/app/bin/server\", \"--port=80\"]", path)
+		}
+		delete(values, "command")
+	}
+	if _, ok := values["config"]; ok {
+		return nil, fmt.Errorf("%s: a configuration file cannot include another one", path)
+	}
+	if err := cmd.ApplyConfig(values); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	log.Debugf("read the options of %s", path)
+	return command, nil
 }
 
 // bindOptions are the options accepted after SRC:DEST.
@@ -610,10 +757,18 @@ func linkVarLock(root *osutil.Root) {
 // on /dev/shm. If /dev is not on the root's own file system (for instance a
 // bind mount of the host's /dev), nothing is done there: droot must not
 // touch host devices.
-func setupDev(root *osutil.Root, mnt *mounter.Mounter, shm bool) error {
+//
+// In a user namespace (userns), where device nodes cannot be created, the
+// host's are bind mounted instead.
+func setupDev(root *osutil.Root, mnt *mounter.Mounter, shm, userns bool) error {
 	onRoot := mounter.OnMountOf(root.Fd())
 	for _, d := range devices {
-		err := root.MknodChar(d.path, d.major, d.minor, 0o666, onRoot)
+		var err error
+		if userns {
+			err = mnt.BindDevice(d.path, onRoot)
+		} else {
+			err = root.MknodChar(d.path, d.major, d.minor, 0o666, onRoot)
+		}
 		if errors.Is(err, mounter.ErrOtherMount) {
 			log.Warnf("not populating /dev: /dev in the container is a mount point (e.g. a bind mount of the host's /dev)")
 			return nil
@@ -628,7 +783,15 @@ func setupDev(root *osutil.Root, mnt *mounter.Mounter, shm bool) error {
 			log.Warnf("cannot create %s: %v", l.path, err)
 		}
 	}
-	if err := mnt.MountFS("devpts", "/dev/pts", devpts, onRoot); err != nil {
+	err := mnt.MountFS("devpts", "/dev/pts", devpts, onRoot)
+	if err != nil && userns && !osutil.GIDMapped(ttyGID) {
+		// Without the group tty, as in rootless mode without
+		// subordinate IDs.
+		opts := devpts
+		opts.Data = slices.DeleteFunc(slices.Clone(devpts.Data), func(o string) bool { return strings.HasPrefix(o, "gid=") })
+		err = mnt.MountFS("devpts", "/dev/pts", opts, onRoot)
+	}
+	if err != nil {
 		log.Warnf("cannot mount devpts on /dev/pts (pseudo-terminals will not work): %v", err)
 	}
 	if shm {
@@ -693,6 +856,7 @@ type execOptions struct {
 	keepCaps        map[uintptr]bool
 	rlimits         []osutil.Rlimit
 	noNewPrivileges bool
+	seccomp         bool
 }
 
 // execInRoot chroots into rootDir, drops privileges and executes argv. It only
@@ -737,10 +901,22 @@ func execInRoot(ctx context.Context, rootDir string, argv, env []string, cred *i
 			return fmt.Errorf("drop capabilities: %w", err)
 		}
 	}
+	// While droot still has CAP_SYS_ADMIN, which installing a filter
+	// without no_new_privs needs. The filter denies none of the system
+	// calls droot makes until the exec.
+	if opts.seccomp {
+		if err := seccomp.Load(); err != nil {
+			return err
+		}
+	}
 	if cred.UID != 0 && opts.beforeSwitch != nil {
 		opts.beforeSwitch()
 	}
 	if err := osutil.SetCredentials(cred.UID, cred.GID, cred.Groups); err != nil {
+		return err
+	}
+	// Rootless: the change of credentials cleared it.
+	if err := userns.KeepParentDeathSignal(); err != nil {
 		return err
 	}
 	if opts.noNewPrivileges {

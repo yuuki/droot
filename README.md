@@ -22,7 +22,7 @@ stacks such as Linux namespaces and union file systems. It relies on simple
 Linux features — `chroot(2)`, Linux `capabilities(7)` and bind mounts — to run
 a container image built by `docker`, and on plain tar archives to ship it.
 
-- **Build**: build an image with `docker build` and turn it into a tar archive with `droot export`.
+- **Build**: build an image with `docker build` (or any tool building OCI images) and turn it into a tar archive with `droot export`, from a Docker daemon, a registry, a `docker save` archive or an OCI layout.
 - **Ship**: upload the archive to any storage (Amazon S3, HTTP, rsync, ...) and download it on your servers.
 - **Run**: `droot run` = `chroot(2)` + dropped capabilities + bind mounts.
 
@@ -37,8 +37,9 @@ before running untrusted images.
 
 | Command | Requirements |
 |---|---|
-| `droot export` | Linux or macOS, and a daemon speaking the Docker Engine API: Docker Engine, Docker Desktop, Colima, OrbStack, Podman (`podman system service`), ... |
-| `droot run`, `droot umount` | Linux, root privileges |
+| `droot export` | Linux or macOS. For the images of a daemon, a daemon speaking the Docker Engine API: Docker Engine, Docker Desktop, Colima, OrbStack, Podman (`podman system service`), ... Images of registries, `docker save` archives and OCI layouts need no daemon. |
+| `droot run` | Linux. As root, or as any user with [user namespaces](#running-without-root) (rootless). |
+| `droot umount` | Linux, root privileges |
 
 Building from source requires Go 1.26 or later.
 
@@ -151,31 +152,44 @@ Run `droot COMMAND --help` for the full list of options.
 ### `droot export`
 
 ```
-droot export [-o FILE] [--platform PLATFORM] IMAGE[:TAG]
+droot export [-o FILE] [--platform PLATFORM] IMAGE
 ```
 
-Exports the file system of a local Docker image as a tar archive, to STDOUT or
-to `FILE`. droot creates a temporary container from the image **without
-starting it**, streams its file system and removes the container. The image's
-configuration — `ENV`, `WORKDIR`, `USER`, `ENTRYPOINT`, `CMD` and
-`STOPSIGNAL` — is saved as `/.droot/config.json` in the archive, and its
-environment variables also as `/.drootenv` (read by older droot versions), so
-that `droot run` can use them. Images without a shell, such as distroless or
-`FROM scratch` images, are supported.
+Exports the file system of a container image as a tar archive, to STDOUT or
+to `FILE`. The image's configuration — `ENV`, `WORKDIR`, `USER`,
+`ENTRYPOINT`, `CMD` and `STOPSIGNAL` — is saved as `/.droot/config.json` in
+the archive, and its environment variables also as `/.drootenv` (read by older
+droot versions), so that `droot run` can use them. Images without a shell,
+such as distroless or `FROM scratch` images, are supported.
+
+`IMAGE` is an image of a Docker daemon (`NAME[:TAG]`, an ID, ...): droot
+creates a temporary container from it **without starting it**, streams its
+file system and removes the container. Or it is one of these images, read
+[without daemon](#exporting-without-a-docker-daemon):
+
+| `IMAGE` | |
+|---|---|
+| `docker://[REGISTRY/]NAME[:TAG\|@DIGEST]` | An image of a registry: Docker Hub (`docker://alpine:3.22`), `ghcr.io`, ... |
+| `docker-archive:FILE[:NAME:TAG]` | An archive written by `docker save` or `podman save`. |
+| `oci:DIR[:NAME]` | An [OCI image layout](https://github.com/opencontainers/image-spec/blob/main/image-layout.md), as written by `skopeo`, `buildah`, `docker buildx build --output type=oci,tar=false`, ... |
+| `oci-archive:FILE[:NAME]` | A tar archive of an OCI image layout (`docker save` of Docker 25 and later, `podman save --format oci-archive`, ...). |
+
+An image of a daemon whose name starts like one of these (`oci:latest`)
+needs its full name: `docker.io/library/oci:latest`.
 
 | Option | Description |
 |---|---|
 | `-o`, `--output FILE` | Write the archive to `FILE` instead of STDOUT (`-` means STDOUT). The file is replaced atomically, so an interrupted export never leaves a truncated archive behind; like a plain `> FILE` redirection, a new file follows the umask, an existing file keeps its mode and owner, and symlinks are followed. |
-| `--platform PLATFORM` | Export the given variant (e.g. `linux/amd64`) of a multi-platform image. |
-| `--pull` | Pull `IMAGE` from its registry first (the `--platform` variant, if given), as `docker pull` would, with the credentials of the docker CLI: the credential helpers (`credHelpers`, `credsStore`) and the `auths` of `$DOCKER_CONFIG/config.json`. Without a tag, `latest` is pulled. |
+| `--platform PLATFORM` | Export the given variant (e.g. `linux/amd64`, `linux/arm/v7`) of a multi-platform image. By default, the variant of the daemon's platform, or, without daemon, of the platform droot runs on. |
+| `--pull` | For an image of a daemon: pull `IMAGE` from its registry into the daemon first (the `--platform` variant, if given), as `docker pull` would, with the credentials of the docker CLI: the credential helpers (`credHelpers`, `credsStore`) and the `auths` of `$DOCKER_CONFIG/config.json`. Without a tag, `latest` is pulled. |
 | `--compress ALGO` | Compress the archive with `gzip`, or `zstd` (with the `zstd` command). |
 | `--checksum` | Also write the SHA-256 checksum of the archive (as written, compressed or not) to `FILE.sha256`, in the format of `sha256sum`; needs `-o FILE`. Verify it with `sha256sum -c FILE.sha256` before extracting the archive as root. |
-| `--reproducible` | Make the archive depend only on the image, so that exporting the same image again gives the same bytes (for caches, deduplication or signatures): modification times later than `$SOURCE_DATE_EPOCH`, or else the image's creation time, are set to it (the files Docker creates in every container and the files added by droot are dated from it), and access and change times are dropped. Entries keep the order of the daemon. |
+| `--reproducible` | Make the archive depend only on the image, so that exporting the same image again gives the same bytes (for caches, deduplication or signatures): modification times later than `$SOURCE_DATE_EPOCH`, or else the image's creation time, are set to it (the files Docker creates in every container and the files added by droot are dated from it), and access and change times are dropped. Entries keep the order of the daemon (or of the layers). |
 | `--exclude PATTERN` | Leave out the entries matching `PATTERN`, and everything below a matching directory. A pattern containing `/` is matched against absolute paths (`/usr/share/doc`, `/var/cache/apk/*`), a pattern without `/` against base names (`*.pyc`); the syntax is that of Go's [`path.Match`](https://pkg.go.dev/path#Match). A hard link to a left out file is left out too, with a warning. Repeatable. |
-| `--drop-docker-files` | Leave out the files Docker adds to every container: `/.dockerenv`, and the empty placeholders `/etc/hostname`, `/etc/hosts`, `/etc/resolv.conf` and `/dev/console` (use `--cp` or `--bind-net-files` with `droot run`). |
+| `--drop-docker-files` | Leave out the files Docker adds to every container: `/.dockerenv`, and the empty placeholders `/etc/hostname`, `/etc/hosts`, `/etc/resolv.conf` and `/dev/console` (use `--cp` or `--bind-net-files` with `droot run`). Images read without daemon have none of them. |
 
-Without `--pull`, the image must exist locally (`docker pull` or `docker
-build` it first).
+For an image of a daemon, without `--pull`, the image must exist locally
+(`docker pull` or `docker build` it first).
 droot refuses to write the archive to a terminal. When STDERR is a terminal,
 the size exported so far is shown there.
 
@@ -210,7 +224,8 @@ In order, droot:
 
 | Option | Description |
 |---|---|
-| `-r`, `--root ROOT_DIR` | Root directory to chroot into (required). |
+| `--config FILE` | Read the options from `FILE`, e.g. `/etc/droot/app.toml`, so that a systemd unit only needs `droot run --config FILE` (see [`examples/droot/app.toml`](examples/droot/app.toml)). Keys are the long names of the options (`root`, `user`, `bind`, `unshare`, ...) and `command` gives `COMMAND`; values are strings, `true`/`false` or arrays of strings, in a subset of TOML (anything else is an error). Options given on the command line take precedence; repeatable ones are added to the file's. |
+| `-r`, `--root ROOT_DIR` | Root directory to chroot into (required, on the command line or in `--config`). |
 | `-u`, `--user USER` | User name or ID to run as. Defaults to the image's `USER` (which may also name a group, as `USER app:staff`), or to droot's own user (root). Names are looked up in `ROOT_DIR/etc/passwd` first, then on the host (`/etc/passwd`, then `getent passwd` for users served by NSS such as LDAP or SSSD), so the image decides what a name maps to (droot warns when a name other than `root` maps to uid 0); numeric IDs do not depend on the image. Unknown numeric IDs are accepted. |
 | `-g`, `--group GROUP` | Group name or ID to run as, looked up like `--user` (`ROOT_DIR/etc/group`, the host's `/etc/group`, `getent group`). Defaults to the primary group of `--user`; for a numeric `--user` without an entry in `ROOT_DIR/etc/passwd`, to droot's own group (usually 0, with a warning), like Docker. |
 | `-w`, `--workdir DIR` | Working directory of `COMMAND`, an absolute path inside the container. Defaults to the image's `WORKDIR`, or `/`. It must exist. |
@@ -230,7 +245,8 @@ In order, droot:
 | `--hostname NAME` | Run `COMMAND` in a private UTS namespace whose host name is `NAME` (also the default of `HOSTNAME`). The host's name is not changed. |
 | `--read-only` | Make `ROOT_DIR` read-only for `COMMAND` (bind mounts and tmpfs keep their own mode: add `--tmpfs /tmp`, `--bind`, ... for what it writes). Implies `--unshare`, so that the read-only mount disappears with `COMMAND`. |
 | `--no-mask` | Leave `/proc` and `/sys` as they are: do not mask their sensitive files nor make `/proc/sys`, `/sys` and the like read-only (dangerous). Masks made by a previous run stay until `droot umount`. |
-| `--no-new-privileges` | Set the `no_new_privs` flag: setuid programs (`su`, `sudo`, ...) and file capabilities cannot grant privileges to `COMMAND`. Recommended with `--user`. |
+| `--no-new-privileges` | Set the `no_new_privs` flag: setuid programs (`su`, `sudo`, ...) and file capabilities cannot grant privileges to `COMMAND`. On by default; `--no-new-privileges=false` turns it off for applications that need `sudo` or `su`. |
+| `--seccomp PROFILE` | `default` installs a seccomp filter that denies, like Docker's default profile, the system calls an application has no business making: creating namespaces (`unshare`, `setns`, `clone` with namespace flags), mounting, loading modules or kernels, keyrings, `bpf`, perf events, `userfaultfd`, io_uring, setting clocks, swapping, rebooting, ... They fail with `EPERM` (`clone3` with `ENOSYS`, so that the C library uses `clone`). Supported on amd64, arm64, arm and 386; programs of another architecture (e.g. 32-bit programs on a 64-bit kernel) cannot make any system call. `unconfined`, the default, installs none. |
 
 Notes:
 
@@ -320,8 +336,23 @@ Processes in /var/containers/app: 1
   4242  1500  /usr/local/bin/app --port 8080
 ```
 
-Processes of a `droot run --unshare` are listed, but not their mounts, which
-are private.
+Processes of a `droot run --unshare` (or rootless) are listed, but not their
+mounts, which are private.
+
+### `droot unshare`
+
+```
+droot unshare [COMMAND [ARG...]]
+```
+
+For users other than root: runs `COMMAND` (default: `$SHELL`) as root in a
+user namespace with the ID mapping of [rootless](#running-without-root) `droot
+run`, so that archives keep the owners of their files:
+
+```console
+$ droot unshare tar -xpf app.tar -C app
+$ droot unshare rm -rf app      # files owned by subordinate IDs
+```
 
 ### Global options
 
@@ -345,6 +376,84 @@ $ source <(droot completion bash)     # in ~/.bashrc
 $ source <(droot completion zsh)      # in ~/.zshrc, after compinit
 $ droot completion fish > ~/.config/fish/completions/droot.fish
 ```
+
+## Running without root
+
+`droot run`, started by a user other than root, runs **rootless**: droot
+runs itself again as root of a new
+[user namespace](https://man7.org/linux/man-pages/man7/user_namespaces.7.html),
+where it has the privileges to mount and chroot over that namespace only, and
+waits for `COMMAND`, passing the signals it receives on to it and exiting
+with its status. In the namespace:
+
+- your user is root, and your **subordinate IDs** — the ranges of
+  `/etc/subuid` and `/etc/subgid`, mapped with the `newuidmap` and
+  `newgidmap` commands (package `uidmap` on Debian and Ubuntu,
+  `shadow-utils` on Fedora) — are the users 1, 2, ... Without them, root is
+  the only user: run as `--user 0`, and extract archives with plain `tar
+  -xf`;
+- the mounts are made in a private mount namespace, as with `--unshare`:
+  they disappear with `COMMAND`, `droot umount` is not needed;
+- `/proc` and the device files are bind mounts of the host's: a new procfs
+  needs a PID namespace, device nodes cannot be created;
+- the files keep their owners: extract archives with `droot unshare tar -xpf`
+  so that the users of the image own their files, and delete them with
+  `droot unshare rm -rf`. As root, extract them with `tar -xpf` as usual.
+
+```console
+$ grep "^$USER:" /etc/subuid /etc/subgid
+/etc/subuid:alice:100000:65536
+/etc/subgid:alice:100000:65536
+$ mkdir app && droot unshare tar -xpf app.tar -C app
+$ droot run --root app --bind ~/app-data:/data
+```
+
+Rootless runs cannot raise hard resource limits (`--ulimit`), and bind mount
+only what your user can read. Some distributions restrict unprivileged user
+namespaces: Ubuntu 24.04 and later deny them capabilities unless
+`kernel.apparmor_restrict_unprivileged_userns` is 0 or an AppArmor profile
+allows droot; elsewhere, check `user.max_user_namespaces` and
+`kernel.unprivileged_userns_clone`. Locks are taken in
+`$XDG_RUNTIME_DIR/droot`.
+
+In a systemd unit (e.g. a user service), set `KillMode=mixed`: systemd then
+sends `SIGTERM` to droot only, which passes it on to `COMMAND`, instead of to
+every process of the unit — `COMMAND` would get it twice.
+
+## Exporting without a Docker daemon
+
+With a `docker://`, `docker-archive:`, `oci:` or `oci-archive:` image, `droot
+export` needs no daemon: on a CI runner without Docker, from the store of
+Podman, Buildah or containerd (through their `save` or `push` commands), or
+straight from a registry. droot then reads the manifest of the image (the
+variant for `--platform` in a multi-platform image), applies its layers one
+after the other like a container engine does — the whiteouts of a layer
+delete the files of the layers below it — and writes the resulting file
+system.
+
+```console
+$ droot export -o app.tar docker://ghcr.io/example/app:1.2.3
+$ droot export --platform linux/arm64 -o app-arm64.tar docker://registry.example.com/app@sha256:4f2c…
+$ docker save app:1.2.3 -o app-image.tar && droot export -o app.tar docker-archive:app-image.tar
+$ droot export -o app.tar oci:build/oci-layout:1.2.3
+```
+
+- The digests of the manifests, of the configuration and of the layers
+  (stored and uncompressed) are verified; a reference by digest
+  (`NAME@sha256:…`) pins the image.
+- Registries are accessed with the credentials of the docker CLI (`docker
+  login`), as with `--pull`. `localhost` and loopback registries may serve
+  plain HTTP; any other registry must serve HTTPS. `HTTPS_PROXY` and
+  `NO_PROXY` are honored.
+- The layers of a registry are downloaded to `$TMPDIR` (default `/tmp`)
+  during the export, then deleted. Layers compressed with zstd need the
+  `zstd` command.
+- The archive has the files of the image only: not those a daemon adds to
+  every container (`/.dockerenv`, the placeholders `/etc/hostname`,
+  `/etc/hosts` and `/etc/resolv.conf`, `/dev/console`, ...), and the image's
+  own `/etc/hosts` or `/etc/hostname`, if it has some, are kept.
+- With several images in an archive or a layout, name one:
+  `docker-archive:images.tar:app:1.2.3`, `oci:DIR:1.2.3`.
 
 ## Choosing the Docker daemon
 

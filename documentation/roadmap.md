@@ -16,9 +16,9 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
   the host: root keeps `CAP_DAC_OVERRIDE`, `CAP_CHOWN` and `CAP_FOWNER`
   (unless `--cap-drop`), and `/proc` shows the host's processes. Idea: a PID
   namespace.
-- **[security]** No seccomp filter or LSM profile, and `no_new_privs` is
-  opt-in (`--no-new-privileges`): by default setuid-root binaries in the image
-  regain the capabilities left in the bounding set.
+- **[security]** The seccomp filter is opt-in (`--seccomp default`), is a
+  denylist rather than Docker's allowlist, and there is no LSM (AppArmor,
+  SELinux) profile.
 - **[ux]** By default, mounts are made in the host's mount namespace and
   persist after the command exits: users must remember `droot umount`, and
   concurrent runs share mounts (`--unshare` avoids both).
@@ -27,15 +27,18 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
 - **[compat]** Nothing is created in `/dev` when it is a mount point, including
   `--tmpfs /dev`; a fresh `/dev` like Docker's would need droot to tell its own
   tmpfs from the host's `devtmpfs`.
-- **[ux]** Inherited behavior whose purpose is unclear: `--bind` creates a
-  `.droot.keep` file in empty host directories. Decide whether to keep it.
-- **[compat]** `droot run` needs real root; rootless operation with user
-  namespaces is not supported.
+- **[compat]** Rootless, `/proc` is the host's (droot has no PID namespace),
+  the device files are bind mounts of the host's, hard resource limits
+  cannot be raised, and `droot status` does not see the mounts (they are in
+  the private namespace of the run). Without subordinate IDs, only root
+  exists in the namespace.
 
 ### `droot export`
 
-- **[compat]** A Docker Engine API daemon is required (`--pull` fetches images
-  missing locally): `docker save` tarballs and OCI layouts are not supported.
+- **[compat]** Without daemon, only `sha256` digests, `localhost` registries
+  over plain HTTP (no `insecure-registries`), no registry mirrors and no
+  foreign (non-distributable) layers; archives must be uncompressed files
+  (not STDIN). Image signatures (cosign, Notation) are not verified.
 - **[compat]** `npipe://` `DOCKER_HOST`s (Windows) are not supported.
 - **[compat]** Environment variables with multi-line values or keys starting
   with `#` cannot be represented in `/.drootenv`: they are only in
@@ -58,30 +61,21 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
 - **[feature]** A PID namespace (`--unshare` covers the mount, IPC and UTS
   namespaces): droot would have to stay as the parent of COMMAND instead of
   replacing itself with it.
-- **[feature]** An optional seccomp profile (e.g. Docker's default); consider
-  enabling `no_new_privs` by default (with an opt-out: it breaks `sudo`/`su`).
+- **[feature]** Custom seccomp profiles (Docker's JSON format), and the
+  32-bit compatibility system calls of 64-bit kernels.
 - **[feature]** Bind propagation modes (`shared`, `private`, ...); droot makes
   every mount a slave mount today.
 - **[feature]** cgroup v2 limits (`--memory`, `--cpus`, `--pids-limit`) without
   systemd; who removes the cgroup after the command exits must be decided.
   Today: `--ulimit`, and systemd (`systemd-run --scope`, `MemoryMax=`).
 - **[feature]** `droot umount --all`.
-- **[feature]** Rootless mode with user namespaces.
 
 ### Building and shipping
 
-- **[feature]** Daemonless export: flatten images straight from a registry, a
-  `docker save` tarball or an OCI layout (works on CI runners without Docker
-  and with Podman/Buildah/containerd stores).
 - **[feature]** `droot deploy`/`droot import`: download (S3/HTTP), verify a
   checksum or signature (cosign, minisign), extract atomically and switch a
   symlink while keeping N releases (capze-like), then optionally restart a
   systemd unit.
-
-### Usability
-
-- **[ux]** A declarative file (e.g. `/etc/droot/app.toml`) describing the run
-  options of an application, usable from systemd units.
 
 ### Project and maintenance
 

@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"syscall"
@@ -541,5 +542,94 @@ func TestPrintable(t *testing.T) {
 	// A right-to-left override, which would reorder what follows.
 	if got, want := printable(string(rune(0x202e))+"evil"), "\\u202eevil"; got != want {
 		t.Errorf("printable(RLO) = %q, want %q", got, want)
+	}
+}
+
+func TestRunConfigFile(t *testing.T) {
+	dir := t.TempDir()
+	write := func(content string) string {
+		p := filepath.Join(dir, "app.toml")
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	var got parsedRun
+	run := func(argv ...string) error {
+		app := NewApp("test")
+		app.Stdout = io.Discard
+		app.Command("run").Action = func(_ context.Context, cmd *cli.Invocation) error {
+			args := cmd.Args()
+			command, err := applyConfigFile(cmd, cmd.String("config"))
+			if err != nil {
+				return err
+			}
+			if len(args) == 0 {
+				args = command
+			}
+			got = parsedRun{
+				args: args, root: cmd.String("root"), user: cmd.String("user"), bind: cmd.Strings("bind"),
+				env: cmd.Strings("env"), copyFiles: cmd.Bool("copy-files"), noDrop: cmd.Bool("no-dropcaps"),
+			}
+			return nil
+		}
+		return app.Run(context.Background(), append([]string{"droot", "run"}, argv...))
+	}
+	conf := write(`root = "/var/containers/app"
+user = "app"
+copy-files = true
+bind = ["/var/log/app"]
+env = ["A=1"]
+command = ["/app/server", "--port=80"]
+`)
+	if err := run("--config", conf); err != nil {
+		t.Fatal(err)
+	}
+	want := parsedRun{args: []string{"/app/server", "--port=80"}, root: "/var/containers/app", user: "app", bind: []string{"/var/log/app"}, env: []string{"A=1"}, copyFiles: true}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got  %+v\nwant %+v", got, want)
+	}
+	if err := run("--config", conf, "-u", "root", "-e", "B=2", "--cp=false", "--", "sh"); err != nil {
+		t.Fatal(err)
+	}
+	want = parsedRun{args: []string{"sh"}, root: "/var/containers/app", user: "root", bind: []string{"/var/log/app"}, env: []string{"A=1", "B=2"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("the command line must take precedence:\ngot  %+v\nwant %+v", got, want)
+	}
+	for content, wantErr := range map[string]string{
+		"rot = '/x'":         `unknown option "rot"; did you mean "root"?`,
+		"command = []":       "command must be a non-empty array",
+		"command = 'sh'":     "command must be a non-empty array",
+		"config = 'x.toml'":  "cannot include another one",
+		"unshare = 'yes'":    "unshare must be true or false",
+		"debug = true":       `unknown option "debug"`,
+		"[run]\nroot = '/x'": "line 1, column 1: tables are not supported",
+	} {
+		if err := run("--config", write(content)); err == nil || !strings.Contains(err.Error(), wantErr) {
+			t.Errorf("%q: got %v, want %q", content, err, wantErr)
+		}
+	}
+	if err := run("--config", filepath.Join(dir, "missing.toml")); err == nil {
+		t.Error("a missing file must be an error")
+	}
+}
+
+// TestExampleConfig keeps examples/droot/app.toml valid.
+func TestExampleConfig(t *testing.T) {
+	app := NewApp("test")
+	app.Stdout = io.Discard
+	var command []string
+	var root string
+	app.Command("run").Action = func(_ context.Context, cmd *cli.Invocation) error {
+		var err error
+		command, err = applyConfigFile(cmd, cmd.String("config"))
+		root = cmd.String("root")
+		return err
+	}
+	if err := app.Run(context.Background(), []string{"droot", "run", "--config", filepath.Join("..", "..", "examples", "droot", "app.toml")}); err != nil {
+		t.Fatal(err)
+	}
+	if root == "" || len(command) == 0 {
+		t.Fatalf("root %q, command %q", root, command)
 	}
 }

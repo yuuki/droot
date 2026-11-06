@@ -6,7 +6,6 @@ import (
 	"io/fs"
 	"os"
 	"path"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -16,10 +15,6 @@ import (
 	"github.com/yuuki/droot/internal/log"
 	"github.com/yuuki/droot/internal/osutil"
 )
-
-// keepFile is created in empty bind mount sources (behavior inherited from
-// droot <= 0.7).
-const keepFile = ".droot.keep"
 
 // readMountInfo returns the mounts of the calling thread's mount namespace,
 // which differs from the process's after UnshareMountNamespace.
@@ -242,6 +237,10 @@ func NotKernelFS(fd int) error {
 
 // MountSysProc mounts procfs on /proc and recursively bind mounts the host's
 // /sys on /sys as a slave mount. Existing mounts are reused.
+//
+// In a user namespace (rootless mode), where procfs can only be mounted in a
+// PID namespace of its own, the host's /proc is bind mounted instead: droot
+// shares the PID namespace of the host anyway, so it shows the same.
 func (m *Mounter) MountSysProc() error {
 	proc, err := m.root.OpenMountTarget("/proc", true, NotKernelFS)
 	if err != nil {
@@ -249,6 +248,10 @@ func (m *Mounter) MountSysProc() error {
 	}
 	defer proc.Close()
 	p, err := m.mountOn(proc, "proc", "proc", unix.MS_NOSUID|unix.MS_NODEV|unix.MS_NOEXEC, "", false)
+	if errors.Is(err, unix.EPERM) && osutil.InUserNamespace() {
+		log.Debugf("cannot mount procfs in this user namespace: binding the host's /proc")
+		p, err = m.mountOn(proc, "/proc", "", unix.MS_BIND|unix.MS_REC, "", false)
+	}
 	if err != nil {
 		return err
 	}
@@ -460,12 +463,31 @@ func (m *Mounter) readonlyPath(base *os.File, rel, display string) error {
 	if err != nil {
 		return err
 	}
+	// In a user namespace, the mounts copied from the host are locked
+	// together: a bind mount must take those below it too (e.g.
+	// binfmt_misc on /proc/sys/fs/binfmt_misc).
+	recursive := osutil.InUserNamespace()
 	if !mounted {
-		if err := mount(osutil.FdPath(fd), osutil.FdPath(fd), "", unix.MS_BIND, ""); err != nil {
+		flags := uintptr(unix.MS_BIND)
+		if recursive {
+			flags |= unix.MS_REC
+		}
+		if err := mount(osutil.FdPath(fd), osutil.FdPath(fd), "", flags, ""); err != nil {
 			return err
 		}
 	}
-	return m.remountReopened(parent, rel, display, !mounted)
+	f, err := reopenMount(parent, rel, display)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if !mounted {
+		m.track(f)
+	}
+	if recursive {
+		return m.remountReadonlyRecursive(f)
+	}
+	return remountReadonly(f)
 }
 
 // reopenMount opens the mount just made on the last component of rel, in the
@@ -549,17 +571,6 @@ func (m *Mounter) BindMount(hostPath, containerPath string, opts BindOptions) er
 		return fmt.Errorf("bind mount source: %w", err)
 	}
 
-	if fi.IsDir() && osutil.IsDirEmpty(hostPath) {
-		// Best effort: the source may be read-only.
-		// O_EXCL|O_NOFOLLOW: a symlink planted there by a container
-		// must not make droot create a file elsewhere on the host.
-		if f, err := os.OpenFile(filepath.Join(hostPath, keepFile), os.O_CREATE|os.O_EXCL|os.O_RDONLY|unix.O_NOFOLLOW, 0o644); err != nil {
-			log.Debugf("cannot create %s in %s: %v", keepFile, hostPath, err)
-		} else {
-			_ = f.Close()
-		}
-	}
-
 	t, err := m.root.OpenMountTarget(containerPath, fi.IsDir(), NotKernelFS)
 	if err != nil {
 		return err
@@ -570,6 +581,13 @@ func (m *Mounter) BindMount(hostPath, containerPath string, opts BindOptions) er
 		flags |= unix.MS_REC
 	}
 	mnt, err := m.mountOn(t, hostPath, "", flags, "", opts.Replace)
+	if errors.Is(err, unix.EINVAL) && !opts.Recursive && osutil.InUserNamespace() {
+		// In a user namespace, the mounts below hostPath are locked to
+		// it: they come along.
+		log.Debugf("binding %s recursively: it has mounts below it", hostPath)
+		opts.Recursive = true
+		mnt, err = m.mountOn(t, hostPath, "", flags|unix.MS_REC, "", opts.Replace)
+	}
 	if err != nil {
 		return err
 	}
@@ -581,6 +599,42 @@ func (m *Mounter) BindMount(hostPath, containerPath string, opts BindOptions) er
 		return remountReadonly(mnt)
 	}
 	return nil
+}
+
+// BindDevice bind mounts the host's device node path (e.g. /dev/null) on the
+// same path in the root, creating an empty file there if needed: in a user
+// namespace, device nodes cannot be created. check, if not nil, is applied
+// to the directories traversed, in addition to the refusal of kernel file
+// systems.
+func (m *Mounter) BindDevice(path string, check osutil.DirCheck) error {
+	var st unix.Stat_t
+	if err := unix.Stat(path, &st); err != nil {
+		return &fs.PathError{Op: "stat", Path: path, Err: err}
+	}
+	if st.Mode&unix.S_IFMT != unix.S_IFCHR {
+		return fmt.Errorf("%s is not a character device", path)
+	}
+	both := func(fd int) error {
+		if check != nil {
+			if err := check(fd); err != nil {
+				return err
+			}
+		}
+		return NotKernelFS(fd)
+	}
+	t, err := m.root.OpenMountTarget(path, false, both)
+	if err != nil {
+		return err
+	}
+	defer t.Close()
+	mnt, err := m.mountOn(t, path, "", unix.MS_BIND, "", false)
+	if err != nil {
+		return err
+	}
+	defer mnt.Close()
+	// Read-only, so that chmod/chown cannot change the host's device
+	// (writing to the device still works).
+	return remountReadonly(mnt)
 }
 
 // MountFS mounts a new file system of type fstype (e.g. tmpfs or devpts) on

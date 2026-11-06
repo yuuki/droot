@@ -15,9 +15,11 @@ func NewApp(version string) *cli.App {
 		Usage:    "a super-easy container with chroot, without docker",
 		Version:  version,
 		Homepage: "https://github.com/yuuki/droot",
-		Description: "droot exports the file system of a Docker image as a tar archive (export),\n" +
-			"runs a command inside an extracted archive with chroot(2) (run),\n" +
-			"cleans up the mounts made by run (umount) and shows them (status).",
+		Description: "droot exports the file system of a container image as a tar archive (export),\n" +
+			"runs a command inside an extracted archive with chroot(2) (run), as root or\n" +
+			"rootless in a user namespace, cleans up the mounts made by run (umount) and\n" +
+			"shows them (status), and runs commands in the user namespace of rootless runs\n" +
+			"(unshare).",
 		Flags: []*cli.Flag{
 			{
 				Name:    "debug",
@@ -46,6 +48,7 @@ func NewApp(version string) *cli.App {
 			runCommand(),
 			umountCommand(),
 			statusCommand(),
+			unshareCommand(),
 		},
 	}
 }

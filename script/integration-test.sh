@@ -24,6 +24,8 @@ WORK=$(mktemp -d "${TMPDIR:-/tmp}/droot-e2e.XXXXXX")
 WORK=$(realpath "$WORK")
 IMAGE=droot-e2e:latest
 SCRATCH_IMAGE=droot-e2e-scratch:latest
+LAYERS_IMAGE=droot-e2e-layers:latest
+REGISTRY_CONTAINER=droot-e2e-registry
 # The CLI used to build and remove the test images.
 DOCKER=${DOCKER:-docker}
 
@@ -39,7 +41,8 @@ cleanup() {
   for d in "$WORK"/*/; do
     "$DROOT" umount --root "$d" >/dev/null 2>&1 || true
   done
-  $DOCKER rmi -f "$IMAGE" "$SCRATCH_IMAGE" >/dev/null 2>&1 || true
+  $DOCKER rm -f "$REGISTRY_CONTAINER" >/dev/null 2>&1 || true
+  $DOCKER rmi -f "$IMAGE" "$SCRATCH_IMAGE" "$LAYERS_IMAGE" ${REGISTRY_IMAGE:+"$REGISTRY_IMAGE"} >/dev/null 2>&1 || true
   if [[ -n "${KEEP_WORKDIR:-}" ]]; then
     echo "work directory kept: $WORK"
   elif [[ $(mounts_under "$WORK") -eq 0 ]]; then
@@ -101,8 +104,70 @@ assert_eq "--exclude and --drop-docker-files" \
 rm -f "$WORK/r1.tar" "$WORK/r2.tar" "$WORK/app.tar.gz" "$WORK/app.tar.gz.sha256"
 PULL_IMAGE=docker.io/library/hello-world:latest
 $DOCKER rmi -f "$PULL_IMAGE" >/dev/null 2>&1 || true
-assert_eq "--pull" "$("$DROOT" export --pull "$PULL_IMAGE" 2>/dev/null | tar -t | grep -c '^hello$')" "1"
+if "$DROOT" export --pull -o "$WORK/pulled.tar" "$PULL_IMAGE" 2>"$WORK/pull.err"; then
+  assert_eq "--pull" "$(tar -tf "$WORK/pulled.tar" | grep -c '^hello$')" "1"
+  rm -f "$WORK/pulled.tar"
+elif grep -q "429 Too Many Requests" "$WORK/pull.err"; then
+  echo "skip - --pull: Docker Hub rate limit"
+else
+  cat "$WORK/pull.err" >&2
+  fail "--pull"
+fi
 $DOCKER rmi -f "$PULL_IMAGE" >/dev/null 2>&1 || true
+
+echo "# export without daemon"
+# Layers with whiteouts, replaced directories and a hard link to a deleted
+# file: applied by droot, they must give the file system the daemon exports.
+$DOCKER build -q -t "$LAYERS_IMAGE" - >/dev/null <<'EOF'
+FROM docker.io/library/alpine:3.22
+RUN mkdir -p /d/sub /opq/x && echo a > /d/a && echo b > /d/sub/b && echo keep > /opq/x/f \
+ && ln /d/a /d/a-link && mkdir /todir && echo t > /todir/t && echo f > /file
+RUN rm -rf /d/sub /d/a /opq /todir /file && mkdir -p /opq/new /file && echo n > /opq/new/n \
+ && echo now-a-file > /todir && echo inside > /file/x
+RUN rm -rf /usr/share/apk && echo changed >> /etc/motd
+EOF
+# listing ARCHIVE: the entries with their metadata, sorted, but those of
+# droot and the files the daemon adds to (or changes in) containers.
+listing() {
+  tar --numeric-owner -tvf "$1" | awk '{ $4 = $4 " " $5; $5 = ""; print }' |
+    grep -vE ' (\.droot/.*|\.droot/|\.drootenv|\.dockerenv|dev/.*|etc/|etc/(hostname|hosts|resolv\.conf|mtab)( -> .*)?)$' | sort
+}
+"$DROOT" export -o "$WORK/layers-daemon.tar" "$LAYERS_IMAGE"
+listing "$WORK/layers-daemon.tar" >"$WORK/layers-daemon.list"
+$DOCKER save -o "$WORK/layers-save.tar" "$LAYERS_IMAGE"
+OCI_ARCHIVE="$WORK/layers-save.tar" # docker save writes an OCI layout too
+if [[ $DOCKER == podman ]]; then
+  OCI_ARCHIVE="$WORK/layers-oci.tar"
+  podman save -q --format oci-archive -o "$OCI_ARCHIVE" "$LAYERS_IMAGE"
+fi
+for ref in "docker-archive:$WORK/layers-save.tar" "oci-archive:$OCI_ARCHIVE"; do
+  DOCKER_HOST=tcp://127.0.0.1:1 "$DROOT" export -o "$WORK/layers-file.tar" "$ref"
+  listing "$WORK/layers-file.tar" | diff "$WORK/layers-daemon.list" - || fail "export ${ref%%:*}: not the file system the daemon exports"
+  echo "ok - export ${ref%%:*}: the file system the daemon exports"
+done
+assert_eq "export without daemon: the image configuration" \
+  "$(tar -xOf "$WORK/layers-file.tar" .droot/config.json | grep -c '"Image": "oci-archive:')" "1"
+# A registry on this machine, without TLS.
+if $DOCKER run -d --name "$REGISTRY_CONTAINER" -p 127.0.0.1::5000 docker.io/library/registry:2 >/dev/null 2>"$WORK/registry.err"; then
+  REGISTRY=$($DOCKER port "$REGISTRY_CONTAINER" 5000/tcp | head -n 1)
+  REGISTRY_IMAGE=$REGISTRY/droot-e2e-layers:latest
+  $DOCKER tag "$LAYERS_IMAGE" "$REGISTRY_IMAGE"
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    if [[ $DOCKER == podman ]]; then
+      podman push -q --tls-verify=false "$REGISTRY_IMAGE" 2>/dev/null && break
+    else
+      docker push -q "$REGISTRY_IMAGE" >/dev/null 2>&1 && break
+    fi
+    sleep 1
+  done
+  DOCKER_HOST=tcp://127.0.0.1:1 "$DROOT" export -o "$WORK/layers-registry.tar" "docker://$REGISTRY_IMAGE"
+  listing "$WORK/layers-registry.tar" | diff "$WORK/layers-daemon.list" - || fail "export docker://: not the file system the daemon exports"
+  echo "ok - export docker://: the file system the daemon exports"
+else
+  echo "skip - export docker://: cannot start a registry: $(head -c 200 "$WORK/registry.err")"
+fi
+rm -f "$WORK"/layers-*
+
 if [[ $DOCKER == docker ]] && docker system dial-stdio --help >/dev/null 2>&1; then
   # A fake ssh running `docker system dial-stdio` locally, against the
   # daemon of this test.
@@ -131,6 +196,16 @@ assert_eq "without COMMAND, the image's ENTRYPOINT and CMD run as its USER" \
 assert_eq "WORKDIR, HOME, USER and LOGNAME" \
   "$("$DROOT" run --root "$WORK/app" -- sh -c 'echo "$PWD $HOME $USER $LOGNAME"')" \
   "/usr/local/myapp /home/app app app"
+cat >"$WORK/app.toml" <<EOF
+# droot run --config
+root = "$WORK/app"
+user = "root"
+env = ["FROM_CONFIG=1"]
+command = ["sh", "-c", "echo \$FROM_CONFIG \$FROM_CLI \$(id -u)"]
+EOF
+assert_eq "--config, with the command line taking precedence" \
+  "$("$DROOT" run --config "$WORK/app.toml"; "$DROOT" run --config "$WORK/app.toml" -e FROM_CLI=2 --user app)" \
+  "$(printf '1 0\n1 2 1500')"
 assert_eq "--user and --workdir override the image" \
   "$("$DROOT" run --root "$WORK/app" --user root -w /tmp -- sh -c 'echo "$(id -u) $PWD $HOME $USER"')" \
   "0 /tmp /root root"
@@ -173,9 +248,8 @@ assert_eq "--tmpfs" \
   "$("$DROOT" run --root "$WORK/app" --user root --tmpfs /tmp:size=1m --tmpfs /run:exec -- sh -c 'stat -f -c %T /tmp; printf "#!/bin/sh\necho exec-ok\n" > /tmp/x; chmod +x /tmp/x; /tmp/x 2>/dev/null || echo noexec; cp /tmp/x /run/x && /run/x')" \
   "$(printf 'tmpfs\nnoexec\nexec-ok')"
 mkdir -p "$WORK/hostdev"
-touch "$WORK/hostdev/marker" # not empty, so that no .droot.keep is created
 "$DROOT" run --root "$WORK/app" --bind "$WORK/hostdev:/dev" -- true 2>/dev/null
-assert_eq "a bind mounted /dev is left alone" "$(ls -A "$WORK/hostdev")" "marker"
+assert_eq "a bind mounted /dev is left alone, nothing is written into bind sources" "$(ls -A "$WORK/hostdev")" ""
 "$DROOT" umount --root "$WORK/app"
 assert_eq "read-only bind mount" \
   "$("$DROOT" run --root "$WORK/app" --user root --robind "$WORK/data:/mnt/data" -- sh -c 'cat /mnt/data/file; touch /mnt/data/x 2>/dev/null || echo ro')" \
@@ -187,8 +261,14 @@ assert_eq "--bind-net-files" \
   "$("$DROOT" run --root "$WORK/app" --user root --bind-net-files -- sh -c 'cat /etc/resolv.conf /etc/hosts; touch /etc/hosts 2>/dev/null || echo ro')" \
   "$(cat /etc/resolv.conf /etc/hosts; echo ro)"
 "$DROOT" umount --root "$WORK/app"
-assert_eq "--no-new-privileges" \
-  "$("$DROOT" run --root "$WORK/app" --user app --no-new-privileges -- awk '/^NoNewPrivs/ {print $2}' /proc/self/status)" "1"
+assert_eq "no_new_privs is set by default, --no-new-privileges=false clears it" \
+  "$("$DROOT" run --root "$WORK/app" --user app -- awk '/^NoNewPrivs/ {print $2}' /proc/self/status) $("$DROOT" run --root "$WORK/app" --user app --no-new-privileges=false -- awk '/^NoNewPrivs/ {print $2}' /proc/self/status)" \
+  "1 0"
+# With every capability, root can mount, unless the seccomp profile denies it.
+assert_eq "--seccomp default" \
+  "$("$DROOT" run --root "$WORK/app" --user root --no-dropcaps --no-mask -- sh -c 'mount -t tmpfs t /mnt && echo mounted && umount /mnt'; "$DROOT" run --root "$WORK/app" --user root --no-dropcaps --seccomp default -- sh -c 'mount -t tmpfs t /mnt 2>/dev/null || echo denied; awk "/^Seccomp:/ {print \$2}" /proc/self/status')" \
+  "$(printf 'mounted\ndenied\n2')"
+"$DROOT" umount --root "$WORK/app"
 if command -v capsh >/dev/null; then
   assert_eq "inheritable capabilities of the caller are dropped" \
     "$(capsh --inh=cap_sys_admin -- -c "\"$DROOT\" run --root \"$WORK/app\" --user root -- awk '/^Cap(Inh|Eff)/ {print \$2}' /proc/self/status" | tr '\n' ' ')" \
@@ -267,6 +347,102 @@ if unshare -m --propagation private true 2>/dev/null; then
     fail "umount --root / must be refused"
   fi
   echo "ok - umount --root / is refused"
+fi
+
+echo "# rootless"
+rootless_skip=""
+if [[ $(cat /proc/sys/user/max_user_namespaces 2>/dev/null || echo 1) == 0 ]]; then
+  rootless_skip="user.max_user_namespaces is 0"
+elif [[ $(cat /proc/sys/kernel/unprivileged_userns_clone 2>/dev/null || echo 1) == 0 ]]; then
+  rootless_skip="kernel.unprivileged_userns_clone is 0"
+elif [[ $(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || echo 0) == 1 ]]; then
+  rootless_skip="kernel.apparmor_restrict_unprivileged_userns is 1"
+elif ! command -v setpriv >/dev/null; then
+  rootless_skip="setpriv is not installed"
+fi
+if [[ -n $rootless_skip ]]; then
+  echo "skip - rootless: $rootless_skip"
+else
+  chmod 755 "$WORK"
+  chmod 644 "$WORK/app.tar"
+  # A copy the other users can execute (the checkout may be in a home
+  # directory they cannot enter).
+  RL_DROOT="$WORK/droot"
+  install -m 755 "$DROOT" "$RL_DROOT"
+  # as_user USER COMMAND...: runs COMMAND as USER, with its own runtime
+  # directory for the locks of droot. user_prefix USER sets AS_USER to the
+  # command prefix doing it, for commands run in the background.
+  user_prefix() {
+    mkdir -p "$WORK/xdg-$1"
+    chown "$1" "$WORK/xdg-$1"
+    chmod 700 "$WORK/xdg-$1"
+    AS_USER=(setpriv --reuid="$(id -u "$1")" --regid="$(id -g "$1")" --init-groups
+      env -i PATH="$PATH" HOME=/ XDG_RUNTIME_DIR="$WORK/xdg-$1")
+  }
+  as_user() {
+    user_prefix "$1"
+    shift
+    "${AS_USER[@]}" "$@"
+  }
+  if "$DROOT" unshare true 2>/dev/null; then fail "droot unshare must be refused to root"; fi
+  echo "ok - droot unshare is refused to root"
+
+  # A user without subordinate IDs: root is the only user.
+  mkdir "$WORK/rl-nobody"
+  chown nobody "$WORK/rl-nobody"
+  as_user nobody tar -xf "$WORK/app.tar" -C "$WORK/rl-nobody"
+  assert_eq "rootless without subordinate IDs: root only" \
+    "$(as_user nobody "$RL_DROOT" run --root "$WORK/rl-nobody" --user 0 -- sh -c 'id -u; cat /proc/self/setgroups')" \
+    "$(printf '0\ndeny')"
+  if as_user nobody "$RL_DROOT" run --root "$WORK/rl-nobody" 2>"$WORK/rl.err"; then
+    fail "rootless without subordinate IDs: the image's USER must be refused"
+  fi
+  grep -q "do not exist in the user namespace" "$WORK/rl.err" || fail "rootless: $(cat "$WORK/rl.err")"
+  echo "ok - rootless without subordinate IDs: the image's USER is refused"
+
+  # A user with subordinate IDs: ROOTLESS_USER, or the user who ran sudo.
+  SUB_USER=${ROOTLESS_USER:-${SUDO_USER:-}}
+  if [[ -n $SUB_USER ]] && grep -q "^$SUB_USER:" /etc/subuid && grep -q "^$SUB_USER:" /etc/subgid &&
+    command -v newuidmap >/dev/null && command -v newgidmap >/dev/null; then
+    mkdir "$WORK/rl"
+    chown "$SUB_USER" "$WORK/rl"
+    as_user "$SUB_USER" "$RL_DROOT" unshare tar -xpf "$WORK/app.tar" -C "$WORK/rl"
+    first_subuid=$(grep -m 1 "^$SUB_USER:" /etc/subuid | cut -d: -f2)
+    assert_eq "droot unshare: archives keep their owners" \
+      "$(stat -c %u "$WORK/rl/home/app")" "$((first_subuid + 1500 - 1))"
+    assert_eq "rootless: the image's ENTRYPOINT and CMD run as its USER" \
+      "$(as_user "$SUB_USER" "$RL_DROOT" run --root "$WORK/rl")" "myapp-ok from-entrypoint from-cmd"
+    assert_eq "rootless: user, devices, kernel file systems, private mounts" \
+      "$(as_user "$SUB_USER" "$RL_DROOT" run --root "$WORK/rl" -- sh -c '
+          id -u; touch ~/x && echo home-writable
+          echo x >/dev/null && head -c 1 /dev/zero | od -An -tx1 | tr -d " "
+          stat -f -c %T /proc /dev/pts /dev/shm; touch /sys/x 2>/dev/null || echo sys-ro'
+        mounts_under "$WORK/rl")" \
+      "$(printf '1500\nhome-writable\n00\nproc\ndevpts\ntmpfs\nsys-ro\n0')"
+    assert_eq "rootless: exit status" \
+      "$(as_user "$SUB_USER" "$RL_DROOT" run --root "$WORK/rl" -- sh -c 'exit 7' || echo $?)" "7"
+    user_prefix "$SUB_USER"
+    "${AS_USER[@]}" "$RL_DROOT" run --root "$WORK/rl" -- sleep 30 &
+    supervisor=$!
+    sleep 1
+    kill -TERM "$supervisor"
+    status=0
+    wait "$supervisor" || status=$?
+    assert_eq "rootless: signals are passed on to COMMAND" "$status" "143"
+    "${AS_USER[@]}" "$RL_DROOT" run --root "$WORK/rl" -- sleep 31 &
+    supervisor=$!
+    sleep 1
+    kill -KILL "$supervisor"
+    wait "$supervisor" 2>/dev/null || true
+    for _ in $(seq 20); do
+      ps -eo stat=,args= | awk '$1 !~ /Z/ && $2 == "sleep" && $3 == "31"' | grep -q . || break
+      sleep 0.1
+    done
+    assert_eq "rootless: COMMAND dies with droot" \
+      "$(ps -eo stat=,args= | awk '$1 !~ /Z/ && $2 == "sleep" && $3 == "31"' | wc -l)" "0"
+  else
+    echo "skip - rootless with subordinate IDs: set ROOTLESS_USER to a user with entries in /etc/subuid and /etc/subgid (and install newuidmap)"
+  fi
 fi
 
 echo "All integration tests passed"

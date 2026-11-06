@@ -45,6 +45,12 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
   `/proc/sysrq-trigger`, `/proc/irq`, `/proc/bus`, `/proc/fs` and the whole
   of `/sys` read-only. Applications that change kernel settings (e.g. with
   `sysctl -w`) fail; use `--no-mask` to keep the old behavior.
+- `droot run` no longer creates a `.droot.keep` file in empty `--bind` and
+  `--robind` source directories, as droot 0.7 did for an undocumented
+  reason: droot does not write into the host directories it binds.
+- `droot run` sets `no_new_privs` by default: setuid programs (`sudo`, `su`,
+  ...) and file capabilities can no longer grant privileges to the command.
+  Use `--no-new-privileges=false` for applications that need them.
 - `droot run` requires root (euid 0) and refuses `--root /`;
   `droot umount --root /` is refused.
 - `DOCKER_CERT_PATH` alone no longer enables TLS: like the docker CLI, TLS is
@@ -205,6 +211,11 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
   docker CLI (credential helpers, `credsStore`, `auths`), for `--platform` if
   given.
 - `droot export --platform` to pick a variant of a multi-platform image.
+- `droot export` without a Docker daemon, for the images of registries
+  (`docker://NAME[:TAG|@DIGEST]`, with the credentials of the docker CLI),
+  `docker save` archives (`docker-archive:FILE`) and OCI image layouts
+  (`oci:DIR`, `oci-archive:FILE`): droot applies the layers itself,
+  whiteouts included, verifying every digest.
 - `droot export` options for the ship step: `--compress gzip|zstd`,
   `--checksum` (`FILE.sha256`), `--reproducible` archives, `--exclude
   PATTERN` and `--drop-docker-files`; the progress is shown on a terminal.
@@ -212,8 +223,23 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
   `Entrypoint`, `Cmd`, `StopSignal`) as `/.droot/config.json`, which, unlike
   `/.drootenv`, represents every environment variable. `droot run` uses it:
   `droot run --root DIR` alone runs the image's `ENTRYPOINT` and `CMD`.
+- Rootless `droot run`: run by a user other than root, droot runs itself
+  again as root of a user namespace (the user as root, their subordinate IDs
+  from `/etc/subuid` and `/etc/subgid` as the other users, with
+  `newuidmap`/`newgidmap`), in a private mount namespace, binding the host's
+  `/proc` and device files, and supervises `COMMAND` (signals, exit status).
+  `droot unshare` runs a command in such a namespace, to extract archives
+  with their owners.
 - `droot run --workdir`/`-w`.
-- `droot run --no-new-privileges` sets the `no_new_privs` flag.
+- `droot run --config FILE` reads the options from a file (a subset of TOML,
+  parsed without a new dependency), so that systemd units stay short; see
+  `examples/droot/app.toml`.
+- `droot run --no-new-privileges` sets the `no_new_privs` flag (now the
+  default).
+- `droot run --seccomp default` installs a seccomp filter that denies, like
+  Docker's default profile, namespace creation, the mount API, module and
+  kernel loading, keyrings, `bpf`, perf events, `userfaultfd`, io_uring and
+  other host-wide system calls (amd64, arm64, arm and 386).
 - `droot run --cap-add` and `--cap-drop` adjust the capabilities kept in the
   bounding set.
 - `droot run --env-file FILE` and `--env KEY` (without a value, taking it from

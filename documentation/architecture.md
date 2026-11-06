@@ -7,9 +7,11 @@ Ship, Run — and only implements the parts Docker makes complicated:
 flowchart LR
   subgraph Build
     A[docker build] --> B[(Docker daemon)]
+    A -.->|docker push, docker save| R[(registry, docker save archive, OCI layout)]
   end
   subgraph Ship
     B -->|droot export| C[app.tar]
+    R -->|droot export, without daemon| C
     C -->|aws s3 cp, rsync, HTTP, ...| D[app.tar on the server]
   end
   subgraph Run
@@ -27,13 +29,17 @@ library, and its packages carry no compatibility promise.
 |---|---|
 | `cmd/droot` | `main`: signal handling, version stamping. |
 | `internal/cli` | A small command line parser: flags, help, suggestions for typos, shell completion scripts. |
-| `internal/commands` | The commands: `export`, `run`, `umount`. |
+| `internal/commands` | The commands: `export`, `run`, `umount`, `status`, `unshare`. |
+| `internal/conffile` | The configuration files of `droot run --config`, a subset of TOML. |
 | `internal/docker` | A minimal Docker Engine API client written with the standard library, and the export logic. |
+| `internal/image` | Images read without daemon: a registry client, `docker save` archives, OCI layouts, and the flattening of layers. |
 | `internal/environ` | Reading, validating and merging `KEY=VALUE` environment variables (`/.drootenv`, `--env-file`). |
 | `internal/imageconfig` | The image configuration saved in `/.droot/config.json`. |
 | `internal/identity` | Resolving `--user`/`--group` to uid, gid and supplementary groups. |
 | `internal/mounter` | Mounting `/proc`, `/sys` and bind mounts, parsing `/proc/self/mountinfo`, unmounting. |
 | `internal/osutil` | File system and process helpers: secure path resolution, file copy, devices, capabilities, credentials, exec. |
+| `internal/seccomp` | The seccomp filter of `droot run --seccomp default`, a classic BPF program. |
+| `internal/userns` | Rootless mode: the ID mappings, the start of droot in a user namespace, and its supervision. |
 | `internal/log` | A tiny leveled logger writing to STDERR. |
 
 Only one third-party module is used: `golang.org/x/sys`.
@@ -83,12 +89,47 @@ Design notes:
   droot is killed with SIGKILL, leftovers can be removed with
   `docker rm $(docker ps -aq --filter label=io.github.yuuki.droot)`.
 
+### Without daemon
+
+For `docker://`, `docker-archive:`, `oci:` and `oci-archive:` images, the
+`image` package replaces the daemon:
+
+1. **Find the image.** A registry is asked for the manifest of the tag or
+   digest (the token authentication of Docker registries, or basic
+   authentication, with the credentials of the docker CLI, read only when
+   the registry asks for them). An archive is indexed once, its files then
+   read in place; `docker save` archives are read from their
+   `manifest.json`, OCI layouts from `index.json`. A multi-platform index
+   is resolved to the manifest of `--platform`, as containerd matches
+   platforms (`linux/arm/v7` runs `v6` images, attestations are skipped).
+2. **Download.** The layers of a registry are downloaded, three at a time,
+   to `$TMPDIR`, retrying transient errors. Every blob is verified against
+   its digest, and every layer, once decompressed (gzip; zstd with the
+   `zstd` command), against the `diff_id` of the configuration.
+3. **Flatten** in two passes over the layers. The first reads only the
+   headers and builds the tree of the merged file system: whiteouts
+   (`.wh.NAME`, `.wh..wh..opq`) delete what the layers below have, a file
+   replaces a directory and its content, and each hard link is tied to the
+   file it names at that moment. Paths are resolved in the tree as a
+   container engine resolves them when it extracts a layer in a chroot: a
+   file `lib/x` below a symlink `lib -> usr/lib` of a lower layer is
+   `/usr/lib/x`. Entries that are not files (PAX global headers, ...) are
+   left out, and names longer than Linux accepts are refused. The second pass writes the surviving
+   entries in the order of the layers, a directory before its content (with
+   the metadata of the layer that last created it), and a hard link whose
+   file was later deleted or replaced as a copy of that file (kept in a
+   temporary file between the passes).
+
+The resulting tar stream goes through the same rewriting as the stream of a
+container: `/.drootenv` and `/.droot/config.json`, `--exclude`,
+`--reproducible`.
+
 ### Archive format
 
 The archive is the plain `docker export` tar of the container's file system
 (including the files Docker adds to every container such as `/.dockerenv`,
-`/etc/hosts` and `/etc/resolv.conf`), plus `/.droot/config.json`, the
-image's configuration:
+`/etc/hosts` and `/etc/resolv.conf`), or, without daemon, the flattened
+layers of the image, plus `/.droot/config.json`, the image's configuration:
 
 ```json
 {
@@ -191,6 +232,46 @@ setuid bits are preserved.
 
 Nothing is undone when the command exits: the mounts stay until
 `droot umount`.
+
+### Rootless
+
+A `droot run` (or `droot unshare`) started by a user other than root goes
+through the `userns` package first:
+
+1. Read the user's subordinate IDs from `/etc/subuid` and `/etc/subgid`. The
+   mapping is the user's own UID and GID as 0, then the subordinate ranges
+   from 1 on — if the user has both, and `newuidmap` and `newgidmap` are
+   installed; otherwise the user alone.
+2. Start `/proc/self/exe` with the same arguments in a new user namespace
+   (`CLONE_NEWUSER`, with `PR_SET_PDEATHSIG` set to `SIGKILL`). This first
+   stage blocks on a pipe while the parent writes its ID maps: with
+   `newuidmap`/`newgidmap`, or directly (`setgroups` denied, then a
+   one-line `uid_map` and `gid_map`), which an unprivileged process may do
+   for its own IDs.
+3. Released, the first stage executes droot again: having become root of
+   the namespace before this `execve(2)`, the second stage gets the
+   capabilities of the namespace, re-arms the parent-death signal (cleared by
+   the privilege change) and runs `droot run` as above, root of the
+   namespace, with these differences: the mount namespace is always private
+   (as with `--unshare`); procfs, which needs a PID namespace of its own
+   there, is replaced by a recursive bind mount of the host's `/proc`; the
+   device files are bind mounts of the host's; the devpts instance has no
+   `gid=5` if the group `tty` is not mapped; the lock is
+   `$XDG_RUNTIME_DIR/droot/DEV-INODE.lock`; unmapped supplementary groups
+   are left out; and the parent-death signal is set again after `setuid`.
+4. Meanwhile the parent, the first droot, keeps the thread that started the
+   child (the parent-death signal follows the thread), passes `SIGHUP`,
+   `SIGINT`, `SIGTERM`, `SIGQUIT`, `SIGUSR1`, `SIGUSR2`, ... on to it — from
+   before the child is started — and exits with the exit status of
+   `COMMAND`, or kills itself with the signal that killed it. Without a
+   terminal, the child has a process group of its own, so that a signal
+   sent to the group of droot (`timeout(1)`, `kill -- -PGID`) reaches it
+   once; on a terminal, it stays in the group of droot for job control, and
+   the signals the terminal sends to its foreground group are not passed
+   on while droot is in the foreground.
+
+Run rootless, droot re-executes itself before reading anything: `--config`
+and `--env-file` may be pipes, which only the second stage must read.
 
 ## `droot umount`
 

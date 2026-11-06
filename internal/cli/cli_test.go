@@ -245,3 +245,42 @@ t app help m
 		t.Errorf("bash completion:\ngot  %q\nwant %q", out, want)
 	}
 }
+
+func TestApplyConfig(t *testing.T) {
+	var got result
+	app := testApp(&got)
+	cmd := app.Command("mixed")
+	run := func(config map[string]any, argv ...string) error {
+		orig := cmd.Action
+		cmd.Action = func(ctx context.Context, inv *Invocation) error {
+			if err := inv.ApplyConfig(config); err != nil {
+				return err
+			}
+			return orig(ctx, inv)
+		}
+		defer func() { cmd.Action = orig }()
+		return app.Run(context.Background(), append([]string{"app", "mixed"}, argv...))
+	}
+	config := map[string]any{"name": "from-file", "item": []string{"f1", "f2"}, "flag": true}
+	if err := run(config); err != nil || got.name != "from-file" || !slices.Equal(got.names, []string{"f1", "f2"}) || !got.flag {
+		t.Fatalf("from the file: %+v, %v", got, err)
+	}
+	if err := run(config, "-n", "cli", "-i", "c1", "--flag=false"); err != nil || got.name != "cli" ||
+		!slices.Equal(got.names, []string{"f1", "f2", "c1"}) || got.flag {
+		t.Fatalf("the command line takes precedence: %+v, %v", got, err)
+	}
+	if err := run(map[string]any{"item": "single"}); err != nil || !slices.Equal(got.names, []string{"single"}) {
+		t.Fatalf("a string for a repeatable flag: %+v, %v", got, err)
+	}
+	for _, bad := range []map[string]any{
+		{"nam": "x"}, {"debug": true}, {"n": "x"},
+		{"flag": "yes"}, {"name": true}, {"item": true},
+	} {
+		if err := run(bad); err == nil {
+			t.Errorf("ApplyConfig(%v) should fail", bad)
+		}
+	}
+	if err := run(map[string]any{"nam": "x"}); err == nil || !strings.Contains(err.Error(), `did you mean "name"?`) {
+		t.Errorf("want a suggestion, got %v", err)
+	}
+}

@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"slices"
 	"strconv"
@@ -417,4 +418,62 @@ func EditDistance(a, b string) int {
 func IsUsageError(err error) bool {
 	var u *UsageError
 	return errors.As(err, &u)
+}
+
+// ApplyConfig sets the flags of the command from a configuration file,
+// whose keys are the long names of the flags: values given on the command
+// line take precedence, except for the repeatable flags, whose values from
+// the file come first. Bool flags take a bool, String flags a string and
+// Strings flags a []string (or a string). Global flags and unknown keys
+// are errors.
+func (inv *Invocation) ApplyConfig(values map[string]any) error {
+	byName := map[string]*Flag{}
+	var names []string
+	for _, f := range inv.Command.Flags {
+		byName[f.Name] = f
+		names = append(names, f.Name)
+	}
+	for _, key := range slices.Sorted(maps.Keys(values)) {
+		f := byName[key]
+		if f == nil {
+			msg := fmt.Sprintf("unknown option %q", key)
+			if s := Closest(key, names); s != "" {
+				msg += fmt.Sprintf("; did you mean %q?", s)
+			}
+			return errors.New(msg)
+		}
+		v := values[key]
+		switch f.Kind {
+		case Bool:
+			b, ok := v.(bool)
+			if !ok {
+				return fmt.Errorf("%s must be true or false", key)
+			}
+			if !inv.set[key] {
+				inv.values[key] = b
+			}
+		case String:
+			s, ok := v.(string)
+			if !ok {
+				return fmt.Errorf("%s must be a string", key)
+			}
+			if !inv.set[key] {
+				inv.values[key] = s
+			}
+		case Strings:
+			var list []string
+			switch v := v.(type) {
+			case string:
+				list = []string{v}
+			case []string:
+				list = v
+			default:
+				return fmt.Errorf("%s must be an array of strings", key)
+			}
+			prev, _ := inv.values[key].([]string)
+			inv.values[key] = append(slices.Clone(list), prev...)
+		}
+		inv.set[key] = true
+	}
+	return nil
 }

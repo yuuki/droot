@@ -1,0 +1,26 @@
+# Options of `droot run` for the app service (examples/systemd/app.service):
+#   droot run --config /etc/droot/app.toml
+# Keys are the long names of the options of droot run (see `droot run --help`
+# and documentation/cli.md); the command line takes precedence.
+
+root = "/var/containers/app/current"
+
+# A private mount namespace: the mounts disappear when the service stops.
+unshare = true
+
+# Run as the unprivileged user of the image, with as few privileges as
+# possible (no_new_privs is set by default).
+user = "app"
+cap-drop = ["ALL"]
+seccomp = "default"
+
+robind = ["/etc/app/config.yml:/app/config.yml"]
+bind = ["/var/log/app"]
+bind-net-files = true
+tmpfs = ["/tmp"]
+
+# Passed from the Environment= of the unit.
+env = ["APP_ENV"]
+
+# The image's ENTRYPOINT and CMD by default.
+command = ["/app/bin/server", "--config", "/app/config.yml"]

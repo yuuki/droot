@@ -64,22 +64,54 @@ type authConfig struct {
 	ServerAddress string `json:"serveraddress,omitempty"`
 }
 
+// Credentials are registry credentials of the docker CLI.
+type Credentials struct {
+	Username, Password string
+	// IdentityToken is an OAuth2 refresh token, RegistryToken a bearer
+	// token.
+	IdentityToken, RegistryToken string
+}
+
 // RegistryAuth returns the X-Registry-Auth header that lets the daemon pull
-// ref, from the credentials of the docker CLI ($DOCKER_CONFIG/config.json,
-// default ~/.docker): the credential helper of the registry (credHelpers),
-// the credential store (credsStore) or the "auths" entries. It returns ""
-// when there are no credentials for the registry.
+// ref, from the credentials of the docker CLI (see RegistryCredentials). It
+// returns "" when there are no credentials for the registry.
 func RegistryAuth(ctx context.Context, ref string) (string, error) {
+	host := registryHost(ref)
+	creds, err := RegistryCredentials(ctx, host)
+	if err != nil || creds == nil {
+		return "", err
+	}
+	auth := authConfig{
+		Username: creds.Username, Password: creds.Password,
+		IdentityToken: creds.IdentityToken, RegistryToken: creds.RegistryToken,
+		ServerAddress: host,
+	}
+	if host == "docker.io" {
+		auth.ServerAddress = dockerHubServer
+	}
+	j, err := json.Marshal(auth) //nolint:gosec // G117: the credentials are for the daemon, like with the docker CLI
+	if err != nil {
+		return "", err
+	}
+	return base64.URLEncoding.EncodeToString(j), nil
+}
+
+// RegistryCredentials returns the credentials of the docker CLI
+// ($DOCKER_CONFIG/config.json, default ~/.docker) for the registry host
+// ("docker.io" for Docker Hub): from the credential helper of the registry
+// (credHelpers), the credential store (credsStore) or the "auths" entries.
+// It returns nil when there are none.
+func RegistryCredentials(ctx context.Context, host string) (*Credentials, error) {
 	configDir := dockerConfigDir()
 	if configDir == "" {
-		return "", nil
+		return nil, nil
 	}
 	b, err := os.ReadFile(filepath.Join(configDir, "config.json"))
 	if errors.Is(err, fs.ErrNotExist) {
-		return "", nil
+		return nil, nil
 	}
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	var cfg struct {
 		Auths map[string]struct {
@@ -91,10 +123,9 @@ func RegistryAuth(ctx context.Context, ref string) (string, error) {
 		CredHelpers map[string]string `json:"credHelpers"`
 	}
 	if err := json.Unmarshal(b, &cfg); err != nil {
-		return "", fmt.Errorf("parse %s: %w", filepath.Join(configDir, "config.json"), err)
+		return nil, fmt.Errorf("parse %s: %w", filepath.Join(configDir, "config.json"), err)
 	}
 
-	host := registryHost(ref)
 	server := host
 	if host == "docker.io" {
 		server = dockerHubServer
@@ -109,7 +140,7 @@ func RegistryAuth(ctx context.Context, ref string) (string, error) {
 	}
 	if helper != "" {
 		if auth, err = credentialHelper(ctx, helper, server); err != nil {
-			return "", err
+			return nil, err
 		}
 	} else {
 		// Sorted, so that the choice is deterministic when several keys
@@ -123,7 +154,7 @@ func RegistryAuth(ctx context.Context, ref string) (string, error) {
 			if a.Auth != "" {
 				dec, err := base64.StdEncoding.DecodeString(a.Auth)
 				if err != nil {
-					return "", fmt.Errorf("invalid credentials for %s in %s", k, filepath.Join(configDir, "config.json"))
+					return nil, fmt.Errorf("invalid credentials for %s in %s", k, filepath.Join(configDir, "config.json"))
 				}
 				auth.Username, auth.Password, _ = strings.Cut(string(dec), ":")
 			}
@@ -132,15 +163,13 @@ func RegistryAuth(ctx context.Context, ref string) (string, error) {
 	}
 	if auth == nil || (*auth == authConfig{}) {
 		log.Debugf("no credentials for %s", host)
-		return "", nil
+		return nil, nil
 	}
-	auth.ServerAddress = server
 	log.Debugf("using the credentials of %s for %s", auth.Username, host)
-	j, err := json.Marshal(auth) //nolint:gosec // G117: the credentials are for the daemon, like with the docker CLI
-	if err != nil {
-		return "", err
-	}
-	return base64.URLEncoding.EncodeToString(j), nil
+	return &Credentials{
+		Username: auth.Username, Password: auth.Password,
+		IdentityToken: auth.IdentityToken, RegistryToken: auth.RegistryToken,
+	}, nil
 }
 
 // credentialHelper runs `docker-credential-NAME get` for server. It

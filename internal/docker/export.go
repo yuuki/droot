@@ -132,30 +132,9 @@ func ExportImage(ctx context.Context, api API, image string, w io.Writer, opts E
 		cfg.Env, cfg.WorkingDir, cfg.User = c.Env, c.WorkingDir, c.User
 		cfg.Entrypoint, cfg.Cmd, cfg.StopSignal = c.Entrypoint, c.Cmd, c.StopSignal
 	}
-	cfgFile, err := cfg.Encode()
+	rw, err := newRewriter(cfg, img.Created, opts)
 	if err != nil {
 		return err
-	}
-	rw := rewriter{
-		files: []extraFile{
-			{name: environ.EnvFilePath, content: encodeEnvFile(cfg.Env)},
-			{name: imageconfig.Path, content: cfgFile},
-		},
-		exclude:         opts.Exclude,
-		dropDockerFiles: opts.DropDockerFiles,
-		modTime:         time.Now().Truncate(time.Second),
-	}
-	if opts.Reproducible {
-		rw.clamp = opts.ClampTime
-		if rw.clamp.IsZero() {
-			created, err := time.Parse(time.RFC3339Nano, img.Created)
-			if err != nil {
-				return fmt.Errorf("--reproducible: the image has no valid creation time (%q); set SOURCE_DATE_EPOCH", img.Created)
-			}
-			rw.clamp = created
-		}
-		rw.clamp = rw.clamp.Truncate(time.Second)
-		rw.modTime = rw.clamp
 	}
 
 	body, err := api.ContainerExport(ctx, id)
@@ -171,6 +150,74 @@ func ExportImage(ctx context.Context, api API, image string, w io.Writer, opts E
 		return err
 	}
 	return nil
+}
+
+// errStopped stops the producer of WriteArchive when the archive cannot be
+// written.
+var errStopped = errors.New("export stopped")
+
+// WriteArchive writes the file system that produce writes as a tar stream
+// to w, as ExportImage does for the file system of a container: with the
+// configuration cfg of the image in /.droot/config.json and /.drootenv, and
+// the options opts (but Platform). created is the creation time of the
+// image (RFC 3339), for --reproducible. The options are checked before
+// produce is called.
+func WriteArchive(ctx context.Context, produce func(io.Writer) error, w io.Writer, cfg imageconfig.Config, created string, opts ExportOptions) error {
+	cfg.Version = imageconfig.Version
+	rw, err := newRewriter(cfg, created, opts)
+	if err != nil {
+		return err
+	}
+	pr, pw := io.Pipe()
+	done := make(chan error, 1)
+	go func() {
+		err := produce(pw)
+		pw.CloseWithError(err)
+		done <- err
+	}()
+	err = rw.rewrite(pr, w)
+	pr.CloseWithError(errStopped)
+	if perr := <-done; perr != nil && !errors.Is(perr, errStopped) {
+		return perr
+	}
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		return err
+	}
+	return nil
+}
+
+// newRewriter returns the rewriter adding the configuration cfg of an image
+// created at created to its file system.
+func newRewriter(cfg imageconfig.Config, created string, opts ExportOptions) (*rewriter, error) {
+	cfgFile, err := cfg.Encode()
+	if err != nil {
+		return nil, err
+	}
+	rw := &rewriter{
+		files: []extraFile{
+			{name: environ.EnvFilePath, content: encodeEnvFile(cfg.Env)},
+			{name: imageconfig.Path, content: cfgFile},
+		},
+		exclude:         opts.Exclude,
+		dropDockerFiles: opts.DropDockerFiles,
+		modTime:         time.Now().Truncate(time.Second),
+	}
+	if opts.Reproducible {
+		rw.clamp = opts.ClampTime
+		if rw.clamp.IsZero() {
+			t, err := time.Parse(time.RFC3339Nano, created)
+			if err != nil {
+				return nil, fmt.Errorf("--reproducible: the image has no valid creation time (%q); set SOURCE_DATE_EPOCH", created)
+			}
+			rw.clamp = t
+		}
+		rw.clamp = rw.clamp.Truncate(time.Second)
+		rw.modTime = rw.clamp
+	}
+	return rw, nil
 }
 
 // encodeEnvFile renders env in the format read by environ.ParseEnv.
@@ -405,6 +452,11 @@ type rewriteState struct {
 
 // entry copies one entry of the archive, or drops it.
 func (rw *rewriter) entry(hdr *tar.Header, tr *tar.Reader, tw *tar.Writer, st *rewriteState) error {
+	if hdr.Typeflag == tar.TypeXGlobalHeader {
+		// Its records would apply to every following entry, droot's
+		// files included.
+		return nil
+	}
 	name := path.Clean("/" + hdr.Name)
 	if isReplaced(hdr.Name) {
 		switch hdr.Typeflag {

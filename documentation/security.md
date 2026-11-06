@@ -1,8 +1,9 @@
 # Security considerations
 
 Droot is a deployment tool, **not a sandbox**. It changes the root directory
-of a process and limits the capabilities it can ever gain, but it does not use
-namespaces, cgroups, seccomp or LSMs. Treat a process run by droot as a process
+of a process and limits the capabilities it can ever gain, but by default it
+does not use namespaces, cgroups or LSMs (`--unshare` adds a mount namespace,
+and `--seccomp default` a seccomp filter). Treat a process run by droot as a process
 running on the host with a different root directory.
 
 ## What droot does and does not isolate
@@ -13,11 +14,11 @@ running on the host with a different root directory.
 | Mounts | Made in the host's mount namespace and persist after exit; private with `--unshare` | Private mount namespace |
 | Processes | Host PID namespace: `/proc` shows every host process | PID namespace |
 | Network | Host network | Network namespace |
-| Users | Host user IDs | Host user IDs (or a user namespace) |
+| Users | Host user IDs; a user namespace when run rootless | Host user IDs (or a user namespace) |
 | Capabilities | Bounding set reduced to CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID, NET_BIND_SERVICE | A similar, larger default set |
 | `/proc`, `/sys` | `/proc` shows the host's processes; sensitive files masked, `/proc/sys` and `/sys` read-only (like Docker) | Read-only or masked sensitive paths |
 | Resource limits | None | cgroups |
-| Syscall filtering, no_new_privs | `no_new_privs` with `--no-new-privileges` | seccomp profile, AppArmor/SELinux, `no-new-privileges` option |
+| Syscall filtering, no_new_privs | `no_new_privs` by default; a seccomp filter like Docker's default profile with `--seccomp default` | seccomp profile, AppArmor/SELinux, `no-new-privileges` option |
 
 ## Recommendations
 
@@ -32,10 +33,14 @@ running on the host with a different root directory.
 - With images you did not build, give `--user` and `--group` as numeric IDs:
   a name is looked up in the image's `/etc/passwd`, which can map any name to
   uid 0 (droot prints a warning when it does).
-- Only run **trusted images**. setuid-root programs in the image (`su`,
+- Only run **trusted images**. Without `no_new_privs` (on by default, off
+  with `--no-new-privileges=false`), setuid-root programs in the image (`su`,
   `sudo`, `ping`, ...) let an unprivileged user regain the capabilities left in
-  the bounding set: use `--no-new-privileges` (or remove them from production
-  images).
+  the bounding set.
+- Use `--seccomp default` to reduce the kernel's attack surface: it denies
+  creating namespaces (which an unprivileged user could otherwise do, and
+  gain capabilities inside), the mount API, keyrings, `bpf`, `userfaultfd`,
+  io_uring and other rarely needed system calls.
 - Prefer `--robind` over `--bind` for data the application does not need to
   write.
 - Do not give the application user write access to `ROOT_DIR` itself. droot
@@ -47,6 +52,27 @@ running on the host with a different root directory.
   using setuid programs such as `sudo`), `MemoryMax=`, `CPUQuota=`.
 - Extract archives with `tar -xpf` as root only if you trust their origin;
   verify a checksum or signature of the archive before deploying it.
+
+## Rootless mode
+
+Run by a user other than root, droot runs in a user namespace (see the
+[README](../README.md#running-without-root)). The kernel then enforces the
+limits of the user who started droot: root in the container is that user,
+the other users of the container are their subordinate IDs, and neither can
+access the host's files beyond what the user could. Short of a kernel
+vulnerability — user namespaces expose more of the kernel to unprivileged
+users, the reason why some distributions restrict them — nothing droot or
+`COMMAND` does grants more than the user has. Still:
+
+- Inside, the same rules as above apply to the application and the root
+  directory: a process running as root in the container can modify every
+  file of the root directory and of the `--bind` mounts.
+- Without subordinate IDs, `setgroups(2)` is denied in the namespace, so the
+  host's supplementary groups of the user stay with `COMMAND` (they show as
+  `nobody`): their file permissions still apply.
+- `/proc` is the host's (bind mounted): as with root, it shows every
+  process of the host, with the same masked and read-only paths.
+- `--seccomp default` also denies creating nested user namespaces.
 
 ## Hardening done by droot
 

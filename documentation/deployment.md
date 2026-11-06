@@ -50,8 +50,12 @@ $ cat app-1.2.3.tar.gz.sha256
 - `--drop-docker-files` leaves out `/.dockerenv` and the empty
   `/etc/hostname`, `/etc/hosts` and `/etc/resolv.conf` Docker creates in every
   container; the service below binds the host's.
-- On a CI runner where the image was pushed by another job, add `--pull`:
-  droot pulls it first with the credentials of the docker CLI.
+- On a CI runner where the image was pushed by another job, export it
+  straight from the registry, without Docker:
+  `droot export ... docker://registry.example.com/app:1.2.3` (with the
+  credentials of `docker login`), or pin it by digest
+  (`docker://registry.example.com/app@sha256:…`). With a Docker daemon,
+  `--pull` pulls it into the daemon first.
 - `--exclude PATTERN` slims the archive, e.g. `--exclude /usr/share/doc`.
 
 To sign the release, sign the checksum file, e.g. with
@@ -105,23 +109,33 @@ uses the release `current` pointed to when it started.
 
 ## 5. Run with systemd
 
-[`examples/systemd/app.service`](../examples/systemd/app.service) runs the
-application as a service:
+The options of `droot run` go in a file,
+[`examples/droot/app.toml`](../examples/droot/app.toml), installed as
+`/etc/droot/app.toml`:
+
+```toml
+root = "/var/containers/app/current"
+unshare = true
+user = "app"
+cap-drop = ["ALL"]
+seccomp = "default"
+robind = ["/etc/app/config.yml:/app/config.yml"]
+bind = ["/var/log/app"]
+bind-net-files = true
+tmpfs = ["/tmp"]
+env = ["APP_ENV"]
+command = ["/app/bin/server", "--config", "/app/config.yml"]
+```
+
+so that [`examples/systemd/app.service`](../examples/systemd/app.service)
+stays short:
 
 ```ini
 [Service]
 Type=exec
 Environment=DROOT_LOG_FORMAT=json
 Environment=APP_ENV=production
-ExecStart=/usr/local/bin/droot run --root /var/containers/app/current \
-    --unshare \
-    --user app --no-new-privileges --cap-drop ALL \
-    --robind /etc/app/config.yml:/app/config.yml \
-    --bind /var/log/app \
-    --bind-net-files \
-    --tmpfs /tmp \
-    --env APP_ENV \
-    -- /app/bin/server --config /app/config.yml
+ExecStart=/usr/local/bin/droot run --config /etc/droot/app.toml
 KillSignal=SIGTERM
 Restart=on-failure
 MemoryMax=1G
@@ -130,12 +144,16 @@ TasksMax=512
 LimitNOFILE=65536
 ```
 
+Options given on the command line take precedence over the file, e.g.
+`droot run --config /etc/droot/app.toml --user root -- sh` to debug.
+
 - `--unshare` makes the mounts in a private mount namespace: they disappear
   when the service stops, and old releases can be deleted safely.
 - `--user app` (the image's `USER` would be the default anyway),
-  `--no-new-privileges` (setuid programs cannot gain privileges) and
-  `--cap-drop ALL` limit what the application can do; see
-  [Security considerations](security.md).
+  `--cap-drop ALL` and `--seccomp default` (a seccomp filter like Docker's
+  default profile) limit what the application can do, as does
+  `no_new_privs`, set by default (setuid programs cannot gain privileges);
+  see [Security considerations](security.md).
 - `--robind` and `--bind` give the application its configuration
   (read-only) and its log directory; `--bind-net-files` the host's
   `/etc/resolv.conf` and `/etc/hosts`; `--tmpfs /tmp` a private `/tmp`.
@@ -157,6 +175,7 @@ instead: it removes the mounts with `droot umount` in `ExecStopPost=`, and in
 `ExecStartPre=` in case a crash left some behind.
 
 ```console
+# mkdir -p /etc/droot && cp app.toml /etc/droot/
 # cp app.service /etc/systemd/system/
 # systemctl daemon-reload
 # systemctl enable --now app
