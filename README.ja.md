@@ -146,6 +146,29 @@ $ sudo mkdir /tmp/app && sudo tar -xpzf app.tar.gz -C /tmp/app   # 上記のよ�
 $ sudo capze --keep 5 /tmp/app /var/containers/app
 ```
 
+<a id="integration-with-dewy"></a>
+### dewy との連携
+
+[dewy](https://github.com/linyows/dewy) を使うと、サーバーがリリースを取りに行く形でデプロイできます。dewy はレジストリ（GitHub Releases、S3、GCS など）をポーリングし、新しいバージョンを `releases/` に展開して `current` シンボリックリンクを切り替え、接続を切らずにサーバーを再起動します（server-starter と同じく、待ち受けソケットは dewy が保持します）。dewy 自身の展開処理はルートファイルシステムを扱えない（シンボリックリンクを拒否し、所有者を保持しない）ため、配布物には droot のアーカイブを入れ、フック [`examples/dewy/droot-extract-release`](examples/dewy/droot-extract-release) で展開します。
+
+```console
+$ droot export --compress gzip --checksum -o build/rootfs.tar.gz app:1.2.3
+$ tar -czf app_linux_amd64.tar.gz -C build rootfs.tar.gz rootfs.tar.gz.sha256
+$ sha256sum app_linux_amd64.tar.gz > app_linux_amd64.tar.gz.sha256
+$ gh release create v1.2.3 app_linux_amd64.tar.gz app_linux_amd64.tar.gz.sha256
+```
+
+サーバーでは、root で `/var/containers/app` から次のように実行します。
+
+```console
+# dewy server --registry ghr://example/app --port 8080 --health-path /health \
+    --after-deploy-hook /usr/local/bin/droot-extract-release \
+    -- droot run --unshare --env SERVER_STARTER_PORT --env SERVER_STARTER_GENERATION \
+         --root /var/containers/app/current/rootfs
+```
+
+`--unshare` は必須です。dewy は古いリリースを削除するため、これがないと `droot run` のバインドマウントを通じてホストのファイルが削除されます。アプリケーションは、dewy の待ち受けソケットを `SERVER_STARTER_PORT` から受け取ります。systemd ユニットと詳細は [dewy によるデプロイ](documentation/deployment.md#deploying-with-dewy)（英語）を参照してください。
+
 <a id="commands"></a>
 ## コマンド
 
@@ -401,7 +424,7 @@ $ DOCKER_HOST=ssh://deploy@build.example.com droot export -o app.tar app
 <a id="documentation"></a>
 ## ドキュメント
 
-- [アプリケーションのデプロイ](documentation/deployment.md): `docker build` から systemd サービスまで（[ユニットの例](examples/systemd)付き）
+- [アプリケーションのデプロイ](documentation/deployment.md): `docker build` から systemd サービスまで（[ユニットの例](examples/systemd)付き）、および [dewy によるデプロイ](documentation/deployment.md#deploying-with-dewy)
 - [コマンドラインリファレンス](documentation/cli.md)
 - [droot の仕組み](documentation/architecture.md)
 - [セキュリティに関する考慮事項](documentation/security.md)

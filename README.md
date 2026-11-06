@@ -168,6 +168,38 @@ $ sudo mkdir /tmp/app && sudo tar -xpzf app.tar.gz -C /tmp/app   # after verifyi
 $ sudo capze --keep 5 /tmp/app /var/containers/app
 ```
 
+### Integration with dewy
+
+[dewy](https://github.com/linyows/dewy) lets the servers pull the releases: it
+polls a registry (GitHub Releases, S3, GCS, ...), extracts each new version
+into `releases/`, switches a `current` symlink and restarts the server without
+dropping connections, holding its listening socket like server-starter. dewy
+cannot extract a root file system itself (it refuses symbolic links and drops
+the owners), so the artifact carries the droot archive, extracted by the hook
+[`examples/dewy/droot-extract-release`](examples/dewy/droot-extract-release):
+
+```console
+$ droot export --compress gzip --checksum -o build/rootfs.tar.gz app:1.2.3
+$ tar -czf app_linux_amd64.tar.gz -C build rootfs.tar.gz rootfs.tar.gz.sha256
+$ sha256sum app_linux_amd64.tar.gz > app_linux_amd64.tar.gz.sha256
+$ gh release create v1.2.3 app_linux_amd64.tar.gz app_linux_amd64.tar.gz.sha256
+```
+
+and on the servers, as root, in `/var/containers/app`:
+
+```console
+# dewy server --registry ghr://example/app --port 8080 --health-path /health \
+    --after-deploy-hook /usr/local/bin/droot-extract-release \
+    -- droot run --unshare --env SERVER_STARTER_PORT --env SERVER_STARTER_GENERATION \
+         --root /var/containers/app/current/rootfs
+```
+
+`--unshare` is required: dewy deletes old releases, which would otherwise
+delete files of the host through the bind mounts of `droot run`. The
+application takes the listening socket of dewy from `SERVER_STARTER_PORT`. See
+[Deploying with dewy](documentation/deployment.md#deploying-with-dewy) for a
+systemd unit and the details.
+
 ## Commands
 
 Run `droot COMMAND --help` for the full list of options.
@@ -522,7 +554,8 @@ $ DOCKER_HOST=ssh://deploy@build.example.com droot export -o app.tar app
 ## Documentation
 
 - [Deploying an application](documentation/deployment.md): from `docker build`
-  to a systemd service, with [example units](examples/systemd)
+  to a systemd service, with [example units](examples/systemd), or with
+  [dewy](documentation/deployment.md#deploying-with-dewy)
 - [Command line reference](documentation/cli.md)
 - [How droot works](documentation/architecture.md)
 - [Security considerations](documentation/security.md)

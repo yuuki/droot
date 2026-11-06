@@ -17,6 +17,14 @@ Releases up to 0.7.7 are described on the
 - Rootless, a `LISTEN_PID` naming droot is changed to the PID of `COMMAND`,
   so that systemd socket activation works with `--env LISTEN_PID`.
 
+### Documentation
+
+- Deploying with [dewy](https://github.com/linyows/dewy): the artifact
+  carries the droot archive, extracted by the hook
+  `examples/dewy/droot-extract-release`, and `droot run --unshare --env
+  SERVER_STARTER_PORT` runs the application on the listening socket of dewy
+  (`examples/dewy/app.service`, `documentation/deployment.md`).
+
 ## [0.8.0] - 2026-11-06
 
 Maintenance release after several years: modern Go and Docker, far fewer

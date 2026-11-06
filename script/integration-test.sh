@@ -20,6 +20,7 @@
 set -euo pipefail
 
 DROOT=$(realpath "${1:-./droot}")
+REPO=$(cd "$(dirname "$0")/.." && pwd)
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/droot-e2e.XXXXXX")
 WORK=$(realpath "$WORK")
 IMAGE=droot-e2e:latest
@@ -353,6 +354,25 @@ if unshare -m --propagation private true 2>/dev/null; then
   fi
   echo "ok - umount --root / is refused"
 fi
+
+echo "# dewy hook (examples/dewy/droot-extract-release)"
+mkdir -p "$WORK/dewy/releases/1" "$WORK/dewy/releases/2"
+"$DROOT" export -q --compress gzip --checksum -o "$WORK/dewy/releases/1/rootfs.tar.gz" "$IMAGE"
+ln -s "$WORK/dewy/releases/1" "$WORK/dewy/current"
+(cd "$WORK/dewy" && "$REPO/examples/dewy/droot-extract-release" >/dev/null)
+assert_eq "dewy hook: the release is extracted with the owners of the image" \
+  "$(ls "$WORK/dewy/releases/1"; stat -c %u:%g "$WORK/dewy/current/rootfs/home/app")" \
+  "$(printf 'rootfs\nrootfs.tar.gz.sha256\n1500:1600')"
+assert_eq "dewy hook: droot run --root current/rootfs" \
+  "$("$DROOT" run --unshare --root "$WORK/dewy/current/rootfs")" "myapp-ok from-entrypoint from-cmd"
+"$DROOT" export -q --compress gzip -o "$WORK/dewy/releases/2/rootfs.tar.gz" "$IMAGE"
+echo "0000000000000000000000000000000000000000000000000000000000000000  rootfs.tar.gz" >"$WORK/dewy/releases/2/rootfs.tar.gz.sha256"
+ln -sfn "$WORK/dewy/releases/2" "$WORK/dewy/current"
+if (cd "$WORK/dewy" && "$REPO/examples/dewy/droot-extract-release" >/dev/null 2>&1); then
+  fail "dewy hook: an archive whose checksum does not match must not be extracted"
+fi
+[[ ! -e "$WORK/dewy/releases/2/rootfs" ]] || fail "dewy hook: rootfs extracted from an archive with a wrong checksum"
+echo "ok - dewy hook: an archive whose checksum does not match is not extracted"
 
 echo "# rootless"
 rootless_skip=""

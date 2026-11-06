@@ -1,0 +1,26 @@
+#!/bin/sh
+# The --after-deploy-hook of dewy (https://github.com/linyows/dewy) for droot:
+# extracts the droot archive shipped in the release that "current" points to
+# into RELEASE/rootfs, as root, so that the files keep the owners, modes,
+# setuid bits, symbolic links and hard links of the image. dewy's own
+# extraction cannot: it refuses symbolic links and drops the owners.
+#
+# The artifact dewy downloads (e.g. app_linux_amd64.tar.gz) contains the two
+# files written by
+#
+#   droot export --compress gzip --checksum -o rootfs.tar.gz IMAGE
+#
+# dewy runs the hook in its working directory, once it has extracted the
+# artifact and switched "current" to the new release, and before it restarts
+# the server. See documentation/deployment.md#deploying-with-dewy.
+set -eu
+
+release=$(readlink -f current)
+cd "$release"
+[ -d rootfs ] && exit 0
+sha256sum -c rootfs.tar.gz.sha256
+rm -rf rootfs.tmp
+mkdir rootfs.tmp
+tar -xpzf rootfs.tar.gz -C rootfs.tmp
+mv rootfs.tmp rootfs
+rm rootfs.tar.gz

@@ -101,6 +101,9 @@ extracted, and later run, as root.
 `droot run --root /var/containers/app/current` resolves the symlink: each run
 uses the release `current` pointed to when it started.
 
+To let the servers pull the releases instead, see
+[Deploying with dewy](#deploying-with-dewy).
+
 > [!WARNING]
 > Never delete a root directory that still has mounts below it: deleting it
 > would delete files of the host through the bind mounts. With `--unshare`
@@ -186,3 +189,111 @@ instead: it removes the mounts with `droot umount` in `ExecStopPost=`, and in
 
 capze keeps the previous releases: point `current` back to one of them, or
 deploy the previous archive again, and restart the service.
+
+## Deploying with dewy
+
+Instead of pushing the releases with capze, the servers can pull them with
+[dewy](https://github.com/linyows/dewy). `dewy server` polls a registry
+(GitHub Releases, Amazon S3, Google Cloud Storage, ...) and, for each new
+version (by semantic versioning), downloads it, extracts it into
+`releases/TIMESTAMP/`, switches the `current` symlink and restarts the server
+without dropping connections: like server-starter, dewy holds the listening
+socket and passes it on to each new process. It checks the new release with an
+HTTP request and rolls back if the check fails.
+
+dewy's own extraction does not suit a root file system: it refuses symbolic
+links, which every distribution has by the hundred, and drops the owners and
+the setuid, setgid and sticky bits. The artifact of a release therefore
+carries the droot archive, which a hook of dewy extracts with `tar`.
+
+### Publishing a release
+
+dewy picks the artifact whose name contains the OS and the architecture of the
+server (`app_linux_amd64.tar.gz`), and verifies it against a checksum file
+published next to it:
+
+```console
+$ droot export --compress gzip --checksum -o build/rootfs.tar.gz registry.example.com/app:1.2.3
+$ tar -czf app_linux_amd64.tar.gz -C build rootfs.tar.gz rootfs.tar.gz.sha256
+$ sha256sum app_linux_amd64.tar.gz > app_linux_amd64.tar.gz.sha256
+$ gh release create v1.2.3 app_linux_amd64.tar.gz app_linux_amd64.tar.gz.sha256
+```
+
+With S3 or GCS, upload the two files to `PREFIX/v1.2.3/`. dewy downloads the
+artifact in memory, and refuses those larger than 512 MiB.
+
+### Running dewy
+
+On each server, as root, install the hook
+[`examples/dewy/droot-extract-release`](../examples/dewy/droot-extract-release)
+as `/usr/local/bin/droot-extract-release`, and the unit
+[`examples/dewy/app.service`](../examples/dewy/app.service):
+
+```ini
+[Service]
+Type=exec
+WorkingDirectory=/var/containers/app
+EnvironmentFile=/etc/dewy/app.env
+ExecStart=/usr/local/bin/dewy server \
+    --registry ghr://example/app \
+    --port 8080 --health-path /health \
+    --after-deploy-hook /usr/local/bin/droot-extract-release \
+    --log-format json --log-level info \
+    -- /usr/local/bin/droot run --unshare \
+        --env SERVER_STARTER_PORT --env SERVER_STARTER_GENERATION \
+        --user app --cap-drop ALL --seccomp default \
+        --bind /var/log/app --bind-net-files --tmpfs /tmp \
+        --root /var/containers/app/current/rootfs
+```
+
+```console
+# mkdir -p /var/containers/app /etc/dewy
+# install -m 600 /dev/null /etc/dewy/app.env   # then add GITHUB_TOKEN=..., or the AWS_* variables
+# cp app.service /etc/systemd/system/
+# systemctl daemon-reload
+# systemctl enable --now app
+```
+
+For each new version, dewy:
+
+1. downloads the artifact, verifies its checksum, and extracts it into
+   `releases/TIMESTAMP/`: `rootfs.tar.gz` and its checksum;
+2. points `current` to the release and runs the hook, which verifies
+   `rootfs.tar.gz`, extracts it into `releases/TIMESTAMP/rootfs` as root with
+   `tar -p` (owners, modes, setuid bits and links as in the image) and deletes
+   it;
+3. starts a new `droot run` on the listening socket, stops the previous one
+   with `SIGTERM` and requests `/health` on port 8080; if no request succeeds
+   within 30 seconds (`--health-timeout`), it points `current` back to the
+   previous release and restarts it;
+4. deletes the releases beyond the 7 most recent.
+
+Notes:
+
+- `--unshare` is required. dewy deletes the old releases with all their files:
+  without a private mount namespace, the mounts that `droot run` leaves in a
+  release (`/proc`, `/sys`, the `--bind` mounts) would still be there, and
+  the deletion would delete files of the host through the bind mounts — again
+  at every deployment, since it then fails on `/proc` and leaves the release.
+- `--env SERVER_STARTER_PORT` is required. droot passes the listening socket
+  of dewy on to the application (as descriptor 3) but not the environment of
+  dewy, where `SERVER_STARTER_PORT=8080=3` gives its number. The application
+  must use that socket, e.g. with
+  [`github.com/lestrrat-go/server-starter/listener`](https://pkg.go.dev/github.com/lestrrat-go/server-starter/listener)
+  in Go: it cannot listen on the port itself, which is dewy's. The socket being
+  open already, the application needs no privilege for a port below 1024.
+- `droot run --root /var/containers/app/current/rootfs` resolves the symlink
+  when it starts, so each process stays in its release.
+- Keep `--health-path`. dewy goes on when the hook fails (a full disk, a
+  corrupt archive): it restarts the server anyway, and `droot run` fails over
+  and over, since the release has no `rootfs`, until the health check gives up
+  and dewy rolls back. Without a health check, the service stays down.
+- The default `KillMode=control-group` of the unit sends `SIGTERM` to the
+  application as well as to dewy, so that the application stops even if dewy
+  exits before passing the signal on.
+- dewy keeps every artifact it downloaded in its cache (`.dewy/cache` in its
+  working directory, or `$DEWY_CACHEDIR`): delete the old ones from time to
+  time.
+- Run as a user other than root, dewy runs droot rootless, which passes the
+  socket on as well. The hook then extracts the files as that user, root of
+  the user namespace: run the application with `--user 0`.

@@ -1,0 +1,44 @@
+# The application kept up to date by dewy (https://github.com/linyows/dewy)
+# and run by droot: dewy polls the registry, downloads each new release into
+# /var/containers/app/releases/, extracts its droot archive with
+# droot-extract-release, and restarts droot run without dropping connections
+# (dewy holds the listening socket and passes it on, as server-starter).
+# See documentation/deployment.md#deploying-with-dewy.
+[Unit]
+Description=app (dewy + droot)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=exec
+# dewy keeps current, releases/ and its cache here.
+WorkingDirectory=/var/containers/app
+# The credentials of the registry: GITHUB_TOKEN, AWS_ACCESS_KEY_ID, ...
+EnvironmentFile=/etc/dewy/app.env
+# --unshare is required: dewy deletes old releases with their files, which
+# would delete files of the host through the mounts of droot run.
+# droot passes on the listening socket of dewy, but not its environment:
+# --env SERVER_STARTER_PORT gives the application its number.
+ExecStart=/usr/local/bin/dewy server \
+    --registry ghr://example/app \
+    --port 8080 --health-path /health \
+    --after-deploy-hook /usr/local/bin/droot-extract-release \
+    --log-format json --log-level info \
+    -- /usr/local/bin/droot run --unshare \
+        --env SERVER_STARTER_PORT --env SERVER_STARTER_GENERATION \
+        --user app --cap-drop ALL --seccomp default \
+        --bind /var/log/app --bind-net-files --tmpfs /tmp \
+        --root /var/containers/app/current/rootfs
+# With the default KillMode=control-group, the application gets SIGTERM from
+# systemd too, and stops even if dewy exits first.
+Restart=on-failure
+RestartSec=5s
+
+# Resource limits: droot creates no cgroups, systemd does.
+MemoryMax=1G
+CPUQuota=200%
+TasksMax=512
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
