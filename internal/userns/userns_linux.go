@@ -25,6 +25,7 @@ import (
 // again, without returning; the second stage arranges to be killed if the
 // supervising droot dies, and returns.
 func Init() {
+	initialized = true
 	if fd := os.Getenv(envSync); fd != "" {
 		firstStage(fd)
 	}
@@ -40,6 +41,10 @@ func Init() {
 
 // parent is the PID of the supervising droot, in the second stage.
 var parent int
+
+// initialized is set by Init: Run runs the program again, which must handle
+// the stages.
+var initialized bool
 
 // Supervised reports whether droot is the second stage of a rootless droot,
 // which supervises it.
@@ -138,6 +143,10 @@ func readSubIDs(file, name string, id int) ([]Range, error) {
 // killed by the same signal). It does not return before the child exits.
 // If ctx is done before the child is started, it is not.
 func Run(ctx context.Context, m Mapping) error {
+	if !initialized {
+		// E.g. a test binary, which would run itself again.
+		return errors.New("rootless mode is not available in this program (userns.Init was not called)")
+	}
 	// The child is killed when the thread that started it exits: keep it.
 	runtime.LockOSThread()
 	// From now on, the signals are kept for the child.

@@ -365,6 +365,10 @@ if [[ -n $rootless_skip ]]; then
 else
   chmod 755 "$WORK"
   chmod 644 "$WORK/app.tar"
+  # A copy the other users can execute (the checkout may be in a home
+  # directory they cannot enter).
+  RL_DROOT="$WORK/droot"
+  install -m 755 "$DROOT" "$RL_DROOT"
   # as_user USER COMMAND...: runs COMMAND as USER, with its own runtime
   # directory for the locks of droot. user_prefix USER sets AS_USER to the
   # command prefix doing it, for commands run in the background.
@@ -388,9 +392,9 @@ else
   chown nobody "$WORK/rl-nobody"
   as_user nobody tar -xf "$WORK/app.tar" -C "$WORK/rl-nobody"
   assert_eq "rootless without subordinate IDs: root only" \
-    "$(as_user nobody "$DROOT" run --root "$WORK/rl-nobody" --user 0 -- sh -c 'id -u; cat /proc/self/setgroups')" \
+    "$(as_user nobody "$RL_DROOT" run --root "$WORK/rl-nobody" --user 0 -- sh -c 'id -u; cat /proc/self/setgroups')" \
     "$(printf '0\ndeny')"
-  if as_user nobody "$DROOT" run --root "$WORK/rl-nobody" 2>"$WORK/rl.err"; then
+  if as_user nobody "$RL_DROOT" run --root "$WORK/rl-nobody" 2>"$WORK/rl.err"; then
     fail "rootless without subordinate IDs: the image's USER must be refused"
   fi
   grep -q "do not exist in the user namespace" "$WORK/rl.err" || fail "rootless: $(cat "$WORK/rl.err")"
@@ -402,30 +406,30 @@ else
     command -v newuidmap >/dev/null && command -v newgidmap >/dev/null; then
     mkdir "$WORK/rl"
     chown "$SUB_USER" "$WORK/rl"
-    as_user "$SUB_USER" "$DROOT" unshare tar -xpf "$WORK/app.tar" -C "$WORK/rl"
+    as_user "$SUB_USER" "$RL_DROOT" unshare tar -xpf "$WORK/app.tar" -C "$WORK/rl"
     first_subuid=$(grep -m 1 "^$SUB_USER:" /etc/subuid | cut -d: -f2)
     assert_eq "droot unshare: archives keep their owners" \
       "$(stat -c %u "$WORK/rl/home/app")" "$((first_subuid + 1500 - 1))"
     assert_eq "rootless: the image's ENTRYPOINT and CMD run as its USER" \
-      "$(as_user "$SUB_USER" "$DROOT" run --root "$WORK/rl")" "myapp-ok from-entrypoint from-cmd"
+      "$(as_user "$SUB_USER" "$RL_DROOT" run --root "$WORK/rl")" "myapp-ok from-entrypoint from-cmd"
     assert_eq "rootless: user, devices, kernel file systems, private mounts" \
-      "$(as_user "$SUB_USER" "$DROOT" run --root "$WORK/rl" -- sh -c '
+      "$(as_user "$SUB_USER" "$RL_DROOT" run --root "$WORK/rl" -- sh -c '
           id -u; touch ~/x && echo home-writable
           echo x >/dev/null && head -c 1 /dev/zero | od -An -tx1 | tr -d " "
           stat -f -c %T /proc /dev/pts /dev/shm; touch /sys/x 2>/dev/null || echo sys-ro'
         mounts_under "$WORK/rl")" \
       "$(printf '1500\nhome-writable\n00\nproc\ndevpts\ntmpfs\nsys-ro\n0')"
     assert_eq "rootless: exit status" \
-      "$(as_user "$SUB_USER" "$DROOT" run --root "$WORK/rl" -- sh -c 'exit 7' || echo $?)" "7"
+      "$(as_user "$SUB_USER" "$RL_DROOT" run --root "$WORK/rl" -- sh -c 'exit 7' || echo $?)" "7"
     user_prefix "$SUB_USER"
-    "${AS_USER[@]}" "$DROOT" run --root "$WORK/rl" -- sleep 30 &
+    "${AS_USER[@]}" "$RL_DROOT" run --root "$WORK/rl" -- sleep 30 &
     supervisor=$!
     sleep 1
     kill -TERM "$supervisor"
     status=0
     wait "$supervisor" || status=$?
     assert_eq "rootless: signals are passed on to COMMAND" "$status" "143"
-    "${AS_USER[@]}" "$DROOT" run --root "$WORK/rl" -- sleep 31 &
+    "${AS_USER[@]}" "$RL_DROOT" run --root "$WORK/rl" -- sleep 31 &
     supervisor=$!
     sleep 1
     kill -KILL "$supervisor"

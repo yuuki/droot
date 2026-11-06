@@ -247,9 +247,13 @@ func doRun(ctx context.Context, cmd *cli.Invocation) (err error) {
 	if runtime.GOOS != "linux" {
 		return fmt.Errorf("droot run is only supported on Linux (running on %s)", runtime.GOOS)
 	}
-	if os.Geteuid() != 0 {
-		// Rootless: run again as root of a user namespace, before
-		// reading anything (--config and --env-file may be pipes).
+	// Rootless, droot runs again as root of a user namespace (see
+	// runRootless), after the checks it can make without reading the
+	// files of --config and --env-file, which may be pipes: only the
+	// child must read them. With --config, which may give any option,
+	// the child makes every check.
+	rootless := os.Geteuid() != 0
+	if rootless && cmd.IsSet("config") {
 		return runRootless(ctx)
 	}
 
@@ -289,26 +293,6 @@ func doRun(ctx context.Context, cmd *cli.Invocation) (err error) {
 
 	rootDir, err := mounter.ResolveRootDir(cmd.String("root"))
 	if err != nil {
-		return err
-	}
-
-	// The environment given on the command line, in increasing order of
-	// precedence: --env-file, then --env. Files and values are read on the
-	// host, before the chroot.
-	var extraEnv []string
-	for _, file := range cmd.Strings("env-file") {
-		env, err := environ.ReadEnvFileFrom(file, os.LookupEnv)
-		if err != nil {
-			return fmt.Errorf("--env-file: %w", err)
-		}
-		extraEnv = append(extraEnv, env...)
-	}
-	cliEnv, err := environ.ExpandBare(cmd.Strings("env"), os.LookupEnv)
-	if err != nil {
-		return err
-	}
-	extraEnv = append(extraEnv, cliEnv...)
-	if err := environ.Validate(extraEnv); err != nil {
 		return err
 	}
 
@@ -374,8 +358,32 @@ func doRun(ctx context.Context, cmd *cli.Invocation) (err error) {
 		}
 		return cmd.UsageError("a command to run is required")
 	}
+	if rootless {
+		return runRootless(ctx)
+	}
+
+	// The environment given on the command line, in increasing order of
+	// precedence: --env-file, then --env. Files and values are read on the
+	// host, before the chroot.
+	var extraEnv []string
+	for _, file := range cmd.Strings("env-file") {
+		env, err := environ.ReadEnvFileFrom(file, os.LookupEnv)
+		if err != nil {
+			return fmt.Errorf("--env-file: %w", err)
+		}
+		extraEnv = append(extraEnv, env...)
+	}
+	cliEnv, err := environ.ExpandBare(cmd.Strings("env"), os.LookupEnv)
+	if err != nil {
+		return err
+	}
+	extraEnv = append(extraEnv, cliEnv...)
+	if err := environ.Validate(extraEnv); err != nil {
+		return err
+	}
+
 	// Root of a user namespace: rootless, or in a container.
-	rootless := osutil.InUserNamespace()
+	rootless = osutil.InUserNamespace()
 
 	// From now on and up to the exec, everything happens on this OS
 	// thread: the capability bounding set is a per-thread attribute, and

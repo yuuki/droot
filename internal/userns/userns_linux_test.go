@@ -1,6 +1,7 @@
 package userns
 
 import (
+	"context"
 	"reflect"
 	"strings"
 	"testing"
@@ -56,5 +57,12 @@ func TestMapping(t *testing.T) {
 	}
 	if got := m.String(); got != "uid 0→1000 1-65536→100000-165535 65537-65546→300000-300009, gid 0→1001" {
 		t.Errorf("String: %s", got)
+	}
+}
+
+func TestRunNeedsInit(t *testing.T) {
+	// A test binary must not run itself again in a user namespace.
+	if err := Run(context.Background(), Mapping{}); err == nil || !strings.Contains(err.Error(), "userns.Init") {
+		t.Fatalf("got %v", err)
 	}
 }
