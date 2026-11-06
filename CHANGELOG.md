@@ -7,6 +7,16 @@ Releases up to 0.7.7 are described on the
 
 ## [Unreleased]
 
+### Fixed
+
+- Rootless `droot run` and `droot unshare` pass the descriptors droot
+  inherited on to `COMMAND` with their numbers. The pipe that droot used to
+  start itself in the user namespace took the place of descriptor 3, so the
+  listening socket of server-starter or dewy (`SERVER_STARTER_PORT=8080=3`)
+  or of systemd socket activation was lost.
+- Rootless, a `LISTEN_PID` naming droot is changed to the PID of `COMMAND`,
+  so that systemd socket activation works with `--env LISTEN_PID`.
+
 ## [0.8.0] - 2026-11-06
 
 Maintenance release after several years: modern Go and Docker, far fewer

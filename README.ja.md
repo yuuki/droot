@@ -239,6 +239,7 @@ droot は次の順に処理を行います。
 - `COMMAND` は、droot を起動したシェルの `PATH` ではなく、コンテナの環境の `PATH`（ない場合は `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`）から検索されます。
 - イメージの `STOPSIGNAL` は保存されますが、使用されません。droot はスーパーバイザーではないためです。たとえば systemd ユニットの `KillSignal=` として設定してください。
 - `--cp` を使うと、コンテナの `/etc/passwd` と `/etc/group` はホストのものになります。そのため、イメージの `USER` はホストにも存在するか、`--user` で上書きする必要があります。
+- `COMMAND` は、droot が開いているディスクリプタ（close-on-exec でないもの）を受け継ぎます。dewy や server-starter、systemd のソケットアクティベーションの待ち受けソケットなどです。ただし droot の環境変数は受け継がないので、それらの変数は `--env SERVER_STARTER_PORT` や `--env LISTEN_FDS --env LISTEN_PID --env LISTEN_FDNAMES` で渡してください。
 
 <a id="resource-limits"></a>
 #### リソース制限
@@ -344,6 +345,7 @@ root 以外のユーザーが `droot run` を実行すると、**rootless** で�
 - マウントは `--unshare` と同じくプライベートなマウント名前空間で行われ、`COMMAND` とともに消えます。`droot umount` は不要です。
 - `/proc` とデバイスファイルはホストのもののバインドマウントです（新しい procfs には PID 名前空間が必要で、デバイスノードは作成できないため）。
 - ファイルの所有者はそのまま使われます。イメージのユーザーが自分のファイルを所有するように、アーカイブは `droot unshare tar -xpf` で展開し、`droot unshare rm -rf` で削除してください。root の場合は、これまでどおり `tar -xpf` で展開します。
+- root で実行した場合と同じく、`COMMAND` は droot が開いているディスクリプタを同じ番号のまま受け継ぎます。droot を指す `LISTEN_PID`（systemd のソケットアクティベーション）は `COMMAND` の PID に書き換えられます。
 
 ```console
 $ grep "^$USER:" /etc/subuid /etc/subgid

@@ -243,15 +243,19 @@ through the `userns` package first:
    from 1 on — if the user has both, and `newuidmap` and `newgidmap` are
    installed; otherwise the user alone.
 2. Start `/proc/self/exe` with the same arguments in a new user namespace
-   (`CLONE_NEWUSER`, with `PR_SET_PDEATHSIG` set to `SIGKILL`). This first
-   stage blocks on a pipe while the parent writes its ID maps: with
-   `newuidmap`/`newgidmap`, or directly (`setgroups` denied, then a
-   one-line `uid_map` and `gid_map`), which an unprivileged process may do
-   for its own IDs.
+   (`CLONE_NEWUSER`, with `PR_SET_PDEATHSIG` set to `SIGKILL`). The
+   descriptors droot inherited without close-on-exec (the listening sockets
+   of server-starter or of systemd socket activation, for instance) keep
+   their numbers in the child, and so in the command; the parent closes its
+   copies. This first stage blocks on a pipe, passed after them, while the
+   parent writes its ID maps: with `newuidmap`/`newgidmap`, or directly
+   (`setgroups` denied, then a one-line `uid_map` and `gid_map`), which an
+   unprivileged process may do for its own IDs.
 3. Released, the first stage executes droot again: having become root of
    the namespace before this `execve(2)`, the second stage gets the
    capabilities of the namespace, re-arms the parent-death signal (cleared by
-   the privilege change) and runs `droot run` as above, root of the
+   the privilege change), changes a `LISTEN_PID` naming the parent to its own
+   PID, which the command keeps, and runs `droot run` as above, root of the
    namespace, with these differences: the mount namespace is always private
    (as with `--unshare`); procfs, which needs a PID namespace of its own
    there, is replaced by a recursive bind mount of the host's `/proc`; the

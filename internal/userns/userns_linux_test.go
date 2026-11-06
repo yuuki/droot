@@ -2,9 +2,13 @@ package userns
 
 import (
 	"context"
+	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestSubIDs(t *testing.T) {
@@ -64,5 +68,85 @@ func TestRunNeedsInit(t *testing.T) {
 	// A test binary must not run itself again in a user namespace.
 	if err := Run(context.Background(), Mapping{}); err == nil || !strings.Contains(err.Error(), "userns.Init") {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func TestInheritedFiles(t *testing.T) {
+	// Descriptors without FD_CLOEXEC, as inherited across execve(2), are
+	// passed on at their numbers; those with FD_CLOEXEC, like the
+	// descriptors droot opens itself, are not.
+	var cloexec []int
+	// inherit returns a descriptor without FD_CLOEXEC on a new pipe, which
+	// has its own blocking mode.
+	inherit := func(nonBlocking bool) int {
+		var p [2]int
+		if err := unix.Pipe2(p[:], unix.O_CLOEXEC); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = unix.Close(p[0]); _ = unix.Close(p[1]) })
+		cloexec = append(cloexec, p[0], p[1])
+		if err := unix.SetNonblock(p[0], nonBlocking); err != nil {
+			t.Fatal(err)
+		}
+		fd, err := unix.FcntlInt(uintptr(p[0]), unix.F_DUPFD, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return fd
+	}
+	blocking, nonBlocking := inherit(false), inherit(true)
+
+	files, err := inheritedFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := func(fd int) *os.File {
+		if fd-3 < len(files) {
+			return files[fd-3]
+		}
+		return nil
+	}
+	for _, fd := range []int{blocking, nonBlocking} {
+		f := at(fd)
+		if f == nil {
+			t.Fatalf("descriptor %d is not passed on: %v", fd, files)
+		}
+		// exec.Cmd passes ExtraFiles on with Fd().
+		if got := f.Fd(); got != uintptr(fd) {
+			t.Errorf("entry of descriptor %d: %d", fd, got)
+		}
+	}
+	for _, fd := range cloexec {
+		if at(fd) != nil {
+			t.Errorf("descriptor %d with FD_CLOEXEC is passed on", fd)
+		}
+	}
+	// The child shares the mode of the descriptors: Fd() must not change it.
+	for fd, want := range map[int]bool{blocking: false, nonBlocking: true} {
+		fl, err := unix.FcntlInt(uintptr(fd), unix.F_GETFL, 0)
+		if got := fl&unix.O_NONBLOCK != 0; err != nil || got != want {
+			t.Errorf("descriptor %d: non-blocking %v (%v), want %v", fd, got, err, want)
+		}
+	}
+	// Closes blocking and nonBlocking, and the descriptors the test
+	// binary itself inherited, which it does not use.
+	closeFiles(files)
+	if _, err := unix.FcntlInt(uintptr(blocking), unix.F_GETFD, 0); err == nil {
+		t.Errorf("closeFiles left descriptor %d open", blocking)
+	}
+}
+
+func TestAdoptListenPID(t *testing.T) {
+	const parentPID = "4242"
+	t.Setenv("LISTEN_PID", parentPID)
+	adoptListenPID(parentPID)
+	if got, want := os.Getenv("LISTEN_PID"), strconv.Itoa(os.Getpid()); got != want {
+		t.Errorf("LISTEN_PID of the supervising droot: got %s, want %s", got, want)
+	}
+	// Descriptors meant for another process are left alone.
+	t.Setenv("LISTEN_PID", "1")
+	adoptListenPID(parentPID)
+	if got := os.Getenv("LISTEN_PID"); got != "1" {
+		t.Errorf("LISTEN_PID of another process: got %s", got)
 	}
 }

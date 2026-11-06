@@ -314,6 +314,11 @@ echo "ok - an empty --user is refused"
 assert_eq "--unshare: mounts in a private namespace" \
   "$("$DROOT" run --root "$WORK/app" --user root --unshare --tmpfs /tmp -- sh -c 'stat -f -c %T /proc /tmp'; mounts_under "$WORK/app")" \
   "$(printf 'proc\ntmpfs\n0')"
+# Listening sockets of server-starter (dewy) or of systemd socket
+# activation: droot replaces itself with COMMAND, which keeps them.
+assert_eq "COMMAND inherits the descriptors of droot" \
+  "$("$DROOT" run --root "$WORK/app" --user root --unshare -- sh -c 'cat <&3; cat <&5' 3<<<fd3 5<<<fd5)" \
+  "$(printf 'fd3\nfd5')"
 assert_eq "--hostname" \
   "$("$DROOT" run --root "$WORK/app" --user root --unshare --hostname droot-e2e -- sh -c 'echo "$(hostname) $HOSTNAME"'; [[ $(hostname) != droot-e2e ]] && echo host-unchanged)" \
   "$(printf 'droot-e2e droot-e2e\nhost-unchanged')"
@@ -399,6 +404,14 @@ else
   fi
   grep -q "do not exist in the user namespace" "$WORK/rl.err" || fail "rootless: $(cat "$WORK/rl.err")"
   echo "ok - rootless without subordinate IDs: the image's USER is refused"
+  # The pipe of the first stage must not take the place of an inherited
+  # descriptor (the listening socket of server-starter is descriptor 3).
+  assert_eq "rootless: COMMAND inherits the descriptors of droot" \
+    "$(as_user nobody "$RL_DROOT" run --root "$WORK/rl-nobody" --user 0 -- sh -c 'cat <&3; cat <&5' 3<<<fd3 5<<<fd5)" \
+    "$(printf 'fd3\nfd5')"
+  assert_eq "rootless: LISTEN_PID of systemd socket activation is the PID of COMMAND" \
+    "$(as_user nobody sh -c 'export LISTEN_PID=$$; exec "$0" run --root "$1" --user 0 -e LISTEN_PID -- sh -c "[ \"\$LISTEN_PID\" = \$\$ ] && echo same"' "$RL_DROOT" "$WORK/rl-nobody")" \
+    "same"
 
   # A user with subordinate IDs: ROOTLESS_USER, or the user who ran sudo.
   SUB_USER=${ROOTLESS_USER:-${SUDO_USER:-}}

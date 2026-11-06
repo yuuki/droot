@@ -295,6 +295,11 @@ Notes:
 - With `--cp`, the container's `/etc/passwd` and `/etc/group` are the host's,
   so the image's `USER` must exist on the host too, or be overridden with
   `--user`.
+- `COMMAND` inherits the open descriptors of droot (those without
+  close-on-exec), such as the listening sockets of dewy or server-starter, or
+  of systemd socket activation, but not its environment: pass their variables
+  with `--env SERVER_STARTER_PORT` or `--env LISTEN_FDS --env LISTEN_PID
+  --env LISTEN_FDNAMES`.
 
 #### Resource limits
 
@@ -423,6 +428,9 @@ with its status. In the namespace:
 - the files keep their owners: extract archives with `droot unshare tar -xpf`
   so that the users of the image own their files, and delete them with
   `droot unshare rm -rf`. As root, extract them with `tar -xpf` as usual.
+- `COMMAND` inherits the open descriptors of droot with their numbers, as when
+  run as root; a `LISTEN_PID` naming droot (systemd socket activation) is
+  changed to the PID of `COMMAND`.
 
 ```console
 $ grep "^$USER:" /etc/subuid /etc/subgid

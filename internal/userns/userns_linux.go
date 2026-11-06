@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"os/user"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -32,6 +33,7 @@ func Init() {
 	if pid := os.Getenv(envParent); pid != "" {
 		_ = os.Unsetenv(envParent)
 		parent, _ = strconv.Atoi(pid)
+		adoptListenPID(pid)
 		if err := KeepParentDeathSignal(); err != nil {
 			fmt.Fprintf(os.Stderr, "droot: %v\n", err)
 			os.Exit(1)
@@ -41,6 +43,17 @@ func Init() {
 
 // parent is the PID of the supervising droot, in the second stage.
 var parent int
+
+// adoptListenPID takes over the descriptors of systemd socket activation:
+// systemd gives them to the process it starts, the supervising droot (PID
+// parentPID), which passes them on to the second stage. LISTEN_PID then
+// names the second stage, whose PID COMMAND keeps, so that
+// sd_listen_fds(3) in COMMAND accepts them (with --env LISTEN_PID).
+func adoptListenPID(parentPID string) {
+	if os.Getenv("LISTEN_PID") == parentPID {
+		_ = os.Setenv("LISTEN_PID", strconv.Itoa(os.Getpid()))
+	}
+}
 
 // initialized is set by Init: Run runs the program again, which must handle
 // the stages.
@@ -191,6 +204,14 @@ func Run(ctx context.Context, m Mapping) error {
 // group of its own, so that the signals sent to the process group of droot
 // (by timeout(1), kill -- -PGID, ...) reach it only once, passed on by droot.
 func start(m Mapping, ownGroup bool) (*exec.Cmd, func(), error) {
+	// The descriptors droot inherited keep their numbers in the child, and
+	// so in COMMAND; the pipe of the first stage comes after them. Once the
+	// child is started, it has its own copies.
+	inherited, err := inheritedFiles()
+	if err != nil {
+		return nil, nil, err
+	}
+	defer closeFiles(inherited)
 	r, w, err := os.Pipe()
 	if err != nil {
 		return nil, nil, err
@@ -199,8 +220,9 @@ func start(m Mapping, ownGroup bool) (*exec.Cmd, func(), error) {
 	cmd := exec.Command("/proc/self/exe", os.Args[1:]...) //nolint:gosec // G204: droot itself, with its own arguments
 	cmd.Args[0] = os.Args[0]
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	cmd.ExtraFiles = []*os.File{r}
-	cmd.Env = append(os.Environ(), envSync+"=3", envParent+"="+strconv.Itoa(os.Getpid()))
+	cmd.ExtraFiles = slices.Concat(inherited, []*os.File{r})
+	syncFD := strconv.Itoa(3 + len(inherited))
+	cmd.Env = append(os.Environ(), envSync+"="+syncFD, envParent+"="+strconv.Itoa(os.Getpid()))
 	cmd.SysProcAttr = &syscall.SysProcAttr{Cloneflags: syscall.CLONE_NEWUSER, Pdeathsig: syscall.SIGKILL, Setpgid: ownGroup}
 	if err := cmd.Start(); err != nil {
 		_ = w.Close()
@@ -217,6 +239,51 @@ func start(m Mapping, ownGroup bool) (*exec.Cmd, func(), error) {
 		_, _ = w.Write([]byte{0})
 		_ = w.Close()
 	}, nil
+}
+
+// inheritedFiles returns the descriptors above 2 that droot inherited open
+// across execve(2), i.e. without FD_CLOEXEC — the listening sockets of
+// server-starter or of systemd socket activation, for instance — as
+// exec.Cmd.ExtraFiles that keep their numbers: entry i is descriptor 3+i, nil
+// for the numbers in between, which the child closes. Every descriptor droot
+// opens itself has FD_CLOEXEC. os.NewFile leaves the descriptors in their
+// blocking or non-blocking mode, which the child shares.
+func inheritedFiles() ([]*os.File, error) {
+	entries, err := os.ReadDir("/proc/self/fd")
+	if err != nil {
+		return nil, fmt.Errorf("list the open descriptors: %w", err)
+	}
+	var fds []int
+	for _, e := range entries {
+		fd, err := strconv.Atoi(e.Name())
+		if err != nil || fd < 3 {
+			continue
+		}
+		// Fails for the descriptor of the directory listed, closed since.
+		flags, err := unix.FcntlInt(uintptr(fd), unix.F_GETFD, 0)
+		if err != nil || flags&unix.FD_CLOEXEC != 0 {
+			continue
+		}
+		fds = append(fds, fd)
+	}
+	if len(fds) == 0 {
+		return nil, nil
+	}
+	slices.Sort(fds)
+	files := make([]*os.File, fds[len(fds)-1]-2)
+	for _, fd := range fds {
+		files[fd-3] = os.NewFile(uintptr(fd), "inherited descriptor "+strconv.Itoa(fd))
+	}
+	log.Debugf("descriptors passed on to the user namespace: %v", fds)
+	return files, nil
+}
+
+func closeFiles(files []*os.File) {
+	for _, f := range files {
+		if f != nil {
+			_ = f.Close()
+		}
+	}
 }
 
 // disabledHint explains the usual reasons why user namespaces cannot be
