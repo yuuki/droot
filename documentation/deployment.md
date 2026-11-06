@@ -197,9 +197,9 @@ Instead of pushing the releases with capze, the servers can pull them with
 (GitHub Releases, Amazon S3, Google Cloud Storage, ...) and, for each new
 version (by semantic versioning), downloads it, extracts it into
 `releases/TIMESTAMP/`, switches the `current` symlink and restarts the server
-without dropping connections: like server-starter, dewy holds the listening
-socket and passes it on to each new process. It checks the new release with an
-HTTP request and rolls back if the check fails.
+without dropping connections when the new release starts: like server-starter,
+dewy holds the listening socket and passes it on to each new process. It
+checks the new release with an HTTP request and rolls back if the check fails.
 
 dewy's own extraction does not suit a root file system: it refuses symbolic
 links, which every distribution has by the hundred, and drops the owners and
@@ -213,14 +213,16 @@ server (`app_linux_amd64.tar.gz`), and verifies it against a checksum file
 published next to it:
 
 ```console
+$ mkdir -p build
 $ droot export --compress gzip --checksum -o build/rootfs.tar.gz registry.example.com/app:1.2.3
 $ tar -czf app_linux_amd64.tar.gz -C build rootfs.tar.gz rootfs.tar.gz.sha256
 $ sha256sum app_linux_amd64.tar.gz > app_linux_amd64.tar.gz.sha256
 $ gh release create v1.2.3 app_linux_amd64.tar.gz app_linux_amd64.tar.gz.sha256
 ```
 
-With S3 or GCS, upload the two files to `PREFIX/v1.2.3/`. dewy downloads the
-artifact in memory, and refuses those larger than 512 MiB.
+With S3 or GCS, upload the two files to `PREFIX/v1.2.3/`. dewy refuses
+artifacts larger than 512 MiB, and downloads them in memory, which takes
+several times their size.
 
 ### Running dewy
 
@@ -248,6 +250,7 @@ ExecStart=/usr/local/bin/dewy server \
 
 ```console
 # mkdir -p /var/containers/app /etc/dewy
+# install -d -o 1500 -g 1500 /var/log/app      # owned by the image's user app (uid 1500 here)
 # install -m 600 /dev/null /etc/dewy/app.env   # then add GITHUB_TOKEN=..., or the AWS_* variables
 # cp app.service /etc/systemd/system/
 # systemctl daemon-reload
@@ -263,10 +266,12 @@ For each new version, dewy:
    `tar -p` (owners, modes, setuid bits and links as in the image) and deletes
    it;
 3. starts a new `droot run` on the listening socket, stops the previous one
-   with `SIGTERM` and requests `/health` on port 8080; if no request succeeds
-   within 30 seconds (`--health-timeout`), it points `current` back to the
-   previous release and restarts it;
-4. deletes the releases beyond the 7 most recent.
+   with `SIGTERM` right away, without waiting for the new one to answer, and
+   requests `/health` on port 8080; if no request succeeds within 30 seconds
+   (`--health-timeout`), it points `current` back to the previous release,
+   restarts it, and skips that version from then on;
+4. once the new release is healthy, deletes the releases beyond the 7 most
+   recent (by modification time).
 
 Notes:
 
@@ -285,15 +290,27 @@ Notes:
 - `droot run --root /var/containers/app/current/rootfs` resolves the symlink
   when it starts, so each process stays in its release.
 - Keep `--health-path`. dewy goes on when the hook fails (a full disk, a
-  corrupt archive): it restarts the server anyway, and `droot run` fails over
-  and over, since the release has no `rootfs`, until the health check gives up
-  and dewy rolls back. Without a health check, the service stays down.
+  corrupt archive): it restarts the server anyway, the previous process is
+  stopped, and the new `droot run` fails, since the release has no `rootfs`,
+  and is started again and again without delay (filling the log) until the
+  health check gives up: the service is down for `--health-timeout`. dewy
+  then rolls back and skips that version for good: to deploy it again once
+  the cause is fixed, delete `.dewy/cache/blocked`, or publish a new version.
+  With nothing to roll back to (the first deployment), or without a health
+  check, the service stays down.
+- The application must stop gracefully on `SIGTERM`, which dewy sends to the
+  previous process at every deployment and cannot change: the `STOPSIGNAL`
+  of the image does not apply.
 - The default `KillMode=control-group` of the unit sends `SIGTERM` to the
   application as well as to dewy, so that the application stops even if dewy
   exits before passing the signal on.
 - dewy keeps every artifact it downloaded in its cache (`.dewy/cache` in its
-  working directory, or `$DEWY_CACHEDIR`): delete the old ones from time to
-  time.
+  working directory, or `$DEWY_CACHEDIR`): delete the files of old versions
+  (`vX.Y.Z--NAME`) from time to time, but not `current`, `blocked` or the
+  file of the running version, which would make dewy deploy again.
+- The limits of the unit (`MemoryMax=`, ...) cover dewy, the hook and, during
+  a deployment, two processes of the application.
 - Run as a user other than root, dewy runs droot rootless, which passes the
-  socket on as well. The hook then extracts the files as that user, root of
-  the user namespace: run the application with `--user 0`.
+  socket on as well. The hook, run by dewy, then extracts the files as that
+  user, who is root in the user namespace of droot: run the application with
+  `--user 0`.

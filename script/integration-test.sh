@@ -356,23 +356,49 @@ if unshare -m --propagation private true 2>/dev/null; then
 fi
 
 echo "# dewy hook (examples/dewy/droot-extract-release)"
-mkdir -p "$WORK/dewy/releases/1" "$WORK/dewy/releases/2"
-"$DROOT" export -q --compress gzip --checksum -o "$WORK/dewy/releases/1/rootfs.tar.gz" "$IMAGE"
-ln -s "$WORK/dewy/releases/1" "$WORK/dewy/current"
-(cd "$WORK/dewy" && "$REPO/examples/dewy/droot-extract-release" >/dev/null)
-assert_eq "dewy hook: the release is extracted with the owners of the image" \
-  "$(ls "$WORK/dewy/releases/1"; stat -c %u:%g "$WORK/dewy/current/rootfs/home/app")" \
-  "$(printf 'rootfs\nrootfs.tar.gz.sha256\n1500:1600')"
+HOOK=$REPO/examples/dewy/droot-extract-release
+# A file system with what the extraction of dewy loses: owners, a setuid
+# file, a hard link, a symbolic link, a sticky directory.
+src=$WORK/dewy/src
+mkdir -p "$src/bin" "$src/tmp" "$src/home/app" "$WORK/dewy/releases/1"
+printf 'x' >"$src/bin/tool"
+chmod 4755 "$src/bin/tool"
+ln "$src/bin/tool" "$src/bin/tool-link"
+ln -s tool "$src/bin/tool-sym"
+chmod 1777 "$src/tmp"
+chmod 755 "$src/home/app"
+chown 1500:1600 "$src/home/app"
+rel=$WORK/dewy/releases/1
+tar -czf "$rel/rootfs.tar.gz" --numeric-owner -C "$src" .
+(cd "$rel" && sha256sum rootfs.tar.gz >rootfs.tar.gz.sha256)
+ln -s "$rel" "$WORK/dewy/current"
+(cd "$WORK/dewy" && "$HOOK" >/dev/null)
+assert_eq "dewy hook: owners, modes, setuid bits and links are kept" \
+  "$(ls "$rel"; cd "$rel/rootfs" && stat -c '%n %u:%g %a %h' bin/tool tmp home/app && readlink bin/tool-sym && [[ bin/tool -ef bin/tool-link ]] && echo hard-link)" \
+  "$(printf 'rootfs\nrootfs.tar.gz.sha256\nbin/tool 0:0 4755 2\ntmp 0:0 1777 2\nhome/app 1500:1600 755 2\ntool\nhard-link')"
+touch "$rel/rootfs/marker"
+(cd "$WORK/dewy" && "$HOOK" >/dev/null)
+[[ -e "$rel/rootfs/marker" ]] || fail "dewy hook: a release already extracted must be left alone"
+echo "ok - dewy hook: a release already extracted is left alone"
+# The archive of an image, run with droot.
+rel=$WORK/dewy/releases/2
+mkdir "$rel"
+"$DROOT" export -q --compress gzip --checksum -o "$rel/rootfs.tar.gz" "$IMAGE"
+ln -sfn "$rel" "$WORK/dewy/current"
+(cd "$WORK/dewy" && "$HOOK" >/dev/null)
 assert_eq "dewy hook: droot run --root current/rootfs" \
   "$("$DROOT" run --unshare --root "$WORK/dewy/current/rootfs")" "myapp-ok from-entrypoint from-cmd"
-"$DROOT" export -q --compress gzip -o "$WORK/dewy/releases/2/rootfs.tar.gz" "$IMAGE"
-echo "0000000000000000000000000000000000000000000000000000000000000000  rootfs.tar.gz" >"$WORK/dewy/releases/2/rootfs.tar.gz.sha256"
-ln -sfn "$WORK/dewy/releases/2" "$WORK/dewy/current"
-if (cd "$WORK/dewy" && "$REPO/examples/dewy/droot-extract-release" >/dev/null 2>&1); then
+# A failure leaves no rootfs, and gives the space back.
+rel=$WORK/dewy/releases/3
+mkdir "$rel"
+cp "$WORK/dewy/releases/2/rootfs.tar.gz.sha256" "$rel/"
+printf 'not the archive' | gzip >"$rel/rootfs.tar.gz"
+ln -sfn "$rel" "$WORK/dewy/current"
+if (cd "$WORK/dewy" && "$HOOK" >/dev/null 2>&1); then
   fail "dewy hook: an archive whose checksum does not match must not be extracted"
 fi
-[[ ! -e "$WORK/dewy/releases/2/rootfs" ]] || fail "dewy hook: rootfs extracted from an archive with a wrong checksum"
-echo "ok - dewy hook: an archive whose checksum does not match is not extracted"
+assert_eq "dewy hook: an archive whose checksum does not match is not extracted, and removed" \
+  "$(ls "$rel")" "rootfs.tar.gz.sha256"
 
 echo "# rootless"
 rootless_skip=""

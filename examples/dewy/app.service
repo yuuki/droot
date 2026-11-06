@@ -29,14 +29,16 @@ ExecStart=/usr/local/bin/dewy server \
         --user app --cap-drop ALL --seccomp default \
         --bind /var/log/app --bind-net-files --tmpfs /tmp \
         --root /var/containers/app/current/rootfs
-# With the default KillMode=control-group, the application gets SIGTERM from
-# systemd too, and stops even if dewy exits first.
+# The application must stop gracefully on SIGTERM: dewy sends it to the
+# previous process at every deployment, and systemd at the stop of the unit
+# (with the default KillMode=control-group, also when dewy exits first).
 Restart=on-failure
 RestartSec=5s
 
-# Resource limits: droot creates no cgroups, systemd does.
-MemoryMax=1G
-CPUQuota=200%
+# Resource limits: droot creates no cgroups, systemd does. The limits of the
+# unit cover dewy, the hook and, during a deployment, two processes of the
+# application. dewy downloads the artifact in memory, which takes several
+# times its size: leave room for it if you set MemoryMax=.
 TasksMax=512
 LimitNOFILE=65536
 

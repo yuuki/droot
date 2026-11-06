@@ -13,11 +13,16 @@
 # dewy runs the hook in its working directory, once it has extracted the
 # artifact and switched "current" to the new release, and before it restarts
 # the server. See documentation/deployment.md#deploying-with-dewy.
+#
+# dewy goes on when the hook fails: see the notes of the documentation.
 set -eu
 
 release=$(readlink -f current)
 cd "$release"
 [ -d rootfs ] && exit 0
+# On failure, give the space back: old releases are only deleted after a
+# successful deployment.
+trap 'status=$?; [ "$status" -eq 0 ] || rm -rf rootfs.tmp rootfs.tar.gz' EXIT
 sha256sum -c rootfs.tar.gz.sha256
 rm -rf rootfs.tmp
 mkdir rootfs.tmp

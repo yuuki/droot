@@ -152,17 +152,18 @@ $ sudo capze --keep 5 /tmp/app /var/containers/app
 [dewy](https://github.com/linyows/dewy) を使うと、サーバーがリリースを取りに行く形でデプロイできます。dewy はレジストリ（GitHub Releases、S3、GCS など）をポーリングし、新しいバージョンを `releases/` に展開して `current` シンボリックリンクを切り替え、接続を切らずにサーバーを再起動します（server-starter と同じく、待ち受けソケットは dewy が保持します）。dewy 自身の展開処理はルートファイルシステムを扱えない（シンボリックリンクを拒否し、所有者を保持しない）ため、配布物には droot のアーカイブを入れ、フック [`examples/dewy/droot-extract-release`](examples/dewy/droot-extract-release) で展開します。
 
 ```console
+$ mkdir -p build
 $ droot export --compress gzip --checksum -o build/rootfs.tar.gz app:1.2.3
 $ tar -czf app_linux_amd64.tar.gz -C build rootfs.tar.gz rootfs.tar.gz.sha256
 $ sha256sum app_linux_amd64.tar.gz > app_linux_amd64.tar.gz.sha256
 $ gh release create v1.2.3 app_linux_amd64.tar.gz app_linux_amd64.tar.gz.sha256
 ```
 
-サーバーでは、root で `/var/containers/app` から次のように実行します。
+サーバーでは、フックを `/usr/local/bin/droot-extract-release` に置き、`GITHUB_TOKEN` を設定したうえで、root で `/var/containers/app` から次のように実行します。
 
 ```console
 # dewy server --registry ghr://example/app --port 8080 --health-path /health \
-    --after-deploy-hook /usr/local/bin/droot-extract-release \
+    --after-deploy-hook /usr/local/bin/droot-extract-release --log-level info \
     -- droot run --unshare --env SERVER_STARTER_PORT --env SERVER_STARTER_GENERATION \
          --root /var/containers/app/current/rootfs
 ```
