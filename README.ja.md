@@ -383,6 +383,7 @@ $ DOCKER_HOST=ssh://deploy@build.example.com droot export -o app.tar app
 - [コマンドラインリファレンス](documentation/cli.md)
 - [droot の仕組み](documentation/architecture.md)
 - [セキュリティに関する考慮事項](documentation/security.md)
+- [他のツールとの比較](documentation/comparison.md): enroot、systemd、Podman
 - [開発ガイド](documentation/development.md)
 - [既知の問題とアイデア](documentation/roadmap.md)
 - [変更履歴](CHANGELOG.md)
