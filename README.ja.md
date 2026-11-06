@@ -196,12 +196,12 @@ droot run --root ROOT_DIR [OPTIONS] [--] [COMMAND [ARG...]]
 droot は次の順に処理を行います。
 
 1. 必要に応じて、ホストの `/etc/group`、`/etc/passwd`、`/etc/resolv.conf`、`/etc/hosts` を `ROOT_DIR` にコピーします（`--cp`）。
-2. `/proc` に `proc` をマウントし、ホストの `/sys` を `/sys` に（rslave マウントとして）バインドマウントします。Docker と同様に、それらの機密性の高いファイルをマスクし、`/proc/sys`、`/proc/sysrq-trigger`、`/proc/irq`、`/proc/bus`、`/proc/fs`、`/sys` を読み取り専用にします（`--no-mask` を指定しない場合）。さらに、`--bind`/`--robind`/`--tmpfs` のマウント（親から順に）と `--bind-net-files` のマウントを行います。
+2. `/proc` に `proc` をマウントし、ホストの `/sys` を `/sys` に（rslave マウントとして）バインドマウントします。Docker と同様に、それらの機密性の高いファイルをマスクし、`/proc/sys`、`/proc/sysrq-trigger`、`/proc/irq`、`/proc/bus`、`/proc/fs`、`/sys` を読み取り専用にします（`--no-mask` を指定しない場合）。さらに、`--bind`/`--robind`/`--tmpfs` のマウント（親から順に）、`--bind-net-files` のマウント、systemd の下では通知ソケットのマウントを行います（[通知とソケットアクティベーション](#notifications-and-socket-activation)を参照）。
 3. `/var` が存在し `/var/lock` が存在しない場合は `/var/lock -> ../run/lock` のシンボリックリンクを作成します。また、Docker と同様に `/dev` に次のものを用意します（`/dev` がマウントポイントである場合（例: `--bind /dev`）は、`/dev` には何もしません）。デバイス `null`、`zero`、`full`、`random`、`urandom`、`tty`（所有者 root、モード 0666）、シンボリックリンク `fd -> /proc/self/fd`、`stdin`、`stdout`、`stderr`、`ptmx -> pts/ptmx`、`/dev/pts` 上のプライベートな `devpts` インスタンス（疑似端末）、`/dev/shm` 上の 64 MiB の tmpfs。
 4. `ROOT_DIR` に `chroot` します。
 5. `CAP_CHOWN`、`CAP_DAC_OVERRIDE`、`CAP_FOWNER`、`CAP_SETGID`、`CAP_SETUID`、`CAP_NET_BIND_SERVICE`（`--cap-add`/`--cap-drop` で調整できます）以外のすべての capability をバウンディングセットから削除し、継承可能（inheritable）セットとアンビエント（ambient）セットを空にします（`--no-dropcaps` を指定しない場合）。
 6. 指定されたユーザーとグループに切り替えます。
-7. 作業ディレクトリに移動し、イメージの環境変数（`/.droot/config.json` の `Env` を `/.drootenv` で上書きしたもの）を `--env-file`、次に `--env` で上書きした環境で `COMMAND` を実行します。`PATH`（`/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`）、`HOME`、`USER`、`LOGNAME`（`ROOT_DIR/etc/passwd` にあるそのユーザーのエントリから取得します。エントリがない場合は `HOME=/`）は、未設定であれば設定されます。droot は `COMMAND` で*自分自身を置き換える*ため、終了ステータスとシグナルは `COMMAND` のものになります。
+7. 作業ディレクトリに移動し、イメージの環境変数（`/.droot/config.json` の `Env` を `/.drootenv` で上書きしたもの）を、systemd が droot に設定した変数（`NOTIFY_SOCKET`、`LISTEN_FDS` など。[後述](#notifications-and-socket-activation)）、`--env-file`、`--env` の順に上書きした環境で `COMMAND` を実行します。`PATH`（`/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`）、`HOME`、`USER`、`LOGNAME`（`ROOT_DIR/etc/passwd` にあるそのユーザーのエントリから取得します。エントリがない場合は `HOME=/`）は、未設定であれば設定されます。droot は `COMMAND` で*自分自身を置き換える*ため、終了ステータスとシグナルは `COMMAND` のものになります。
 
 | オプション | 説明 |
 |---|---|
@@ -262,6 +262,25 @@ LimitNOFILE=65536
 ```
 
 ユニットの `LimitNOFILE=` やその他の `Limit*=` の設定も、`--ulimit` で上書きしない限り `COMMAND` に継承されます。
+
+<a id="notifications-and-socket-activation"></a>
+#### 通知とソケットアクティベーション
+
+systemd の下では、systemd がサービスのメインプロセスである droot に渡す、2 つのプロトコル（`Type=notify` とソケットアクティベーション）のための情報を `COMMAND` も受け取ります。
+
+- `NOTIFY_SOCKET`。[`sd_notify(3)`](https://www.freedesktop.org/software/systemd/man/latest/sd_notify.html) のソケットです（`READY=1`、`STATUS=...`、`WATCHDOG=1` など）。`/run/systemd/notify` のようなパスの場合は、コンテナ内の同じパスに読み取り専用でバインドマウントされます（存在しなければ `--bind` のマウントポイントと同様に作成されます）。`COMMAND` は通知を送れますが、ホストのソケットを変更することはできません。抽象ソケット（`@NAME`）はマウント不要です。droot はホストのネットワーク名前空間を共有しているためです。ソケットをバインドできない場合（ソケットが存在しない、マウントポイントを作成できないなど）、droot は警告を出したうえで、そのまま `COMMAND` を実行します。
+- `LISTEN_FDS`、`LISTEN_PID`、`LISTEN_FDNAMES`、`LISTEN_PIDFDID`（[`sd_listen_fds(3)`](https://www.freedesktop.org/software/systemd/man/latest/sd_listen_fds.html)）。`LISTEN_PID` が droot の PID である場合に限ります。ソケットそのもの（ファイルディスクリプタ 3、4、...）は、`LISTEN_PID` の値にかかわらず、droot に渡された他のディスクリプタと同様に `COMMAND` に継承されます。
+- `WATCHDOG_USEC` と `WATCHDOG_PID`（`WatchdogSec=`）。`WATCHDOG_PID` が droot の PID であるか、未設定の場合に限ります。
+
+これらは `--env-file` と `--env` で上書きできます。`--env NOTIFY_SOCKET=PATH` を指定すると `COMMAND` には別のソケットが渡され、droot はそれをマウントしません。また、そのパスに `--bind` や `--tmpfs` でマウントしたものがある場合も、droot はその上にソケットをマウントしません。droot は `COMMAND` で自分自身を置き換え、`COMMAND` は droot の PID を引き継ぎます。そのため systemd から見ると `COMMAND` がメインプロセスであり、デフォルトの `NotifyAccess=main` のままで通知が受け付けられます。
+
+```ini
+[Service]
+Type=notify
+ExecStart=/usr/local/bin/droot run --root /var/containers/app --user app -- app
+```
+
+`.socket` ユニットについては[デプロイガイド](documentation/deployment.md#6-notifications-and-socket-activation)を、rootless のサービスについては [root を使わない実行](#root-を使わない実行)を参照してください。
 
 ### `droot umount`
 
@@ -355,7 +374,7 @@ $ droot run --root app --bind ~/app-data:/data
 
 rootless では、ハードリミットを引き上げること（`--ulimit`）はできず、バインドマウントできるのは自分のユーザーが読めるものだけです。ディストリビューションによっては、非特権ユーザー名前空間が制限されています。Ubuntu 24.04 以降では、`kernel.apparmor_restrict_unprivileged_userns` が 0 であるか、AppArmor プロファイルが droot を許可していない限り、ユーザー名前空間でケーパビリティが使えません。それ以外の環境では `user.max_user_namespaces` と `kernel.unprivileged_userns_clone` を確認してください。ロックは `$XDG_RUNTIME_DIR/droot` に作成されます。
 
-systemd のユニット（ユーザーサービスなど）では `KillMode=mixed` を設定してください。systemd が `SIGTERM` をユニットのすべてのプロセスではなく droot だけに送り、droot がそれを `COMMAND` に転送します（設定しないと `COMMAND` は `SIGTERM` を 2 回受け取ります）。
+systemd のユニット（ユーザーサービスなど）では `KillMode=mixed` を設定してください。systemd が `SIGTERM` をユニットのすべてのプロセスではなく droot だけに送り、droot がそれを `COMMAND` に転送します（設定しないと `COMMAND` は `SIGTERM` を 2 回受け取ります）。ソケットアクティベーションのソケットは root の場合と同じように `COMMAND` に渡され、`LISTEN_PID` と `WATCHDOG_PID` は `COMMAND` の PID に置き換えられます。ただし、通知はユニットのメインプロセスである droot の子プロセスから送られることになるため、`Type=notify` や `WatchdogSec=` を使う場合は `NotifyAccess=all` を設定してください。
 
 ## Docker デーモンを使わないエクスポート
 

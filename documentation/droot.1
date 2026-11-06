@@ -86,6 +86,8 @@ The options must come before COMMAND: everything from COMMAND on is passed to it
 .PP
 Run by another user than root, droot runs rootless: it runs again as root of a new user namespace, where your user is root and your subordinate IDs (/etc/subuid and /etc/subgid, with the newuidmap and newgidmap commands) are the other users, and waits for COMMAND, passing signals on to it. The mounts are private (as with \-\-unshare), /proc and the device files are bind mounts of the host's. Extract archives with 'droot unshare' so that their files keep their owners.
 .PP
+Under systemd, COMMAND gets the notification socket (NOTIFY_SOCKET, for Type=notify), the sockets of socket activation (LISTEN_FDS, LISTEN_PID, LISTEN_FDNAMES) and the watchdog (WATCHDOG_USEC, WATCHDOG_PID) of droot, which \-\-env and \-\-env\-file override. A NOTIFY_SOCKET that is a path is bind mounted read\-only on the same path in the container. Rootless, the notifications come from a child of droot, the main process of the service: set NotifyAccess=all in the unit.
+.PP
 \-\-config FILE reads options from FILE, in a subset of TOML: lines KEY = VALUE, where KEY is the long name of an option and VALUE a string ("..." or '...'), true or false, or an array of strings for repeatable options; command, an array of strings, gives COMMAND. # starts a comment. The options given on the command line take precedence, and repeatable ones are added to the file's:
 .PP
 .nf

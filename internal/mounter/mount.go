@@ -42,6 +42,11 @@ type BindOptions struct {
 	// Replace unmounts what is already mounted on the target instead of
 	// reusing it, so that the current hostPath is bound.
 	Replace bool
+	// SkipSame mounts nothing when the target already is hostPath, not as
+	// a mount of its own: e.g. through a bind mount of its directory. A
+	// mount on it would make hostPath busy on the host, which could then
+	// no longer remove or replace it.
+	SkipSame bool
 }
 
 // FSOptions are the options of a new file system mount (MountFS).

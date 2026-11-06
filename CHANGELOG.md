@@ -7,6 +7,34 @@ Releases up to 0.7.7 are described on the
 
 ## [Unreleased]
 
+### Added
+
+- `droot run` works with `Type=notify` and socket activation under systemd
+  ([#52](https://github.com/yuuki/droot/issues/52)): the variables systemd
+  sets for droot are passed on to `COMMAND` without `--env`
+  (`NOTIFY_SOCKET`; `LISTEN_FDS`, `LISTEN_PID`, `LISTEN_FDNAMES` and
+  `LISTEN_PIDFDID` when `LISTEN_PID` is droot's PID; `WATCHDOG_USEC` and
+  `WATCHDOG_PID` when `WATCHDOG_PID` is droot's PID or unset), between the
+  image's environment and `--env-file`. A `NOTIFY_SOCKET` that is a path
+  is bind mounted read-only on the same path in the container, unless a
+  `--bind` or `--tmpfs` mounts on that path or the socket is already
+  there; one that cannot be bound only gets a warning.
+- `examples/systemd/app-notify.service` (`Type=notify`) and
+  `examples/systemd/app.socket`, described in the deployment guide.
+
+### Fixed
+
+- Rootless, the sockets of socket activation reach `COMMAND`: the
+  supervising droot passed a pipe of its own as descriptor 3, which
+  replaced the first socket. `LISTEN_PID` and `WATCHDOG_PID` are now the
+  PID of `COMMAND` instead of that of the supervising droot; its
+  notifications need `NotifyAccess=all`, since the supervising droot is the
+  main process of the service.
+- The mount points `droot run` creates have mode 0755 (directories) and
+  0644 (empty files for file bind mounts) whatever the umask: under a unit
+  with `UMask=0077`, they were 0700 and 0600, and other users than root
+  could not reach what was mounted below them.
+
 ## [0.8.0] - 2026-11-06
 
 Maintenance release after several years: modern Go and Docker, far fewer

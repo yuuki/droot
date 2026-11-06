@@ -158,8 +158,9 @@ Options given on the command line take precedence over the file, e.g.
   (read-only) and its log directory; `--bind-net-files` the host's
   `/etc/resolv.conf` and `/etc/hosts`; `--tmpfs /tmp` a private `/tmp`.
 - droot does not pass its own environment to the application, only the
-  image's: `Environment=` of the unit reaches the application through
-  `--env KEY` (or `--env-file FILE`).
+  image's and the variables of systemd's protocols (see
+  [below](#6-notifications-and-socket-activation)): `Environment=` of the
+  unit reaches the application through `--env KEY` (or `--env-file FILE`).
 - droot *replaces itself* with the application, so the main process of the
   service is the application: signals, the exit status and `Restart=` work
   as with any service. Set `KillSignal=` to the `STOPSIGNAL` of the image, if
@@ -180,6 +181,82 @@ instead: it removes the mounts with `droot umount` in `ExecStopPost=`, and in
 # systemctl daemon-reload
 # systemctl enable --now app
 # droot status --root /var/containers/app/current
+```
+
+## 6. Notifications and socket activation
+
+droot passes on to the application what systemd gives the main process of
+a service for its two protocols, so that a service run with droot keeps
+the units it would have without it:
+
+- **`Type=notify`**: `NOTIFY_SOCKET`, the socket the application sends
+  `READY=1`, `STATUS=...` or `WATCHDOG=1` to
+  ([`sd_notify(3)`](https://www.freedesktop.org/software/systemd/man/latest/sd_notify.html)).
+  droot bind mounts it read-only on the same path in the container
+  (`/run/systemd/notify`). With `WatchdogSec=`, `WATCHDOG_USEC` and
+  `WATCHDOG_PID` too.
+- **Socket activation**: the sockets of a `.socket` unit, which the
+  application inherits as descriptors 3, 4, ..., with `LISTEN_FDS`,
+  `LISTEN_PID` and `LISTEN_FDNAMES`
+  ([`sd_listen_fds(3)`](https://www.freedesktop.org/software/systemd/man/latest/sd_listen_fds.html)).
+
+[`examples/systemd/app-notify.service`](../examples/systemd/app-notify.service)
+is `app.service` for an application that notifies systemd:
+
+```ini
+[Service]
+Type=notify
+#WatchdogSec=30s
+Environment=DROOT_LOG_FORMAT=json
+Environment=APP_ENV=production
+ExecStart=/usr/local/bin/droot run --config /etc/droot/app.toml
+```
+
+[`examples/systemd/app.socket`](../examples/systemd/app.socket) makes
+systemd listen on port 8080 and start `app.service` at the first
+connection. The service needs no change, but the socket now starts it:
+stop and disable the service (systemd does not start a socket whose service
+runs already, and an enabled service would start at boot, without waiting
+for a connection), and enable the socket instead.
+
+```ini
+[Socket]
+ListenStream=8080
+FileDescriptorName=http
+
+[Install]
+WantedBy=sockets.target
+```
+
+```console
+# cp app.socket /etc/systemd/system/
+# systemctl daemon-reload
+# systemctl disable --now app
+# systemctl enable --now app.socket
+```
+
+The application must use the socket it is given instead of opening its own:
+with `sd_listen_fds(3)`, or a library doing the same, e.g.
+`activation.Listeners()` of [go-systemd](https://github.com/coreos/go-systemd).
+The socket is opened by systemd, as root: `ListenStream=80` needs no
+`CAP_NET_BIND_SERVICE` in the container.
+
+As root, droot replaces itself with the application, which keeps the PID
+of droot: for systemd, the application is the main process of the service,
+the default `NotifyAccess=main` accepts its notifications, and `LISTEN_PID`
+and `WATCHDOG_PID` are its PID.
+
+Rootless (a unit with `User=`, or a user service), droot stays the main
+process and supervises the application, its child. droot passes the
+sockets on to it and makes `LISTEN_PID` and `WATCHDOG_PID` its PID, but
+systemd only accepts notifications from other processes than the main one
+with `NotifyAccess=all`:
+
+```ini
+[Service]
+Type=notify
+NotifyAccess=all
+KillMode=mixed
 ```
 
 ## Rolling back

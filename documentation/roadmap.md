@@ -32,6 +32,12 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
   cannot be raised, and `droot status` does not see the mounts (they are in
   the private namespace of the run). Without subordinate IDs, only root
   exists in the namespace.
+- **[compat]** Rootless, the notifications of `COMMAND` (`Type=notify`,
+  `WatchdogSec=`) come from a child of the main process of the service, the
+  supervising droot: units need `NotifyAccess=all`. Sending `MAINPID=` would
+  make `COMMAND` the main process, but systemd, which is not its parent,
+  would then lose its exit status. Idea: a notification socket of droot's
+  own, relaying the notifications of `COMMAND` from the main process.
 
 ### `droot export`
 

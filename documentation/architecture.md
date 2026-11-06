@@ -39,6 +39,7 @@ library, and its packages carry no compatibility promise.
 | `internal/mounter` | Mounting `/proc`, `/sys` and bind mounts, parsing `/proc/self/mountinfo`, unmounting. |
 | `internal/osutil` | File system and process helpers: secure path resolution, file copy, devices, capabilities, credentials, exec. |
 | `internal/seccomp` | The seccomp filter of `droot run --seccomp default`, a classic BPF program. |
+| `internal/systemd` | The variables of systemd's notifications and socket activation that `droot run` passes on to `COMMAND`. |
 | `internal/userns` | Rootless mode: the ID mappings, the start of droot in a user namespace, and its supervision. |
 | `internal/log` | A tiny leveled logger writing to STDERR. |
 
@@ -185,13 +186,22 @@ setuid bits are preserved.
 4. Mount `proc` (nosuid, nodev, noexec) on `/proc`; recursively bind mount
    the host's `/sys` and make it an rslave mount; perform the bind mounts.
    Mount points are resolved with `osutil.Root`, created if missing (as a
-   directory, or as an empty file for file bind mounts) and mounted on through
+   directory, or as an empty file for file bind mounts, with modes 0755 and
+   0644 whatever the umask) and mounted on through
    `/proc/self/fd/N`, so the mount lands on the very directory that was
    resolved. Existing mounts are reused, so `run` can be repeated without
    `umount`. Every mount is made a slave mount, so mounts made inside the
    container never propagate back to the host. Read-only bind mounts are
    remounted with `MS_RDONLY` *plus* the nosuid/nodev/noexec/atime flags of
-   the source, which a plain remount would clear.
+   the source, which a plain remount would clear. Last, a `NOTIFY_SOCKET`
+   that is a path (systemd's `/run/systemd/notify`) is bind mounted
+   read-only on the same path, replacing the mount of a previous run unless
+   it is the same socket. Nothing is mounted when a `--bind` or `--tmpfs`
+   mounts on the path, or when the path already is the socket (a `--bind`
+   of its directory: a mount there would make the host's socket busy). A
+   socket that cannot be bound (missing, or no mount point can be created)
+   only gets a warning: droot may have inherited a `NOTIFY_SOCKET` meant for
+   another process.
 5. Create `/var/lock -> ../run/lock` if missing, and populate `/dev`: the
    device nodes `/dev/null` (1:3), `/dev/zero` (1:5), `/dev/full` (1:7),
    `/dev/random` (1:8), `/dev/urandom` (1:9) and `/dev/tty` (5:0), owned by
@@ -216,8 +226,12 @@ setuid bits are preserved.
    descriptor: if anything fails before the exec, they are detached again,
    newest first.
 7. `chroot(2)` into the root and `chdir(2)` to the working directory.
-8. Merge the environment: the image's, then `--env-file`, then `--env`, plus
-   the defaults of `PATH`, `HOME`, `USER` and `LOGNAME`.
+8. Merge the environment: the image's, then the variables of systemd that
+   are for droot (`NOTIFY_SOCKET`; `LISTEN_*` if `LISTEN_PID` is the PID of
+   droot; `WATCHDOG_*` if `WATCHDOG_PID` is, or is unset), then
+   `--env-file`, then `--env`, plus the defaults of `PATH`, `HOME`, `USER`
+   and `LOGNAME`. The sockets of socket activation are inherited: droot
+   keeps them open, without close-on-exec, at descriptors 3, 4, ...
 9. Drop every capability not in the keep list from the bounding set with
    `prctl(PR_CAPBSET_DROP)`, and empty the inheritable and ambient sets: the
    bounding set does not limit inheritable capabilities, which root keeps
@@ -247,11 +261,18 @@ through the `userns` package first:
    stage blocks on a pipe while the parent writes its ID maps: with
    `newuidmap`/`newgidmap`, or directly (`setgroups` denied, then a
    one-line `uid_map` and `gid_map`), which an unprivileged process may do
-   for its own IDs.
+   for its own IDs. The sockets of socket activation (`LISTEN_FDS`, if
+   `LISTEN_PID` is the PID of droot) are passed to the child at the same
+   descriptors, 3, 4, ..., and the pipe right after them; in the parent,
+   they are close-on-exec, so that `newuidmap` and `newgidmap` do not
+   inherit them.
 3. Released, the first stage executes droot again: having become root of
    the namespace before this `execve(2)`, the second stage gets the
    capabilities of the namespace, re-arms the parent-death signal (cleared by
-   the privilege change) and runs `droot run` as above, root of the
+   the privilege change), takes over the sockets and the watchdog of the
+   parent (`LISTEN_PID` and `WATCHDOG_PID`, if they are the parent's PID,
+   become its own; `LISTEN_PIDFDID`, which names the parent's pidfd, is
+   unset) and runs `droot run` as above, root of the
    namespace, with these differences: the mount namespace is always private
    (as with `--unshare`); procfs, which needs a PID namespace of its own
    there, is replaced by a recursive bind mount of the host's `/proc`; the
@@ -268,7 +289,9 @@ through the `userns` package first:
    sent to the group of droot (`timeout(1)`, `kill -- -PGID`) reaches it
    once; on a terminal, it stays in the group of droot for job control, and
    the signals the terminal sends to its foreground group are not passed
-   on while droot is in the foreground.
+   on while droot is in the foreground. Under systemd, the parent stays
+   the main process of the service: the notifications of `COMMAND`, its
+   child, need `NotifyAccess=all`.
 
 Run rootless, droot re-executes itself before reading anything: `--config`
 and `--env-file` may be pipes, which only the second stage must read.

@@ -2,9 +2,13 @@ package userns
 
 import (
 	"context"
+	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestSubIDs(t *testing.T) {
@@ -64,5 +68,27 @@ func TestRunNeedsInit(t *testing.T) {
 	// A test binary must not run itself again in a user namespace.
 	if err := Run(context.Background(), Mapping{}); err == nil || !strings.Contains(err.Error(), "userns.Init") {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func TestListenFiles(t *testing.T) {
+	// The sockets of another process: none.
+	t.Setenv("LISTEN_PID", strconv.Itoa(os.Getpid()+1))
+	t.Setenv("LISTEN_FDS", "2")
+	if files, err := listenFiles(); err != nil || len(files) != 0 {
+		t.Fatalf("got %v, %v", files, err)
+	}
+	// More sockets than droot was passed: refused before any is taken
+	// (closing them would close descriptors of the test, all close-on-exec,
+	// as Go opens them).
+	t.Setenv("LISTEN_PID", strconv.Itoa(os.Getpid()))
+	t.Setenv("LISTEN_FDS", "100000")
+	files, err := listenFiles()
+	if err == nil || !strings.Contains(err.Error(), "LISTEN_FDS is 100000, but descriptor 3 ") || files != nil {
+		t.Fatalf("got %v, %v", files, err)
+	}
+	// The descriptors are left as they were.
+	if flags, err := unix.FcntlInt(3, unix.F_GETFD, 0); err == nil && flags&unix.FD_CLOEXEC == 0 {
+		t.Errorf("descriptor 3 lost close-on-exec")
 	}
 }

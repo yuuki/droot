@@ -150,10 +150,17 @@ func (r *Root) lookup(unsafePath string, opt lookupOptions) (res resolved, err e
 					return fail(err)
 				}
 			}
-			if err := unix.Mkdirat(cur(), part, 0o755); err != nil && !errors.Is(err, unix.EEXIST) {
-				return fail(err)
+			mkErr := unix.Mkdirat(cur(), part, 0o755)
+			if mkErr != nil && !errors.Is(mkErr, unix.EEXIST) {
+				return fail(mkErr)
 			}
 			fd, err = unix.Openat(cur(), part, unix.O_PATH|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+			if err == nil && mkErr == nil {
+				if err := setCreatedMode(fd, true, 0o755); err != nil {
+					_ = unix.Close(fd)
+					return fail(err)
+				}
+			}
 		}
 		if err != nil {
 			return fail(err)
@@ -308,6 +315,23 @@ func (t *MountTarget) Reopen() (*os.File, error) {
 	return os.NewFile(uintptr(fd), t.File.Name()), nil
 }
 
+// setCreatedMode gives the directory (dir) or file droot has just created,
+// open as fd (O_PATH), the mode perm: mkdir(2) and open(2) are subject to
+// the umask, and a unit's UMask=0077 would otherwise make the mount points
+// unreachable by the users of the container. chmod(2) follows symlinks, so
+// it goes through the descriptor, and only if fd is still of the kind
+// created (a concurrent replacement is left to the checks of the caller).
+func setCreatedMode(fd int, dir bool, perm uint32) error {
+	var st unix.Stat_t
+	if err := unix.Fstat(fd, &st); err != nil {
+		return err
+	}
+	if kind := st.Mode & unix.S_IFMT; (kind == unix.S_IFDIR) != dir || kind == unix.S_IFLNK || st.Mode&0o7777 == perm {
+		return nil
+	}
+	return unix.Chmod(FdPath(fd), perm)
+}
+
 func verifyTarget(fd int, dir bool) error {
 	var st unix.Stat_t
 	if err := unix.Fstat(fd, &st); err != nil {
@@ -358,13 +382,24 @@ func (r *Root) OpenMountTarget(path string, dir bool, check DirCheck) (*MountTar
 			var f int
 			f, err = unix.Openat(res.dir, res.name, unix.O_CREAT|unix.O_EXCL|unix.O_WRONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o644)
 			if err == nil {
+				err = unix.Fchmod(f, 0o644) // not subject to the umask
 				_ = unix.Close(f)
+				if err != nil {
+					return fail("chmod", err)
+				}
 			}
 		}
+		created := err == nil
 		if err != nil && !errors.Is(err, unix.EEXIST) {
 			return fail("create", err)
 		}
 		fd, err = unix.Openat(res.dir, res.name, unix.O_PATH|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		if err == nil && created && dir {
+			if err := setCreatedMode(fd, true, 0o755); err != nil {
+				_ = unix.Close(fd)
+				return fail("chmod", err)
+			}
+		}
 	}
 	if err != nil {
 		return fail("open", err)

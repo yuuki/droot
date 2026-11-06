@@ -18,6 +18,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/yuuki/droot/internal/log"
+	"github.com/yuuki/droot/internal/systemd"
 )
 
 // Init handles the stages of a child started by Run. It must be called
@@ -32,6 +33,9 @@ func Init() {
 	if pid := os.Getenv(envParent); pid != "" {
 		_ = os.Unsetenv(envParent)
 		parent, _ = strconv.Atoi(pid)
+		// The supervising droot passed its sockets on (see start),
+		// and its watchdog is for COMMAND, which this droot becomes.
+		systemd.Adopt(parent)
 		if err := KeepParentDeathSignal(); err != nil {
 			fmt.Fprintf(os.Stderr, "droot: %v\n", err)
 			os.Exit(1)
@@ -68,7 +72,8 @@ func KeepParentDeathSignal() error {
 
 // firstStage waits until the parent has written the ID maps (it closes the
 // descriptor fd after writing a byte), then executes droot again, as root of
-// the namespace.
+// the namespace. The descriptors below fd, the sockets of socket
+// activation, are left open.
 func firstStage(fd string) {
 	n, err := strconv.Atoi(fd)
 	if err != nil {
@@ -190,7 +195,16 @@ func Run(ctx context.Context, m Mapping) error {
 // maps. release lets it go on. With ownGroup, the child is put in a process
 // group of its own, so that the signals sent to the process group of droot
 // (by timeout(1), kill -- -PGID, ...) reach it only once, passed on by droot.
+//
+// The sockets of socket activation keep their descriptors (3, 4, ...) in
+// the child; the pipe it waits on follows them.
 func start(m Mapping, ownGroup bool) (*exec.Cmd, func(), error) {
+	sockets, err := listenFiles()
+	if err != nil {
+		return nil, nil, err
+	}
+	// The child has its own copies.
+	defer closeFiles(sockets)
 	r, w, err := os.Pipe()
 	if err != nil {
 		return nil, nil, err
@@ -199,8 +213,10 @@ func start(m Mapping, ownGroup bool) (*exec.Cmd, func(), error) {
 	cmd := exec.Command("/proc/self/exe", os.Args[1:]...) //nolint:gosec // G204: droot itself, with its own arguments
 	cmd.Args[0] = os.Args[0]
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	cmd.ExtraFiles = []*os.File{r}
-	cmd.Env = append(os.Environ(), envSync+"=3", envParent+"="+strconv.Itoa(os.Getpid()))
+	cmd.ExtraFiles = append(cmd.ExtraFiles, sockets...)
+	cmd.ExtraFiles = append(cmd.ExtraFiles, r)
+	syncFD := systemd.FirstListenFD + len(sockets)
+	cmd.Env = append(os.Environ(), envSync+"="+strconv.Itoa(syncFD), envParent+"="+strconv.Itoa(os.Getpid()))
 	cmd.SysProcAttr = &syscall.SysProcAttr{Cloneflags: syscall.CLONE_NEWUSER, Pdeathsig: syscall.SIGKILL, Setpgid: ownGroup}
 	if err := cmd.Start(); err != nil {
 		_ = w.Close()
@@ -217,6 +233,48 @@ func start(m Mapping, ownGroup bool) (*exec.Cmd, func(), error) {
 		_, _ = w.Write([]byte{0})
 		_ = w.Close()
 	}, nil
+}
+
+// listenFiles returns the sockets that socket activation passed to droot
+// (descriptors 3, 4, ..., see systemd.ListenFDs), for the child. They are
+// made close-on-exec here, so that the helpers droot runs (newuidmap,
+// newgidmap) do not inherit them; os/exec clears the flag in the child.
+//
+// A descriptor passed to droot is not close-on-exec (it would not have
+// survived the exec), while every one droot opens is: a LISTEN_FDS
+// counting more than droot was passed is refused before droot hands over,
+// and closes, descriptors of its own.
+func listenFiles() ([]*os.File, error) {
+	n := systemd.ListenFDs(os.LookupEnv, os.Getpid())
+	first := systemd.FirstListenFD
+	for fd := first; fd < first+n; fd++ {
+		flags, err := unix.FcntlInt(uintptr(fd), unix.F_GETFD, 0)
+		if err != nil {
+			return nil, fmt.Errorf("socket activation: LISTEN_FDS is %d, but descriptor %d is not open: %w", n, fd, err)
+		}
+		if flags&unix.FD_CLOEXEC != 0 {
+			return nil, fmt.Errorf("socket activation: LISTEN_FDS is %d, but descriptor %d was not passed to droot", n, fd)
+		}
+	}
+	for fd := first; fd < first+n; fd++ {
+		if _, err := unix.FcntlInt(uintptr(fd), unix.F_SETFD, unix.FD_CLOEXEC); err != nil {
+			return nil, err
+		}
+	}
+	files := make([]*os.File, 0, n)
+	for fd := first; fd < first+n; fd++ {
+		files = append(files, os.NewFile(uintptr(fd), "socket "+strconv.Itoa(fd)))
+	}
+	if n > 0 {
+		log.Debugf("passing the %d socket(s) of socket activation on to the user namespace", n)
+	}
+	return files, nil
+}
+
+func closeFiles(files []*os.File) {
+	for _, f := range files {
+		_ = f.Close()
+	}
 }
 
 // disabledHint explains the usual reasons why user namespaces cannot be
