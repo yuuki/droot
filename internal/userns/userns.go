@@ -10,6 +10,11 @@
 // The child is started in two stages: the first waits until the parent has
 // written the ID maps, then executes droot again, so that the second stage
 // starts as root of the namespace, with its capabilities there.
+//
+// The sockets of socket activation keep their descriptors (3, 4, ...) in the
+// child, which takes over the variables of systemd naming the parent by its
+// PID (see systemd.Adopt): COMMAND, which the second stage becomes, is the
+// process they are for.
 package userns
 
 import (

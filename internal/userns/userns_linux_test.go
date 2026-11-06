@@ -2,7 +2,9 @@ package userns
 
 import (
 	"context"
+	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -64,5 +66,21 @@ func TestRunNeedsInit(t *testing.T) {
 	// A test binary must not run itself again in a user namespace.
 	if err := Run(context.Background(), Mapping{}); err == nil || !strings.Contains(err.Error(), "userns.Init") {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func TestListenFiles(t *testing.T) {
+	// The sockets of another process: none.
+	t.Setenv("LISTEN_PID", strconv.Itoa(os.Getpid()+1))
+	t.Setenv("LISTEN_FDS", "2")
+	if files, err := listenFiles(); err != nil || len(files) != 0 {
+		t.Fatalf("got %v, %v", files, err)
+	}
+	// More sockets than open descriptors: refused before any is taken
+	// (closing them would close descriptors of the test).
+	t.Setenv("LISTEN_PID", strconv.Itoa(os.Getpid()))
+	t.Setenv("LISTEN_FDS", "100000")
+	if files, err := listenFiles(); err == nil || !strings.Contains(err.Error(), "is not open") || files != nil {
+		t.Fatalf("got %v, %v", files, err)
 	}
 }

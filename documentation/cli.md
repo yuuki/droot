@@ -80,6 +80,8 @@ The options must come before COMMAND: everything from COMMAND on is passed to it
 
 Run by another user than root, droot runs rootless: it runs again as root of a new user namespace, where your user is root and your subordinate IDs (/etc/subuid and /etc/subgid, with the newuidmap and newgidmap commands) are the other users, and waits for COMMAND, passing signals on to it. The mounts are private (as with --unshare), /proc and the device files are bind mounts of the host's. Extract archives with 'droot unshare' so that their files keep their owners.
 
+Under systemd, COMMAND gets the notification socket (NOTIFY\_SOCKET, for Type=notify), the sockets of socket activation (LISTEN\_FDS, LISTEN\_PID, LISTEN\_FDNAMES) and the watchdog (WATCHDOG\_USEC, WATCHDOG\_PID) of droot, which --env and --env-file override. A NOTIFY\_SOCKET that is a path is bind mounted read-only on the same path in the container. Rootless, the notifications come from a child of droot, the main process of the service: set NotifyAccess=all in the unit.
+
 --config FILE reads options from FILE, in a subset of TOML: lines KEY = VALUE, where KEY is the long name of an option and VALUE a string ("..." or '...'), true or false, or an array of strings for repeatable options; command, an array of strings, gives COMMAND. # starts a comment. The options given on the command line take precedence, and repeatable ones are added to the file's:
 
 ```

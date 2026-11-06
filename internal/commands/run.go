@@ -24,6 +24,7 @@ import (
 	"github.com/yuuki/droot/internal/mounter"
 	"github.com/yuuki/droot/internal/osutil"
 	"github.com/yuuki/droot/internal/seccomp"
+	"github.com/yuuki/droot/internal/systemd"
 	"github.com/yuuki/droot/internal/userns"
 )
 
@@ -49,6 +50,13 @@ func runCommand() *cli.Command {
 			"are private (as with --unshare), /proc and the device files are bind mounts of\n" +
 			"the host's. Extract archives with 'droot unshare' so that their files keep\n" +
 			"their owners.\n\n" +
+			"Under systemd, COMMAND gets the notification socket (NOTIFY_SOCKET, for\n" +
+			"Type=notify), the sockets of socket activation (LISTEN_FDS, LISTEN_PID,\n" +
+			"LISTEN_FDNAMES) and the watchdog (WATCHDOG_USEC, WATCHDOG_PID) of droot,\n" +
+			"which --env and --env-file override. A NOTIFY_SOCKET that is a path is bind\n" +
+			"mounted read-only on the same path in the container. Rootless, the\n" +
+			"notifications come from a child of droot, the main process of the service:\n" +
+			"set NotifyAccess=all in the unit.\n\n" +
 			"--config FILE reads options from FILE, in a subset of TOML: lines KEY = VALUE,\n" +
 			"where KEY is the long name of an option and VALUE a string (\"...\" or '...'),\n" +
 			"true or false, or an array of strings for repeatable options; command, an\n" +
@@ -462,7 +470,12 @@ func doRun(ctx context.Context, cmd *cli.Invocation) (err error) {
 	if err != nil {
 		return err
 	}
-	env, err := environ.Merge(baseEnv, extraEnv)
+	// The variables systemd sets for droot (NOTIFY_SOCKET, LISTEN_FDS,
+	// ...), which describe the notification socket, the sockets and the
+	// watchdog COMMAND inherits, between the image's and those of the
+	// command line.
+	sdEnv := systemd.Env(os.LookupEnv, os.Getpid())
+	env, err := environ.Merge(baseEnv, append(sdEnv, extraEnv...))
 	if err != nil {
 		return err
 	}
@@ -564,6 +577,11 @@ func doRun(ctx context.Context, cmd *cli.Invocation) (err error) {
 			if err := mnt.BindMount(f, f, mounter.BindOptions{ReadOnly: true, Replace: true}); err != nil {
 				return fmt.Errorf("bind mount %s: %w", f, err)
 			}
+		}
+	}
+	if sock := notifySocketMount(env); sock != "" {
+		if err := bindNotifySocket(mnt, sock); err != nil {
+			return err
 		}
 	}
 
@@ -726,6 +744,42 @@ func isBindOptions(s string) bool {
 		}
 	}
 	return true
+}
+
+// notifySocketMount returns the path of the socket of systemd's
+// notifications (NOTIFY_SOCKET) to bind mount in the container, if any:
+// that of droot's own NOTIFY_SOCKET, when it is a path, and when it is also
+// COMMAND's (env), not replaced by --env. An abstract socket (@NAME) is
+// reachable as it is: droot shares the host's network namespace.
+func notifySocketMount(env []string) string {
+	sock := systemd.NotifySocketPath(os.Getenv(systemd.NotifySocket))
+	if sock == "" {
+		return ""
+	}
+	if v, _ := environ.Lookup(env, systemd.NotifySocket); v != sock {
+		return ""
+	}
+	return sock
+}
+
+// bindNotifySocket bind mounts the socket of systemd's notifications on the
+// same path in the container. The mount is read-only: COMMAND can send
+// notifications (connect(2) and sendmsg(2) need no write access to the
+// mount) but cannot chmod or chown the host's socket. A mount left by a
+// previous run is replaced, in case systemd created the socket again since.
+func bindNotifySocket(mnt *mounter.Mounter, sock string) error {
+	fi, err := os.Stat(sock)
+	if err != nil {
+		return fmt.Errorf("%s: %w", systemd.NotifySocket, err)
+	}
+	if fi.Mode().Type() != fs.ModeSocket {
+		return fmt.Errorf("%s: %s is not a socket", systemd.NotifySocket, sock)
+	}
+	if err := mnt.BindMount(sock, sock, mounter.BindOptions{ReadOnly: true, Replace: true}); err != nil {
+		return fmt.Errorf("bind mount the socket of %s, %s: %w", systemd.NotifySocket, sock, err)
+	}
+	log.Debugf("bound %s=%s in the container", systemd.NotifySocket, sock)
+	return nil
 }
 
 func copyHostFiles(root *osutil.Root, files []string) error {
