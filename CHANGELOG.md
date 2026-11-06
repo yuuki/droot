@@ -7,8 +7,10 @@ Releases up to 0.7.7 are described on the
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-06
+
 Maintenance release after several years: modern Go and Docker, far fewer
-dependencies, many bug and security fixes. Planned as **v0.8.0**.
+dependencies, many bug and security fixes.
 
 ### Breaking changes
 
@@ -313,3 +315,6 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
   `golang.org/x/sys`.
 - The goxc/ghr/gobump release scripts and the Dockerfile used to build in a
   container (cross compilation needs no cgo any more).
+
+[Unreleased]: https://github.com/yuuki/droot/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/yuuki/droot/releases/tag/v0.8.0
