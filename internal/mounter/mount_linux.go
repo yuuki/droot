@@ -463,12 +463,31 @@ func (m *Mounter) readonlyPath(base *os.File, rel, display string) error {
 	if err != nil {
 		return err
 	}
+	// In a user namespace, the mounts copied from the host are locked
+	// together: a bind mount must take those below it too (e.g.
+	// binfmt_misc on /proc/sys/fs/binfmt_misc).
+	recursive := osutil.InUserNamespace()
 	if !mounted {
-		if err := mount(osutil.FdPath(fd), osutil.FdPath(fd), "", unix.MS_BIND, ""); err != nil {
+		flags := uintptr(unix.MS_BIND)
+		if recursive {
+			flags |= unix.MS_REC
+		}
+		if err := mount(osutil.FdPath(fd), osutil.FdPath(fd), "", flags, ""); err != nil {
 			return err
 		}
 	}
-	return m.remountReopened(parent, rel, display, !mounted)
+	f, err := reopenMount(parent, rel, display)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if !mounted {
+		m.track(f)
+	}
+	if recursive {
+		return m.remountReadonlyRecursive(f)
+	}
+	return remountReadonly(f)
 }
 
 // reopenMount opens the mount just made on the last component of rel, in the
@@ -562,6 +581,13 @@ func (m *Mounter) BindMount(hostPath, containerPath string, opts BindOptions) er
 		flags |= unix.MS_REC
 	}
 	mnt, err := m.mountOn(t, hostPath, "", flags, "", opts.Replace)
+	if errors.Is(err, unix.EINVAL) && !opts.Recursive && osutil.InUserNamespace() {
+		// In a user namespace, the mounts below hostPath are locked to
+		// it: they come along.
+		log.Debugf("binding %s recursively: it has mounts below it", hostPath)
+		opts.Recursive = true
+		mnt, err = m.mountOn(t, hostPath, "", flags|unix.MS_REC, "", opts.Replace)
+	}
 	if err != nil {
 		return err
 	}
@@ -605,7 +631,10 @@ func (m *Mounter) BindDevice(path string, check osutil.DirCheck) error {
 	if err != nil {
 		return err
 	}
-	return mnt.Close()
+	defer mnt.Close()
+	// Read-only, so that chmod/chown cannot change the host's device
+	// (writing to the device still works).
+	return remountReadonly(mnt)
 }
 
 // MountFS mounts a new file system of type fstype (e.g. tmpfs or devpts) on

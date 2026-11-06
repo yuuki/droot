@@ -33,29 +33,40 @@ var lockDir = "/run/droot"
 // close-on-exec) or exits.
 //
 // Only root can take the lock; for other users LockRoot does nothing, as
-// they cannot mount anything anyway. In a user namespace (rootless mode),
-// the lock files are in $XDG_RUNTIME_DIR/droot, the user's own directory;
-// without XDG_RUNTIME_DIR, LockRoot does nothing either.
+// they cannot mount anything anyway.
 func LockRoot(ctx context.Context, rootDir string, waiting func()) (unlock func(), err error) {
 	if os.Geteuid() != 0 {
 		return func() {}, nil
 	}
-	lockDir := lockDir
-	if InUserNamespace() {
-		runtimeDir := os.Getenv("XDG_RUNTIME_DIR")
-		if runtimeDir == "" || !filepath.IsAbs(runtimeDir) {
-			log.Debugf("not locking %s: XDG_RUNTIME_DIR is not set", rootDir)
-			return func() {}, nil
-		}
-		lockDir = filepath.Join(runtimeDir, "droot")
+	return lockIn(ctx, lockDir, rootDir, waiting, "a directory owned by root with mode 0700")
+}
+
+// LockRootUser is LockRoot for rootless runs: the lock files are in
+// runtimeDir/droot, runtimeDir being the user's XDG_RUNTIME_DIR. Without
+// it, or if it cannot be used, nothing is locked.
+func LockRootUser(ctx context.Context, runtimeDir, rootDir string, waiting func()) (unlock func(), err error) {
+	if runtimeDir == "" || !filepath.IsAbs(runtimeDir) {
+		log.Debugf("not locking %s: XDG_RUNTIME_DIR is not set", rootDir)
+		return func() {}, nil
 	}
+	unlock, err = lockIn(ctx, filepath.Join(runtimeDir, "droot"), rootDir, waiting, "your own directory with mode 0700")
+	if err != nil && ctx.Err() == nil {
+		log.Warnf("not locking %s: %v", rootDir, err)
+		return func() {}, nil
+	}
+	return unlock, err
+}
+
+// lockIn takes the lock of rootDir in lockDir, which must be what wantDir
+// says.
+func lockIn(ctx context.Context, lockDir, rootDir string, waiting func(), wantDir string) (unlock func(), err error) {
 	var st unix.Stat_t
 	if err := unix.Stat(rootDir, &st); err != nil {
 		return nil, &fs.PathError{Op: "stat", Path: rootDir, Err: err}
 	}
-	// In a user namespace, lockDir is in the user's own XDG_RUNTIME_DIR;
-	// its owner and mode are checked below.
-	if err := os.Mkdir(lockDir, 0o700); err != nil && !errors.Is(err, fs.ErrExist) { //nolint:gosec // G703: see above
+	// Its owner and mode are checked below: for LockRootUser, it is in
+	// the user's own XDG_RUNTIME_DIR.
+	if err := os.Mkdir(lockDir, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
 		return nil, err
 	}
 	var dst unix.Stat_t
@@ -63,7 +74,7 @@ func LockRoot(ctx context.Context, rootDir string, waiting func()) (unlock func(
 		return nil, &fs.PathError{Op: "stat", Path: lockDir, Err: err}
 	}
 	if dst.Mode&unix.S_IFMT != unix.S_IFDIR || dst.Uid != 0 || dst.Mode&0o077 != 0 {
-		return nil, fmt.Errorf("refusing to use the lock directory %s: it must be a directory owned by root with mode 0700", lockDir)
+		return nil, fmt.Errorf("refusing to use the lock directory %s: it must be %s", lockDir, wantDir)
 	}
 	path := filepath.Join(lockDir, fmt.Sprintf("%d-%d.lock", st.Dev, st.Ino))
 	fd, err := unix.Open(path, unix.O_RDWR|unix.O_CREAT|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)

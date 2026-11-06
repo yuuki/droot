@@ -416,6 +416,10 @@ allows droot; elsewhere, check `user.max_user_namespaces` and
 `kernel.unprivileged_userns_clone`. Locks are taken in
 `$XDG_RUNTIME_DIR/droot`.
 
+In a systemd unit (e.g. a user service), set `KillMode=mixed`: systemd then
+sends `SIGTERM` to droot only, which passes it on to `COMMAND`, instead of to
+every process of the unit — `COMMAND` would get it twice.
+
 ## Exporting without a Docker daemon
 
 With a `docker://`, `docker-archive:`, `oci:` or `oci-archive:` image, `droot

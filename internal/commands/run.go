@@ -247,6 +247,11 @@ func doRun(ctx context.Context, cmd *cli.Invocation) (err error) {
 	if runtime.GOOS != "linux" {
 		return fmt.Errorf("droot run is only supported on Linux (running on %s)", runtime.GOOS)
 	}
+	if os.Geteuid() != 0 {
+		// Rootless: run again as root of a user namespace, before
+		// reading anything (--config and --env-file may be pipes).
+		return runRootless(ctx)
+	}
 
 	argv := cmd.Args()
 	if cmd.IsSet("config") {
@@ -369,10 +374,6 @@ func doRun(ctx context.Context, cmd *cli.Invocation) (err error) {
 		}
 		return cmd.UsageError("a command to run is required")
 	}
-	if os.Geteuid() != 0 {
-		// Rootless: run again as root of a user namespace.
-		return runRootless()
-	}
 	// Root of a user namespace: rootless, or in a container.
 	rootless := osutil.InUserNamespace()
 
@@ -384,9 +385,14 @@ func doRun(ctx context.Context, cmd *cli.Invocation) (err error) {
 	// Serialize the setup of concurrent runs on the same root (they would
 	// race on the --cp copies and on the creation of mount points and
 	// devices). The lock is released at the exec.
-	unlock, err := osutil.LockRoot(ctx, rootDir, func() {
-		log.Infof("waiting for another droot working on %s", rootDir)
-	})
+	waiting := func() { log.Infof("waiting for another droot working on %s", rootDir) }
+	lock := osutil.LockRoot
+	if userns.Supervised() {
+		lock = func(ctx context.Context, rootDir string, waiting func()) (func(), error) {
+			return osutil.LockRootUser(ctx, os.Getenv("XDG_RUNTIME_DIR"), rootDir, waiting)
+		}
+	}
+	unlock, err := lock(ctx, rootDir, waiting)
 	if err != nil {
 		return err
 	}
@@ -579,12 +585,12 @@ func doRun(ctx context.Context, cmd *cli.Invocation) (err error) {
 // runRootless runs droot again as root of a new user namespace, mapping the
 // user to root and their subordinate IDs, if any, to the other users (see
 // package userns), and waits for it.
-func runRootless() error {
+func runRootless(ctx context.Context) error {
 	m, err := userns.CurrentMapping()
 	if err != nil {
 		return err
 	}
-	return userns.Run(m)
+	return userns.Run(ctx, m)
 }
 
 // checkMapped checks, in a user namespace, that the user and the groups of

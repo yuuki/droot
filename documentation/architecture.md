@@ -261,10 +261,17 @@ through the `userns` package first:
    are left out; and the parent-death signal is set again after `setuid`.
 4. Meanwhile the parent, the first droot, keeps the thread that started the
    child (the parent-death signal follows the thread), passes `SIGHUP`,
-   `SIGINT`, `SIGTERM`, `SIGQUIT`, `SIGUSR1`, `SIGUSR2`, ... on to it —
-   except, when droot is in the foreground of a terminal, the signals the
-   terminal sends to the whole process group — and exits with the exit
-   status of `COMMAND`, or kills itself with the signal that killed it.
+   `SIGINT`, `SIGTERM`, `SIGQUIT`, `SIGUSR1`, `SIGUSR2`, ... on to it — from
+   before the child is started — and exits with the exit status of
+   `COMMAND`, or kills itself with the signal that killed it. Without a
+   terminal, the child has a process group of its own, so that a signal
+   sent to the group of droot (`timeout(1)`, `kill -- -PGID`) reaches it
+   once; on a terminal, it stays in the group of droot for job control, and
+   the signals the terminal sends to its foreground group are not passed
+   on while droot is in the foreground.
+
+Run rootless, droot re-executes itself before reading anything: `--config`
+and `--env-file` may be pipes, which only the second stage must read.
 
 ## `droot umount`
 

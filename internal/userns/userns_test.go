@@ -12,6 +12,8 @@ ubuntu:100000:65536
 other:200000:65536
 
 1000:300000:1000
+1000:100000:65536
+ubuntu:150000:10
 ubuntu:bad:10
 ubuntu:400000:0
 ubuntu:500000:10:extra
@@ -28,7 +30,7 @@ ubuntu:700000:5
 	}
 	// Without a name (a user missing from /etc/passwd), by ID only.
 	got, _ = SubIDs(strings.NewReader(file), "", 1000)
-	if !reflect.DeepEqual(got, []Range{{Outside: 300000, Size: 1000}}) {
+	if !reflect.DeepEqual(got, []Range{{Outside: 300000, Size: 1000}, {Outside: 100000, Size: 65536}}) {
 		t.Errorf("by ID: got %+v", got)
 	}
 	got, _ = SubIDs(strings.NewReader(file), "nobody", 65534)

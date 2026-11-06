@@ -32,7 +32,7 @@ func unshareCommand() *cli.Command {
 	}
 }
 
-func doUnshare(_ context.Context, cmd *cli.Invocation) error {
+func doUnshare(ctx context.Context, cmd *cli.Invocation) error {
 	if err := setup(cmd); err != nil {
 		return err
 	}
@@ -52,13 +52,19 @@ func doUnshare(_ context.Context, cmd *cli.Invocation) error {
 		if err != nil {
 			return err
 		}
-		return userns.Run(m)
+		return userns.Run(ctx, m)
 	}
 	if !osutil.InUserNamespace() {
 		return cmd.UsageError("droot unshare is for users other than root: root extracts archives as they are")
 	}
 	path, err := exec.LookPath(argv[0])
 	if err != nil {
+		return err
+	}
+	// The parent-death signal is an attribute of the thread that calls
+	// execve(2): set it on this one.
+	runtime.LockOSThread()
+	if err := userns.KeepParentDeathSignal(); err != nil {
 		return err
 	}
 	signal.Reset(os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)

@@ -335,6 +335,8 @@ $ droot run --root app --bind ~/app-data:/data
 
 rootless では、ハードリミットを引き上げること（`--ulimit`）はできず、バインドマウントできるのは自分のユーザーが読めるものだけです。ディストリビューションによっては、非特権ユーザー名前空間が制限されています。Ubuntu 24.04 以降では、`kernel.apparmor_restrict_unprivileged_userns` が 0 であるか、AppArmor プロファイルが droot を許可していない限り、ユーザー名前空間でケーパビリティが使えません。それ以外の環境では `user.max_user_namespaces` と `kernel.unprivileged_userns_clone` を確認してください。ロックは `$XDG_RUNTIME_DIR/droot` に作成されます。
 
+systemd のユニット（ユーザーサービスなど）では `KillMode=mixed` を設定してください。systemd が `SIGTERM` をユニットのすべてのプロセスではなく droot だけに送り、droot がそれを `COMMAND` に転送します（設定しないと `COMMAND` は `SIGTERM` を 2 回受け取ります）。
+
 ## Docker デーモンを使わないエクスポート
 
 `docker://`、`docker-archive:`、`oci:`、`oci-archive:` のイメージでは、`droot export` はデーモンを必要としません。Docker のない CI ランナーでも、Podman、Buildah、containerd のストアからでも（それぞれの `save` や `push` コマンドを介して）、レジストリから直接でもエクスポートできます。droot はイメージのマニフェスト（マルチプラットフォームイメージでは `--platform` のバリアント）を読み、コンテナエンジンと同じようにレイヤーを順に適用し（レイヤーの whiteout は下位レイヤーのファイルを削除します）、得られたファイルシステムを書き出します。

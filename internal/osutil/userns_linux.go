@@ -62,16 +62,22 @@ func readIDMap(name string) ([]IDRange, error) {
 	return ParseIDMap(f)
 }
 
-var userNS = sync.OnceValue(func() bool {
+// nsState is read once, from the /proc of droot: the first call must come
+// before the chroot (the container's /proc could say anything).
+var nsState = sync.OnceValue(func() struct{ userNS, setgroupsDenied bool } {
 	ranges, err := readIDMap("/proc/self/uid_map")
-	return err == nil && !IsInitialIDMap(ranges)
+	b, _ := os.ReadFile("/proc/self/setgroups")
+	return struct{ userNS, setgroupsDenied bool }{
+		userNS:          err == nil && !IsInitialIDMap(ranges),
+		setgroupsDenied: strings.TrimSpace(string(b)) == "deny",
+	}
 })
 
 // InUserNamespace reports whether droot runs in a user namespace other than
 // the initial one, as in rootless mode: there, root has its privileges over
 // the namespace only, and cannot create device nodes nor mount procfs
-// without a PID namespace.
-func InUserNamespace() bool { return userNS() }
+// without a PID namespace. The first call must come before the chroot.
+func InUserNamespace() bool { return nsState().userNS }
 
 // UIDMapped and GIDMapped report whether an ID exists in the user namespace
 // of droot, i.e. whether droot can switch to it.
@@ -86,8 +92,6 @@ func idMapped(name string, id int) bool {
 }
 
 // SetgroupsAllowed reports whether setgroups(2) is allowed: it is not in a
-// user namespace whose GID map was written without privileges.
-func SetgroupsAllowed() bool {
-	b, err := os.ReadFile("/proc/self/setgroups")
-	return err != nil || strings.TrimSpace(string(b)) != "deny"
-}
+// user namespace whose GID map was written without privileges. Like
+// InUserNamespace, it is read once, before the chroot.
+func SetgroupsAllowed() bool { return !nsState().userNS || !nsState().setgroupsDenied }

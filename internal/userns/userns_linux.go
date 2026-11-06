@@ -1,6 +1,7 @@
 package userns
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -39,6 +40,10 @@ func Init() {
 
 // parent is the PID of the supervising droot, in the second stage.
 var parent int
+
+// Supervised reports whether droot is the second stage of a rootless droot,
+// which supervises it.
+func Supervised() bool { return parent != 0 }
 
 // KeepParentDeathSignal arranges for droot, and the command it executes, to
 // be killed when the supervising droot dies, if there is one. It must be
@@ -131,23 +136,35 @@ func readSubIDs(file, name string, id int) ([]Range, error) {
 // the mapping m, and waits for it: the signals droot receives are passed on
 // to it, and its exit status is returned as an *ExitError (or droot is
 // killed by the same signal). It does not return before the child exits.
-func Run(m Mapping) error {
+// If ctx is done before the child is started, it is not.
+func Run(ctx context.Context, m Mapping) error {
 	// The child is killed when the thread that started it exits: keep it.
 	runtime.LockOSThread()
-	cmd, release, err := start(m)
+	// From now on, the signals are kept for the child.
+	sigs := make(chan os.Signal, 16)
+	signal.Notify(sigs, forwarded...)
+	defer signal.Stop(sigs)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	tty := terminal()
+	cmd, release, err := start(m, tty < 0)
 	if err != nil {
 		return err
 	}
-	stop := forwardSignals(cmd.Process)
+	if err := ctx.Err(); err != nil { // interrupted while starting
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		return err
+	}
+	done := make(chan struct{})
+	go forward(sigs, done, cmd.Process, tty)
 	release()
 	err = cmd.Wait()
-	stop()
+	close(done)
 	var ee *exec.ExitError
 	if !errors.As(err, &ee) {
-		if err != nil {
-			return err
-		}
-		return nil
+		return err
 	}
 	ws, ok := ee.Sys().(syscall.WaitStatus)
 	if !ok {
@@ -161,8 +178,10 @@ func Run(m Mapping) error {
 }
 
 // start starts the first stage in a new user namespace and writes its ID
-// maps. release lets it go on.
-func start(m Mapping) (*exec.Cmd, func(), error) {
+// maps. release lets it go on. With ownGroup, the child is put in a process
+// group of its own, so that the signals sent to the process group of droot
+// (by timeout(1), kill -- -PGID, ...) reach it only once, passed on by droot.
+func start(m Mapping, ownGroup bool) (*exec.Cmd, func(), error) {
 	r, w, err := os.Pipe()
 	if err != nil {
 		return nil, nil, err
@@ -173,12 +192,12 @@ func start(m Mapping) (*exec.Cmd, func(), error) {
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	cmd.ExtraFiles = []*os.File{r}
 	cmd.Env = append(os.Environ(), envSync+"=3", envParent+"="+strconv.Itoa(os.Getpid()))
-	cmd.SysProcAttr = &syscall.SysProcAttr{Cloneflags: syscall.CLONE_NEWUSER, Pdeathsig: syscall.SIGKILL}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Cloneflags: syscall.CLONE_NEWUSER, Pdeathsig: syscall.SIGKILL, Setpgid: ownGroup}
 	if err := cmd.Start(); err != nil {
 		_ = w.Close()
 		return nil, nil, fmt.Errorf("create a user namespace: %w%s", err, disabledHint(err))
 	}
-	if err := writeMaps(cmd.Process.Pid, m); err != nil {
+	if err := writeMaps(cmd.Process.Pid, &m); err != nil {
 		_ = w.Close()
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
@@ -203,28 +222,36 @@ func disabledHint(err error) string {
 
 // writeMaps writes the ID maps of the namespace of pid: with the helpers for
 // subordinate IDs, or directly for the user's own IDs, which an
-// unprivileged process may map (setgroups(2) must then be denied).
-func writeMaps(pid int, m Mapping) error {
-	if m.Helpers {
-		for _, h := range []struct {
-			name   string
-			ranges []Range
-		}{{"newuidmap", m.UIDs}, {"newgidmap", m.GIDs}} {
-			out, err := exec.Command(h.name, helperArgs(pid, h.ranges)...).CombinedOutput() //nolint:gosec // G204: numeric arguments
-			if err != nil {
-				return fmt.Errorf("%s: %w: %s", h.name, err, strings.TrimSpace(string(out)))
-			}
+// unprivileged process may map (setgroups(2) must then be denied). If a
+// helper fails, only the user's own ID is mapped, with a warning; m is
+// updated.
+func writeMaps(pid int, m *Mapping) error {
+	proc := "/proc/" + strconv.Itoa(pid) + "/"
+	write := func(name, content string) error {
+		if err := os.WriteFile(proc+name, []byte(content), 0); err != nil { //nolint:gosec // G703: /proc/PID/ of the child
+			return fmt.Errorf("write the ID maps of the user namespace: %w", err)
 		}
 		return nil
 	}
-	proc := "/proc/" + strconv.Itoa(pid) + "/"
-	for _, f := range []struct{ name, content string }{
-		{"setgroups", "deny"},
-		{"uid_map", mapString(m.UIDs)},
-		{"gid_map", mapString(m.GIDs)},
-	} {
-		if err := os.WriteFile(proc+f.name, []byte(f.content), 0); err != nil { //nolint:gosec // G703: /proc/PID/ of the child
-			return fmt.Errorf("write the ID maps of the user namespace: %w", err)
+	for _, h := range []struct {
+		helper, file string
+		ranges       *[]Range
+	}{{"newuidmap", "uid_map", &m.UIDs}, {"newgidmap", "gid_map", &m.GIDs}} {
+		if m.Helpers {
+			out, err := exec.Command(h.helper, helperArgs(pid, *h.ranges)...).CombinedOutput() //nolint:gosec // G204: numeric arguments
+			if err == nil {
+				continue
+			}
+			log.Warnf("%s failed (%v: %s): only your own ID is mapped in the user namespace", h.helper, err, strings.TrimSpace(string(out)))
+			*h.ranges = (*h.ranges)[:1]
+		}
+		if h.file == "gid_map" {
+			if err := write("setgroups", "deny"); err != nil {
+				return err
+			}
+		}
+		if err := write(h.file, mapString(*h.ranges)); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -238,33 +265,23 @@ var forwarded = []os.Signal{
 
 // fromTerminal are the signals a terminal sends to its whole foreground
 // process group, the child included.
-var fromTerminal = []os.Signal{unix.SIGINT, unix.SIGQUIT, unix.SIGWINCH, unix.SIGCONT}
+var fromTerminal = []os.Signal{unix.SIGHUP, unix.SIGINT, unix.SIGQUIT, unix.SIGWINCH, unix.SIGCONT}
 
-// forwardSignals passes the signals droot receives on to p until stop is
-// called. When droot is in the foreground of its terminal, the signals the
-// terminal sends are not passed on: the child, in the same process group,
-// gets them too.
-func forwardSignals(p *os.Process) (stop func()) {
-	ch := make(chan os.Signal, 16)
-	signal.Notify(ch, forwarded...)
-	foreground := inForeground()
-	done := make(chan struct{})
-	go func() {
-		for {
-			select {
-			case s := <-ch:
-				if foreground && containsSignal(fromTerminal, s) {
-					continue
-				}
-				_ = p.Signal(s)
-			case <-done:
-				return
+// forward passes the signals of sigs on to p until done is closed. When
+// droot is, at that moment, in the foreground of its terminal tty (if not
+// negative), the signals the terminal sends are not passed on: the child,
+// in the same process group, gets them too.
+func forward(sigs <-chan os.Signal, done <-chan struct{}, p *os.Process, tty int) {
+	for {
+		select {
+		case s := <-sigs:
+			if tty >= 0 && containsSignal(fromTerminal, s) && inForeground(tty) {
+				continue
 			}
+			_ = p.Signal(s)
+		case <-done:
+			return
 		}
-	}()
-	return func() {
-		signal.Stop(ch)
-		close(done)
 	}
 }
 
@@ -277,10 +294,22 @@ func containsSignal(list []os.Signal, s os.Signal) bool {
 	return false
 }
 
+// terminal returns the first of the descriptors 0, 1 and 2 that is a
+// terminal, or -1. The child then stays in the process group of droot, for
+// job control (Ctrl-Z stops both).
+func terminal() int {
+	for fd := range 3 {
+		if _, err := unix.IoctlGetInt(fd, unix.TIOCGPGRP); err == nil {
+			return fd
+		}
+	}
+	return -1
+}
+
 // inForeground reports whether droot is in the foreground process group of
-// the terminal on STDIN.
-func inForeground() bool {
-	pgrp, err := unix.IoctlGetInt(0, unix.TIOCGPGRP)
+// the terminal on fd.
+func inForeground(fd int) bool {
+	pgrp, err := unix.IoctlGetInt(fd, unix.TIOCGPGRP)
 	return err == nil && pgrp == unix.Getpgrp()
 }
 

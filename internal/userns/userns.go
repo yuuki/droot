@@ -16,6 +16,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -78,7 +79,13 @@ func SubIDs(r io.Reader, name string, id int) ([]Range, error) {
 		if err1 != nil || err2 != nil || start < 0 || count <= 0 {
 			continue
 		}
-		ranges = append(ranges, Range{Outside: start, Size: count})
+		r := Range{Outside: start, Size: count}
+		if slices.ContainsFunc(ranges, func(o Range) bool {
+			return r.Outside < o.Outside+o.Size && o.Outside < r.Outside+r.Size
+		}) {
+			continue // e.g. the same range by name and by ID
+		}
+		ranges = append(ranges, r)
 	}
 	return ranges, sc.Err()
 }
