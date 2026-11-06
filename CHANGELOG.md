@@ -39,6 +39,9 @@ Releases up to 0.7.7 are described on the
   one after the sockets of socket activation), so the listening socket of
   server-starter or dewy (`SERVER_STARTER_PORT=8080=3`) was lost. The pipe
   now keeps a number of its own.
+- `droot export` of an image without a daemon failed with "not a directory"
+  on the paths below a symlink that a later entry of the layer hard-linked
+  to itself (a hard link to a symlink is a symlink).
 
 ### Documentation
 
