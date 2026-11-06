@@ -178,7 +178,8 @@ jobs:
           annotations: true
 
   # Builds the release assets exactly like the release workflow, without
-  # publishing them, and keeps them as a workflow artifact for testing.
+  # publishing them, installs the deb and rpm packages, and keeps the assets
+  # as a workflow artifact for testing.
   snapshot:
     name: release snapshot
     runs-on: ubuntu-latest
@@ -203,6 +204,23 @@ jobs:
         with:
           version: v2.20.0
           args: release --snapshot --clean
+      - name: Install the deb package
+        run: |
+          sudo apt-get install -y ./dist/droot_*_amd64.deb
+          droot --version
+          dpkg -L droot
+          bash -c 'source /usr/share/bash-completion/completions/droot && complete -p droot'
+          sudo apt-get remove -y droot
+          test ! -e /usr/bin/droot
+      - name: Install the rpm package
+        run: |
+          docker run --rm -v "$PWD/dist:/dist:ro" almalinux:9 sh -euxc '
+            dnf install -y --disablerepo="*" /dist/droot-*.x86_64.rpm
+            droot --version
+            rpm -ql droot
+            dnf remove -y --disablerepo="*" droot
+            test ! -e /usr/bin/droot
+          '
       - name: Preview the release notes
         run: |
           {
@@ -217,5 +235,7 @@ jobs:
             dist/*.tar.gz
             dist/*.zip
             dist/*.sbom.json
+            dist/*.deb
+            dist/*.rpm
             dist/checksums.txt
           retention-days: 7

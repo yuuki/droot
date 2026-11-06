@@ -285,6 +285,10 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
   binaries and a `checksums.txt` in releases. The assets keep the names and
   layout of 0.7.7 (`droot_linux_amd64.tar.gz`, `droot_darwin_amd64.zip`, bare
   `droot_linux_amd64`, ...); the archives also contain the man page.
+- deb and rpm packages for Linux amd64, arm64 and ARMv7
+  (`droot_0.8.0-1_amd64.deb`, `droot-0.8.0-1.x86_64.rpm`, ...). They install
+  `/usr/bin/droot`, the man page and the bash, zsh and fish completions, and
+  have no dependencies.
 - Signed SLSA build provenance attestations for every release asset
   (`gh attestation verify`), an SPDX SBOM for every archive, and
   reproducible binaries and archives.

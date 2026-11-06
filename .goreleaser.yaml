@@ -8,6 +8,12 @@ version: 2
 
 project_name: droot
 
+# The only hook generates the man page and the shell completion scripts of
+# the deb and rpm packages into build/package, which git ignores.
+before:
+  hooks:
+    - ./script/package-files.sh build/package
+
 builds:
   - main: ./cmd/droot
     env:
@@ -70,6 +76,75 @@ archives:
     formats: [binary]
     name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}"
 
+# deb and rpm packages for Linux, named like those of other projects:
+# droot_0.8.0-1_amd64.deb, droot-0.8.0-1.x86_64.rpm (arm64/aarch64, and
+# armhf/armv7hl for 32-bit ARM). The binary is static, so the packages have
+# no dependencies and suit every distribution: the rpm has no .el8-like
+# distribution tag. They install the binary, the man page, the bash, zsh and
+# fish completions and the documentation, all with the time of the commit.
+nfpms:
+  - id: packages
+    package_name: droot
+    file_name_template: "{{ .ConventionalFileName }}"
+    formats: [deb, rpm]
+    vendor: yuuki
+    homepage: https://github.com/yuuki/droot
+    maintainer: Yuuki Tsubouchi <yuki.tsubo@gmail.com>
+    description: |-
+      Simple chroot-based application container engine
+      Droot runs the file system of a container image, exported as a plain tar
+      archive by droot export, with chroot(2) instead of the Docker runtime,
+      with dropped capabilities and bind mounts. It does not isolate
+      processes, networks, users or resources like Docker.
+    license: MIT
+    section: admin
+    priority: optional
+    release: "1"
+    bindir: /usr/bin
+    mtime: "{{ .CommitDate }}"
+    contents:
+      - src: build/package/droot.1.gz
+        dst: /usr/share/man/man1/droot.1.gz
+        file_info: &pkgfile
+          mode: 0644
+          mtime: "{{ .CommitDate }}"
+      - src: build/package/completions/droot.bash
+        dst: /usr/share/bash-completion/completions/droot
+        file_info: *pkgfile
+      - src: build/package/completions/_droot
+        dst: /usr/share/zsh/vendor-completions/_droot
+        packager: deb
+        file_info: *pkgfile
+      - src: build/package/completions/_droot
+        dst: /usr/share/zsh/site-functions/_droot
+        packager: rpm
+        file_info: *pkgfile
+      - src: build/package/completions/droot.fish
+        dst: /usr/share/fish/vendor_completions.d/droot.fish
+        file_info: *pkgfile
+      - src: LICENSE
+        dst: /usr/share/doc/droot/copyright
+        packager: deb
+        file_info: *pkgfile
+      - src: LICENSE
+        dst: /usr/share/licenses/droot/LICENSE
+        packager: rpm
+        type: license
+        file_info: *pkgfile
+      - src: LICENSE_OF_DEPENDENCIES.md
+        dst: /usr/share/doc/droot/LICENSE_OF_DEPENDENCIES.md
+        file_info: *pkgfile
+      - src: README.md
+        dst: /usr/share/doc/droot/README.md
+        file_info: *pkgfile
+      - src: CHANGELOG.md
+        dst: /usr/share/doc/droot/CHANGELOG.md
+        file_info: *pkgfile
+    rpm:
+      summary: Simple chroot-based application container engine
+      # Rather than the name of the machine that builds it: reproducible.
+      buildhost: localhost
+
 # An SPDX SBOM per archive (droot_linux_amd64.tar.gz.sbom.json, ...), made
 # by syft, which must be in PATH.
 sboms:
@@ -104,7 +179,24 @@ release:
   preflight:
     fail_on_error: true
   # One line per paragraph: GitHub renders line breaks in release notes.
+  # The package version is the tag without its "v", with "~" before the
+  # pre-release part (0.8.0~rc.1) so that it sorts before the release.
   footer: |
+    ## Installing the deb and rpm packages
+
+    The packages contain the static binary, the man page and the shell completions, and have no dependencies. On Debian, Ubuntu and their derivatives (amd64, arm64, armhf):
+
+    ```console
+    $ curl -fsSLO https://github.com/yuuki/droot/releases/download/{{ .Tag }}/droot_{{ replace .Version "-" "~" }}-1_$(dpkg --print-architecture).deb
+    $ sudo apt install ./droot_{{ replace .Version "-" "~" }}-1_$(dpkg --print-architecture).deb
+    ```
+
+    On RHEL, Fedora, Amazon Linux and other RPM-based distributions (x86_64, aarch64; `droot-{{ replace .Version "-" "~" }}-1.armv7hl.rpm` on 32-bit ARM):
+
+    ```console
+    $ sudo dnf install https://github.com/yuuki/droot/releases/download/{{ .Tag }}/droot-{{ replace .Version "-" "~" }}-1.$(uname -m).rpm
+    ```
+
     ## Verifying the downloads
 
     Every asset and `checksums.txt` have a signed [SLSA build provenance attestation](https://github.com/yuuki/droot/attestations) stating that they were built from `{{ .Tag }}` by the release workflow. Verify one with the [GitHub CLI](https://cli.github.com):

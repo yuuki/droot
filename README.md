@@ -58,6 +58,29 @@ $ curl -fsSL -o droot https://github.com/yuuki/droot/releases/latest/download/dr
 $ chmod +x droot && sudo mv droot /usr/local/bin/
 ```
 
+#### deb and rpm packages
+
+Every release also has Linux packages for amd64, arm64 and 32-bit ARM
+(`armhf`/`armv7hl`). They install `/usr/bin/droot`, the man page and the
+bash, zsh and fish completions, and depend on nothing (the binary is static),
+so they suit every distribution. On Debian, Ubuntu and their derivatives:
+
+```console
+$ VERSION=0.8.0
+$ curl -fsSLO https://github.com/yuuki/droot/releases/download/v$VERSION/droot_$VERSION-1_$(dpkg --print-architecture).deb
+$ sudo apt install ./droot_$VERSION-1_$(dpkg --print-architecture).deb
+```
+
+On RHEL, Fedora, Amazon Linux and other RPM-based distributions (on 32-bit
+ARM, the package is `droot-$VERSION-1.armv7hl.rpm`):
+
+```console
+$ VERSION=0.8.0
+$ sudo dnf install https://github.com/yuuki/droot/releases/download/v$VERSION/droot-$VERSION-1.$(uname -m).rpm
+```
+
+Upgrade by installing the package of a newer release the same way.
+
 #### Verifying a release
 
 droot runs as root, so check what you install. Every asset has a signed
@@ -369,7 +392,8 @@ archives: `man -l droot.1`) list every option.
 
 ### Shell completion
 
-`droot completion bash|zsh|fish` prints a completion script:
+The deb and rpm packages install the completion scripts. Otherwise,
+`droot completion bash|zsh|fish` prints one:
 
 ```console
 $ source <(droot completion bash)     # in ~/.bashrc

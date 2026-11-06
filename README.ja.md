@@ -49,6 +49,26 @@ $ curl -fsSL -o droot https://github.com/yuuki/droot/releases/latest/download/dr
 $ chmod +x droot && sudo mv droot /usr/local/bin/
 ```
 
+<a id="deb-and-rpm-packages"></a>
+#### deb パッケージと rpm パッケージ
+
+すべてのリリースには、amd64、arm64、32 ビット ARM（`armhf`/`armv7hl`）向けの Linux パッケージも添付されています。パッケージは `/usr/bin/droot`、man ページ、bash・zsh・fish の補完スクリプトをインストールします。バイナリは静的リンクのため依存パッケージがなく、どのディストリビューションでも使えます。Debian、Ubuntu とその派生ディストリビューションでは次のようにします。
+
+```console
+$ VERSION=0.8.0
+$ curl -fsSLO https://github.com/yuuki/droot/releases/download/v$VERSION/droot_$VERSION-1_$(dpkg --print-architecture).deb
+$ sudo apt install ./droot_$VERSION-1_$(dpkg --print-architecture).deb
+```
+
+RHEL、Fedora、Amazon Linux などの RPM 系ディストリビューションでは次のようにします（32 ビット ARM のパッケージは `droot-$VERSION-1.armv7hl.rpm` です）。
+
+```console
+$ VERSION=0.8.0
+$ sudo dnf install https://github.com/yuuki/droot/releases/download/v$VERSION/droot-$VERSION-1.$(uname -m).rpm
+```
+
+アップグレードするには、新しいリリースのパッケージを同じ方法でインストールします。
+
 <a id="verifying-a-release"></a>
 #### リリースの検証
 
@@ -307,7 +327,7 @@ $ droot unshare rm -rf app      # サブ ID が所有するファイル
 <a id="shell-completion"></a>
 ### シェル補完
 
-`droot completion bash|zsh|fish` は補完スクリプトを出力します。
+deb パッケージと rpm パッケージは補完スクリプトをインストールします。それ以外の場合は、`droot completion bash|zsh|fish` が補完スクリプトを出力します。
 
 ```console
 $ source <(droot completion bash)     # ~/.bashrc に記述
