@@ -115,6 +115,15 @@ users, the reason why some distributions restrict them — nothing droot or
   that calls `execve(2)` (see [architecture](architecture.md#droot-run)).
 - Supplementary groups are reset to the groups of `--user` in the container,
   so the command does not inherit the groups of the invoking root user.
+- Under systemd, the host's notification socket (`NOTIFY_SOCKET`) is bound
+  in the container read-only: its processes can send notifications, which
+  systemd attributes to the unit of their cgroup and, with the default
+  `NotifyAccess=main`, only accepts from its main process, but cannot
+  `chmod` or `chown` the socket, which every service of the host uses. The
+  variables of socket activation are only passed on when `LISTEN_PID` is
+  the PID of droot. droot closes no descriptor it inherits: as with any
+  program, those its parent leaves open (socket activation or not) reach
+  `COMMAND`.
 - `droot umount --root /` is refused.
 
 ## Reporting a vulnerability

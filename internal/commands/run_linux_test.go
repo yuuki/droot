@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	"golang.org/x/sys/unix"
@@ -185,5 +187,52 @@ func TestDefaultEnv(t *testing.T) {
 	got = defaultEnv(nil, &identity.Credential{UID: 4242})
 	if want := []string{"PATH=" + osutil.DefaultPath, "HOME=/"}; !slices.Equal(got, want) {
 		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestNotifySocketMount(t *testing.T) {
+	tests := []struct {
+		notify string // droot's NOTIFY_SOCKET, unset if empty
+		env    []string
+		want   string
+	}{
+		{"", nil, ""},
+		{"/run/systemd/notify", []string{"NOTIFY_SOCKET=/run/systemd/notify"}, "/run/systemd/notify"},
+		// An abstract socket needs no mount.
+		{"@notify", []string{"NOTIFY_SOCKET=@notify"}, ""},
+		// --env gave COMMAND another socket, or none.
+		{"/run/systemd/notify", []string{"NOTIFY_SOCKET=/run/app/notify"}, ""},
+		{"/run/systemd/notify", []string{"PATH=/bin"}, ""},
+		// The image's own NOTIFY_SOCKET, without droot's.
+		{"", []string{"NOTIFY_SOCKET=/run/systemd/notify"}, ""},
+	}
+	for _, tt := range tests {
+		if tt.notify == "" {
+			t.Setenv("NOTIFY_SOCKET", "")
+			os.Unsetenv("NOTIFY_SOCKET")
+		} else {
+			t.Setenv("NOTIFY_SOCKET", tt.notify)
+		}
+		if got := notifySocketMount(tt.env); got != tt.want {
+			t.Errorf("NOTIFY_SOCKET=%q, env %q: got %q, want %q", tt.notify, tt.env, got, tt.want)
+		}
+	}
+}
+
+func TestNotifySocketTarget(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "notify")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Refused before the container is looked at: no Root is needed.
+	if err := notifySocketTarget(nil, file); err == nil || !strings.Contains(err.Error(), "is not a socket") {
+		t.Errorf("a regular file: got %v", err)
+	}
+	if err := notifySocketTarget(nil, file+".missing"); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("a missing socket: got %v", err)
+	}
+	// Not fatal: droot may have inherited NOTIFY_SOCKET by mistake.
+	if err := bindNotifySocket(nil, nil, file+".missing"); err != nil {
+		t.Errorf("a missing socket must only be reported, got %v", err)
 	}
 }

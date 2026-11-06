@@ -1,0 +1,18 @@
+# Socket activation of app.service (or app-notify.service, with Service=):
+# systemd listens on port 8080 and starts the service at the first
+# connection, passing the socket as file descriptor 3 (LISTEN_FDS=1). droot
+# passes it on to the application, which must use it (sd_listen_fds(3))
+# instead of opening its own. Enable the socket, not the service:
+#   systemctl disable --now app && systemctl enable --now app.socket
+# See documentation/deployment.md.
+[Unit]
+Description=app socket
+
+[Socket]
+ListenStream=8080
+# The name of the socket in LISTEN_FDNAMES.
+FileDescriptorName=http
+#Service=app-notify.service
+
+[Install]
+WantedBy=sockets.target

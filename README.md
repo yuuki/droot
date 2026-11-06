@@ -273,12 +273,12 @@ arguments. The image's `USER` and `WORKDIR` are the defaults of `--user` and
 In order, droot:
 
 1. optionally copies the host's `/etc/group`, `/etc/passwd`, `/etc/resolv.conf` and `/etc/hosts` into `ROOT_DIR` (`--cp`);
-2. mounts `proc` on `/proc` and bind mounts the host's `/sys` on `/sys` (as an rslave mount), masks their sensitive files and makes `/proc/sys`, `/proc/sysrq-trigger`, `/proc/irq`, `/proc/bus`, `/proc/fs` and `/sys` read-only like Docker (unless `--no-mask`), and performs the `--bind`/`--robind`/`--tmpfs` mounts (parents first) and the `--bind-net-files` mounts;
+2. mounts `proc` on `/proc` and bind mounts the host's `/sys` on `/sys` (as an rslave mount), masks their sensitive files and makes `/proc/sys`, `/proc/sysrq-trigger`, `/proc/irq`, `/proc/bus`, `/proc/fs` and `/sys` read-only like Docker (unless `--no-mask`), and performs the `--bind`/`--robind`/`--tmpfs` mounts (parents first), the `--bind-net-files` mounts and, under systemd, the mount of the notification socket (see [Notifications and socket activation](#notifications-and-socket-activation));
 3. creates the `/var/lock -> ../run/lock` symlink if `/var` exists and `/var/lock` does not, and populates `/dev` like Docker — unless `/dev` is a mount point (e.g. `--bind /dev`), in which case it is left alone: the devices `null`, `zero`, `full`, `random`, `urandom` and `tty` (owned by root, mode 0666), the symlinks `fd -> /proc/self/fd`, `stdin`, `stdout`, `stderr` and `ptmx -> pts/ptmx`, a private `devpts` instance on `/dev/pts` (pseudo-terminals) and a 64 MiB tmpfs on `/dev/shm`;
 4. `chroot`s into `ROOT_DIR`;
 5. drops every capability except `CAP_CHOWN`, `CAP_DAC_OVERRIDE`, `CAP_FOWNER`, `CAP_SETGID`, `CAP_SETUID` and `CAP_NET_BIND_SERVICE` (adjusted by `--cap-add`/`--cap-drop`) from the bounding set and empties the inheritable and ambient sets (unless `--no-dropcaps`);
 6. switches to the requested user and groups;
-7. changes to the working directory and executes `COMMAND` with the environment of the image (the `Env` of `/.droot/config.json` overridden by `/.drootenv`), overridden by `--env-file`, then by `--env`. `PATH` (`/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`), `HOME`, `USER` and `LOGNAME` (from the user's entry in `ROOT_DIR/etc/passwd`; `HOME=/` without entry) are set when missing. droot *replaces itself* with `COMMAND`, so the exit status and signals are those of `COMMAND`.
+7. changes to the working directory and executes `COMMAND` with the environment of the image (the `Env` of `/.droot/config.json` overridden by `/.drootenv`), overridden by the variables systemd sets for droot (`NOTIFY_SOCKET`, `LISTEN_FDS`, ..., [below](#notifications-and-socket-activation)), then by `--env-file`, then by `--env`. `PATH` (`/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`), `HOME`, `USER` and `LOGNAME` (from the user's entry in `ROOT_DIR/etc/passwd`; `HOME=/` without entry) are set when missing. droot *replaces itself* with `COMMAND`, so the exit status and signals are those of `COMMAND`.
 
 | Option | Description |
 |---|---|
@@ -331,10 +331,10 @@ Notes:
   so the image's `USER` must exist on the host too, or be overridden with
   `--user`.
 - `COMMAND` inherits the open descriptors of droot (those without
-  close-on-exec), such as the listening sockets of dewy or server-starter, or
-  of systemd socket activation, but not its environment: pass their variables
-  with `--env SERVER_STARTER_PORT` or `--env LISTEN_FDS --env LISTEN_PID
-  --env LISTEN_FDNAMES`.
+  close-on-exec), such as the listening socket of dewy or server-starter, but
+  not its environment, apart from the variables of systemd
+  ([below](#notifications-and-socket-activation)): pass the others with
+  `--env`, e.g. `--env SERVER_STARTER_PORT`.
 
 #### Resource limits
 
@@ -360,6 +360,44 @@ LimitNOFILE=65536
 
 `LimitNOFILE=` and the other `Limit*=` settings of the unit are inherited by
 `COMMAND` too, unless `--ulimit` overrides them.
+
+#### Notifications and socket activation
+
+Under systemd, `COMMAND` gets what systemd gives droot, the main process of
+the service, for its two protocols, `Type=notify` and socket activation:
+
+- `NOTIFY_SOCKET`, the socket of
+  [`sd_notify(3)`](https://www.freedesktop.org/software/systemd/man/latest/sd_notify.html)
+  (`READY=1`, `STATUS=...`, `WATCHDOG=1`, ...). A path, such as
+  `/run/systemd/notify`, is bind mounted read-only on the same path in the
+  container (created if missing, like the mount points of `--bind`):
+  `COMMAND` can send notifications, but not change the host's socket. An
+  abstract socket (`@NAME`) needs no mount: droot shares the host's network
+  namespace. If droot cannot bind the socket (it does not exist, or the
+  mount point cannot be created), it warns and runs `COMMAND` all the same.
+- `LISTEN_FDS`, `LISTEN_PID`, `LISTEN_FDNAMES` and `LISTEN_PIDFDID`
+  ([`sd_listen_fds(3)`](https://www.freedesktop.org/software/systemd/man/latest/sd_listen_fds.html)),
+  if `LISTEN_PID` is the PID of droot. The sockets themselves, descriptors
+  3, 4, ..., are inherited by `COMMAND` like every descriptor droot is
+  given, whatever `LISTEN_PID` says.
+- `WATCHDOG_USEC` and `WATCHDOG_PID` (`WatchdogSec=`), if `WATCHDOG_PID` is
+  the PID of droot or is unset.
+
+`--env-file` and `--env` override them: `--env NOTIFY_SOCKET=PATH` gives
+`COMMAND` another socket, which droot does not mount, and droot does not
+mount the socket over a `--bind` or `--tmpfs` on its path. droot replaces itself
+with `COMMAND`, which keeps its PID: for systemd, `COMMAND` is the main
+process, and the default `NotifyAccess=main` accepts its notifications.
+
+```ini
+[Service]
+Type=notify
+ExecStart=/usr/local/bin/droot run --root /var/containers/app --user app -- app
+```
+
+See [the deployment guide](documentation/deployment.md#6-notifications-and-socket-activation)
+for a `.socket` unit, and [Running without root](#running-without-root) for
+rootless services.
 
 ### `droot umount`
 
@@ -464,8 +502,7 @@ with its status. In the namespace:
   so that the users of the image own their files, and delete them with
   `droot unshare rm -rf`. As root, extract them with `tar -xpf` as usual.
 - `COMMAND` inherits the open descriptors of droot with their numbers, as when
-  run as root; a `LISTEN_PID` naming droot (systemd socket activation) is
-  changed to the PID of `COMMAND`, and `LISTEN_PIDFDID` removed.
+  run as root.
 
 ```console
 $ grep "^$USER:" /etc/subuid /etc/subgid
@@ -485,7 +522,11 @@ allows droot; elsewhere, check `user.max_user_namespaces` and
 
 In a systemd unit (e.g. a user service), set `KillMode=mixed`: systemd then
 sends `SIGTERM` to droot only, which passes it on to `COMMAND`, instead of to
-every process of the unit — `COMMAND` would get it twice.
+every process of the unit — `COMMAND` would get it twice. The sockets of
+socket activation reach `COMMAND` as they would as root, and `LISTEN_PID` and
+`WATCHDOG_PID` become its PID, but its notifications come from a child of
+droot, the main process of the unit: with `Type=notify` or `WatchdogSec=`,
+set `NotifyAccess=all`.
 
 ## Exporting without a Docker daemon
 

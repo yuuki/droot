@@ -1,0 +1,32 @@
+# The service of app.service for an application that tells systemd when it
+# is ready (sd_notify(3)): droot passes NOTIFY_SOCKET (and WATCHDOG_USEC, with
+# WatchdogSec=) on to the application, and bind mounts the socket read-only
+# in the container. See documentation/deployment.md.
+[Unit]
+Description=app (droot container, Type=notify)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+# Started once the application has sent READY=1.
+Type=notify
+# Rootless (with User=, or as a user service), the notifications come from
+# the application, a child of droot, the main process: allow them.
+#NotifyAccess=all
+#KillMode=mixed
+# If the application sends WATCHDOG=1 regularly: restart it when it stops.
+#WatchdogSec=30s
+Environment=DROOT_LOG_FORMAT=json
+Environment=APP_ENV=production
+ExecStart=/usr/local/bin/droot run --config /etc/droot/app.toml
+KillSignal=SIGTERM
+Restart=on-failure
+RestartSec=5s
+
+MemoryMax=1G
+CPUQuota=200%
+TasksMax=512
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

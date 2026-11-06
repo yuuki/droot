@@ -74,49 +74,53 @@ func TestRunNeedsInit(t *testing.T) {
 
 func TestFirstStageCommand(t *testing.T) {
 	// The pipe of the first stage keeps its own number, named by the
-	// environment: in ExtraFiles, it would become descriptor 3, in place of
-	// the one droot may have inherited (the listening socket of
-	// server-starter), and the inherited descriptors would be moved around.
+	// environment: in ExtraFiles, after the sockets of socket activation, it
+	// would take the place of a descriptor droot inherited (the listening
+	// socket of server-starter is descriptor 3).
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = r.Close(); _ = w.Close() })
-	cmd, err := firstStageCommand(r, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cmd.ExtraFiles != nil {
-		t.Errorf("ExtraFiles: %v", cmd.ExtraFiles)
-	}
-	if want := envSync + "=" + strconv.Itoa(int(r.Fd())); !slices.Contains(cmd.Env, want) {
-		t.Errorf("no %s in the environment of the child", want)
-	}
-	flags, err := unix.FcntlInt(r.Fd(), unix.F_GETFD, 0)
-	if err != nil || flags&unix.FD_CLOEXEC != 0 {
-		t.Errorf("the pipe would not be inherited: flags %#x (%v)", flags, err)
-	}
-	if a := cmd.SysProcAttr; a == nil || a.Cloneflags&unix.CLONE_NEWUSER == 0 || !a.Setpgid {
-		t.Errorf("SysProcAttr: %+v", a)
+	for _, sockets := range [][]*os.File{nil, {w}} {
+		cmd, err := firstStageCommand(r, sockets, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(cmd.ExtraFiles, sockets) {
+			t.Errorf("ExtraFiles: %v, want the sockets %v", cmd.ExtraFiles, sockets)
+		}
+		if want := envSync + "=" + strconv.Itoa(int(r.Fd())); !slices.Contains(cmd.Env, want) {
+			t.Errorf("no %s in the environment of the child", want)
+		}
+		flags, err := unix.FcntlInt(r.Fd(), unix.F_GETFD, 0)
+		if err != nil || flags&unix.FD_CLOEXEC != 0 {
+			t.Errorf("the pipe would not be inherited: flags %#x (%v)", flags, err)
+		}
+		if a := cmd.SysProcAttr; a == nil || a.Cloneflags&unix.CLONE_NEWUSER == 0 || !a.Setpgid {
+			t.Errorf("SysProcAttr: %+v", a)
+		}
 	}
 }
 
-func TestAdoptListenPID(t *testing.T) {
-	const parentPID = "4242"
-	t.Setenv("LISTEN_PID", parentPID)
-	t.Setenv("LISTEN_PIDFDID", "1234")
-	adoptListenPID(parentPID)
-	if got, want := os.Getenv("LISTEN_PID"), strconv.Itoa(os.Getpid()); got != want {
-		t.Errorf("LISTEN_PID of the supervising droot: got %s, want %s", got, want)
+func TestListenFiles(t *testing.T) {
+	// The sockets of another process: none.
+	t.Setenv("LISTEN_PID", strconv.Itoa(os.Getpid()+1))
+	t.Setenv("LISTEN_FDS", "2")
+	if files, err := listenFiles(); err != nil || len(files) != 0 {
+		t.Fatalf("got %v, %v", files, err)
 	}
-	if v, ok := os.LookupEnv("LISTEN_PIDFDID"); ok {
-		t.Errorf("LISTEN_PIDFDID of the supervising droot is kept: %s", v)
+	// More sockets than droot was passed: refused before any is taken
+	// (closing them would close descriptors of the test, all close-on-exec,
+	// as Go opens them).
+	t.Setenv("LISTEN_PID", strconv.Itoa(os.Getpid()))
+	t.Setenv("LISTEN_FDS", "100000")
+	files, err := listenFiles()
+	if err == nil || !strings.Contains(err.Error(), "LISTEN_FDS is 100000, but descriptor 3 ") || files != nil {
+		t.Fatalf("got %v, %v", files, err)
 	}
-	// Descriptors meant for another process are left alone.
-	t.Setenv("LISTEN_PID", "1")
-	t.Setenv("LISTEN_PIDFDID", "1234")
-	adoptListenPID(parentPID)
-	if got := os.Getenv("LISTEN_PID") + " " + os.Getenv("LISTEN_PIDFDID"); got != "1 1234" {
-		t.Errorf("LISTEN_PID and LISTEN_PIDFDID of another process: got %s", got)
+	// The descriptors are left as they were.
+	if flags, err := unix.FcntlInt(3, unix.F_GETFD, 0); err == nil && flags&unix.FD_CLOEXEC == 0 {
+		t.Errorf("descriptor 3 lost close-on-exec")
 	}
 }

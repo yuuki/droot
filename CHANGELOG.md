@@ -7,17 +7,38 @@ Releases up to 0.7.7 are described on the
 
 ## [Unreleased]
 
+### Added
+
+- `droot run` works with `Type=notify` and socket activation under systemd
+  ([#52](https://github.com/yuuki/droot/issues/52)): the variables systemd
+  sets for droot are passed on to `COMMAND` without `--env`
+  (`NOTIFY_SOCKET`; `LISTEN_FDS`, `LISTEN_PID`, `LISTEN_FDNAMES` and
+  `LISTEN_PIDFDID` when `LISTEN_PID` is droot's PID; `WATCHDOG_USEC` and
+  `WATCHDOG_PID` when `WATCHDOG_PID` is droot's PID or unset), between the
+  image's environment and `--env-file`. A `NOTIFY_SOCKET` that is a path
+  is bind mounted read-only on the same path in the container, unless a
+  `--bind` or `--tmpfs` mounts on that path or the socket is already
+  there; one that cannot be bound only gets a warning.
+- `examples/systemd/app-notify.service` (`Type=notify`) and
+  `examples/systemd/app.socket`, described in the deployment guide.
+
 ### Fixed
 
-- Rootless `droot run` and `droot unshare` pass the descriptors droot
-  inherited on to `COMMAND` as they are. The pipe that droot used to start
-  itself in the user namespace took the place of descriptor 3, so the
-  listening socket of server-starter or dewy (`SERVER_STARTER_PORT=8080=3`)
-  or of systemd socket activation was lost.
-- Rootless, a `LISTEN_PID` naming droot is changed to the PID of `COMMAND`,
-  and `LISTEN_PIDFDID` (systemd 259 and later), which identifies droot too,
-  is removed, so that systemd socket activation works with `--env
-  LISTEN_PID`.
+- Rootless, the sockets of socket activation reach `COMMAND`: the
+  supervising droot passed a pipe of its own as descriptor 3, which
+  replaced the first socket. `LISTEN_PID` and `WATCHDOG_PID` are now the
+  PID of `COMMAND` instead of that of the supervising droot; its
+  notifications need `NotifyAccess=all`, since the supervising droot is the
+  main process of the service.
+- The mount points `droot run` creates have mode 0755 (directories) and
+  0644 (empty files for file bind mounts) whatever the umask: under a unit
+  with `UMask=0077`, they were 0700 and 0600, and other users than root
+  could not reach what was mounted below them.
+- Rootless, the other descriptors droot inherited reach `COMMAND` too, at
+  their numbers: the pipe of the supervising droot took descriptor 3 (or the
+  one after the sockets of socket activation), so the listening socket of
+  server-starter or dewy (`SERVER_STARTER_PORT=8080=3`) was lost. The pipe
+  now keeps a number of its own.
 
 ### Documentation
 
