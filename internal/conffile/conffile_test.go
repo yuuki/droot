@@ -89,7 +89,7 @@ func TestParseErrors(t *testing.T) {
 func encode(values map[string]any) string {
 	var b strings.Builder
 	for k, v := range values {
-		b.WriteString(strconv.Quote(k) + " = ")
+		b.WriteString(quote(k) + " = ")
 		switch v := v.(type) {
 		case bool:
 			b.WriteString(strconv.FormatBool(v))
