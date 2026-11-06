@@ -131,8 +131,24 @@ change adds an entry under "Unreleased".
       [Sigstore](https://www.sigstore.dev), listed under the repository's
       *Attestations*).
 4. Review the draft and publish it.
-5. Update the Homebrew tap (`yuuki/homebrew-droot`) with the new URL and
-   checksum.
+5. Update the formula of the Homebrew tap,
+   [`yuuki/homebrew-droot`](https://github.com/yuuki/homebrew-droot):
+   `script/homebrew-formula.sh` writes it from the `checksums.txt` of the
+   release, once verified.
+
+   ```console
+   $ gh release download v0.8.0 --repo yuuki/droot --dir /tmp/droot-v0.8.0 \
+       --pattern checksums.txt --pattern checksums.txt.sigstore.json
+   $ cosign verify-blob /tmp/droot-v0.8.0/checksums.txt --bundle /tmp/droot-v0.8.0/checksums.txt.sigstore.json \
+       --certificate-identity https://github.com/yuuki/droot/.github/workflows/release.yml@refs/tags/v0.8.0 \
+       --certificate-oidc-issuer https://token.actions.githubusercontent.com
+   $ script/homebrew-formula.sh v0.8.0 /tmp/droot-v0.8.0/checksums.txt >../homebrew-droot/droot.rb
+   $ cd ../homebrew-droot && git commit -am "droot 0.8.0" && git push
+   $ brew update && brew upgrade droot && brew test droot
+   ```
+
+   The formula installs the archive of macOS or Linux on amd64 or arm64,
+   with the man page; `brew install --HEAD droot` builds `master` with Go.
 
 If the workflow fails before the release is published, fix the cause and
 re-run it: the draft is replaced. Never move a published tag; release a new

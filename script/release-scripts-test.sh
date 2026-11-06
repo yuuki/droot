@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
 # Tests script/release-notes.sh and script/prepare-release.sh on a sample
-# changelog, and checks that the real CHANGELOG.md can be read. Usage:
+# changelog, script/homebrew-formula.sh on a sample checksums.txt, and checks
+# that the real CHANGELOG.md can be read. Usage:
 #
 #   ./script/release-scripts-test.sh
 set -euo pipefail
@@ -9,6 +10,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 NOTES=$PWD/script/release-notes.sh
 PREPARE=$PWD/script/prepare-release.sh
+BREW=$PWD/script/homebrew-formula.sh
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/droot-release-test.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 
@@ -84,6 +86,39 @@ assert_eq "link references are added" "$(tail -n 3 "$CL")" "$(printf '%s\n' "" \
 
 printf '# Changelog\n\n## [0.8.0]\n\n- Undated.\n' >"$CL"
 assert_fails "notes of an undated release" "$NOTES" 0.8.0 "$CL"
+
+# The Homebrew formula, from a checksums.txt like GoReleaser's.
+SUMS=$WORK/checksums.txt
+i=0
+for asset in droot_darwin_amd64 droot_darwin_amd64.zip droot_darwin_arm64.zip \
+  droot_linux_amd64.tar.gz droot_linux_arm64.tar.gz droot_linux_armv7.tar.gz; do
+  i=$((i + 1))
+  printf '%064x  %s\n' "$i" "$asset"
+done >"$SUMS"
+FORMULA=$WORK/droot.rb
+"$BREW" v0.8.0 "$SUMS" >"$FORMULA"
+assert_eq "formula version" "$(grep -E '^  version ' "$FORMULA")" '  version "0.8.0"'
+assert_eq "formula archives" "$(grep -E '^ +(url|sha256) ' "$FORMULA" | sed 's/^ *//')" "$(cat <<'EOF'
+url "https://github.com/yuuki/droot/releases/download/v0.8.0/droot_darwin_arm64.zip"
+sha256 "0000000000000000000000000000000000000000000000000000000000000003"
+url "https://github.com/yuuki/droot/releases/download/v0.8.0/droot_darwin_amd64.zip"
+sha256 "0000000000000000000000000000000000000000000000000000000000000002"
+url "https://github.com/yuuki/droot/releases/download/v0.8.0/droot_linux_arm64.tar.gz"
+sha256 "0000000000000000000000000000000000000000000000000000000000000005"
+url "https://github.com/yuuki/droot/releases/download/v0.8.0/droot_linux_amd64.tar.gz"
+sha256 "0000000000000000000000000000000000000000000000000000000000000004"
+url "https://github.com/yuuki/droot.git", branch: "master"
+EOF
+)"
+if command -v ruby >/dev/null; then
+  ruby -c "$FORMULA" >/dev/null || fail "the formula is not valid Ruby"
+  echo "ok - the formula is valid Ruby"
+fi
+assert_fails "formula of a pre-release" "$BREW" 0.8.0-rc.1 "$SUMS"
+grep -v linux_arm64 "$SUMS" >"$WORK/missing.txt"
+assert_fails "formula with a missing archive" "$BREW" 0.8.0 "$WORK/missing.txt"
+sed 's/^0*5 /xyz /' "$SUMS" >"$WORK/bad.txt"
+assert_fails "formula with a malformed checksum" "$BREW" 0.8.0 "$WORK/bad.txt"
 
 "$NOTES" Unreleased CHANGELOG.md >/dev/null 2>&1 || "$NOTES" "$(sed -n 's/^## \[\([0-9][^]]*\)\] - .*/\1/p' CHANGELOG.md | head -n 1)" >/dev/null ||
   fail "CHANGELOG.md has neither Unreleased entries nor a dated release"

@@ -285,6 +285,9 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
   binaries and a `checksums.txt` in releases. The assets keep the names and
   layout of 0.7.7 (`droot_linux_amd64.tar.gz`, `droot_darwin_amd64.zip`, bare
   `droot_linux_amd64`, ...); the archives also contain the man page.
+- The Homebrew formula (`brew install yuuki/droot/droot`) installs droot on
+  macOS and Linux, on amd64 and arm64, with the man page. It is generated
+  from the checksums of a release by `script/homebrew-formula.sh`.
 - Signed SLSA build provenance attestations for every release asset
   (`gh attestation verify`), a keyless cosign signature of `checksums.txt`
   (`checksums.txt.sigstore.json`, `cosign verify-blob`), an SPDX SBOM for
