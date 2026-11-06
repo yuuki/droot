@@ -80,7 +80,7 @@ cross: ## Check that droot builds for every released platform
 	done
 
 .PHONY: snapshot
-snapshot: ## Build release archives locally into dist/ without publishing (SBOMs need syft)
+snapshot: ## Build the release assets, packages included, into dist/ without publishing (SBOMs need syft)
 	go run github.com/goreleaser/goreleaser/v2@$(GORELEASER_VERSION) release --snapshot --clean $(if $(shell command -v syft),,--skip=sbom)
 
 .PHONY: release-prep
@@ -91,7 +91,7 @@ release-prep: ## Move the Unreleased entries of CHANGELOG.md to a new version: m
 .PHONY: clean
 clean: ## Remove build outputs
 	rm -f $(BIN) coverage.out
-	rm -rf dist
+	rm -rf dist build
 
 .PHONY: help
 help: ## Show this help

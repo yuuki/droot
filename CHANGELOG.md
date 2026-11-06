@@ -7,8 +7,10 @@ Releases up to 0.7.7 are described on the
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-06
+
 Maintenance release after several years: modern Go and Docker, far fewer
-dependencies, many bug and security fixes. Planned as **v0.8.0**.
+dependencies, many bug and security fixes.
 
 ### Breaking changes
 
@@ -285,6 +287,10 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
   binaries and a `checksums.txt` in releases. The assets keep the names and
   layout of 0.7.7 (`droot_linux_amd64.tar.gz`, `droot_darwin_amd64.zip`, bare
   `droot_linux_amd64`, ...); the archives also contain the man page.
+- deb and rpm packages for Linux amd64, arm64 and ARMv7
+  (`droot_0.8.0-1_amd64.deb`, `droot-0.8.0-1.x86_64.rpm`, ...). They install
+  `/usr/bin/droot`, the man page and the bash, zsh and fish completions, and
+  have no dependencies.
 - Signed SLSA build provenance attestations for every release asset
   (`gh attestation verify`), an SPDX SBOM for every archive, and
   reproducible binaries and archives.
@@ -309,3 +315,6 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
   `golang.org/x/sys`.
 - The goxc/ghr/gobump release scripts and the Dockerfile used to build in a
   container (cross compilation needs no cgo any more).
+
+[Unreleased]: https://github.com/yuuki/droot/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/yuuki/droot/releases/tag/v0.8.0

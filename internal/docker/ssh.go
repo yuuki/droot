@@ -58,17 +58,24 @@ func sshDialer(args []string) func(ctx context.Context, _, _ string) (net.Conn, 
 		// The command must outlive the dial context, which only bounds
 		// the connection setup.
 		cmd := exec.Command(path, args...)
-		c := &cmdConn{cmd: cmd}
-		cmd.Stderr = &c.stderr
+		c := &cmdConn{cmd: cmd, stderrDone: make(chan struct{})}
 		if c.w, err = cmd.StdinPipe(); err != nil {
 			return nil, err
 		}
 		if c.r, err = cmd.StdoutPipe(); err != nil {
 			return nil, err
 		}
+		stderr, err := cmd.StderrPipe()
+		if err != nil {
+			return nil, err
+		}
 		if err := cmd.Start(); err != nil {
 			return nil, fmt.Errorf("start ssh: %w", err)
 		}
+		go func() {
+			_, _ = io.Copy(&c.stderr, stderr)
+			close(c.stderrDone)
+		}()
 		if err := ctx.Err(); err != nil {
 			_ = c.Close()
 			return nil, err
@@ -79,16 +86,29 @@ func sshDialer(args []string) func(ctx context.Context, _, _ string) (net.Conn, 
 
 // cmdConn is a connection over the standard input and output of a command.
 type cmdConn struct {
-	cmd       *exec.Cmd
-	r         io.ReadCloser
-	w         io.WriteCloser
-	stderr    lockedBuffer
-	closeOnce sync.Once
+	cmd    *exec.Cmd
+	r      io.ReadCloser
+	w      io.WriteCloser
+	stderr lockedBuffer
+	// stderrDone is closed once the standard error of the command is
+	// closed (usually when it exits) and copied to stderr.
+	stderrDone chan struct{}
+	closeOnce  sync.Once
 }
+
+// stderrWait bounds how long a read that reached the end of the output
+// waits for the error message of ssh.
+const stderrWait = 2 * time.Second
 
 func (c *cmdConn) Read(p []byte) (int, error) {
 	n, err := c.r.Read(p)
 	if errors.Is(err, io.EOF) {
+		// ssh closes its standard output when it exits, possibly before
+		// its error message has been copied from its standard error.
+		select {
+		case <-c.stderrDone:
+		case <-time.After(stderrWait):
+		}
 		if msg := strings.TrimSpace(c.stderr.String()); msg != "" {
 			return n, fmt.Errorf("ssh: %s", msg)
 		}
