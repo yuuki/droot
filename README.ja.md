@@ -52,10 +52,19 @@ $ chmod +x droot && sudo mv droot /usr/local/bin/
 <a id="verifying-a-release"></a>
 #### リリースの検証
 
-droot は root として実行されるため、インストールするものを検証してください。すべてのアセットには署名付きのビルドの来歴の構成証明（build provenance attestation）があり、すべてのアーカイブには SPDX 形式の SBOM（`*.sbom.json`）が付属しています。ダウンロードしたファイルが、このリポジトリのリリースワークフローによってリリースタグからビルドされたことは、[GitHub CLI](https://cli.github.com) で確認できます。
+droot は root として実行されるため、インストールするものを検証してください。すべてのバイナリとアーカイブには署名付きのビルドの来歴の構成証明（build provenance attestation）があり、すべてのアーカイブには SPDX 形式の SBOM（`*.sbom.json`）が付属しています。ダウンロードしたファイルが、このリポジトリのリリースワークフローによってリリースタグからビルドされたことは、[GitHub CLI](https://cli.github.com) で確認できます。
 
 ```console
 $ gh attestation verify droot --repo yuuki/droot --signer-workflow yuuki/droot/.github/workflows/release.yml
+```
+
+GitHub アカウントがない場合は、`checksums.txt` の [cosign](https://docs.sigstore.dev/cosign/) 署名を検証してから、ダウンロードしたファイルのチェックサムを確認してください（同じリリースから `checksums.txt` と `checksums.txt.sigstore.json` をダウンロードし、`v0.8.0` をそのリリースのタグに置き換えます）。
+
+```console
+$ cosign verify-blob checksums.txt --bundle checksums.txt.sigstore.json \
+    --certificate-identity https://github.com/yuuki/droot/.github/workflows/release.yml@refs/tags/v0.8.0 \
+    --certificate-oidc-issuer https://token.actions.githubusercontent.com
+$ sha256sum --ignore-missing -c checksums.txt
 ```
 
 バイナリは再現可能（reproducible）です。ビルド、検証、再ビルドの方法は [Releasing](documentation/development.md#releasing) を参照してください。

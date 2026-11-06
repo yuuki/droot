@@ -27,7 +27,7 @@ $ make fmt                # gofmt + goimports
 $ make vet                # go vet for Linux and macOS
 $ make vuln               # govulncheck: known vulnerabilities reachable from droot
 $ make cross              # build for every released platform
-$ make snapshot           # build the release assets into dist/ without publishing
+$ make snapshot           # build the release assets into dist/ without publishing or signing
 $ make test-scripts       # test the release scripts
 $ make release-prep VERSION=x.y.z   # move the Unreleased changes to a new version
 ```
@@ -69,9 +69,9 @@ CI (`.github/workflows/ci.yml`) runs on every push and pull request:
 - `workflows`: [zizmor](https://docs.zizmor.sh), a security linter for
   GitHub Actions workflows (template injection, excessive permissions,
   unpinned actions, cache poisoning, ...);
-- `release snapshot`: the release assets built exactly like a release, kept
-  for 7 days as the `snapshot` artifact of the run, and a preview of the
-  release notes in the run summary.
+- `release snapshot`: the release assets built exactly like a release (but
+  not signed), kept for 7 days as the `snapshot` artifact of the run, and a
+  preview of the release notes in the run summary.
 
 ## Dependencies
 
@@ -120,10 +120,14 @@ change adds an entry under "Unreleased".
    3. builds the assets with GoReleaser (`.goreleaser.yaml`), with the latest
       stable Go and without any cache, and an SPDX SBOM of each archive
       with syft;
-   4. creates a **draft** GitHub release whose notes are the changelog
+   4. signs `checksums.txt` with [cosign](https://docs.sigstore.dev/cosign/)
+      keyless signing: the Sigstore certificate in
+      `checksums.txt.sigstore.json` names the workflow and the tag;
+   5. creates a **draft** GitHub release whose notes are the changelog
       section followed by instructions to verify the downloads;
-   5. creates a signed [SLSA build provenance attestation](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations/using-artifact-attestations-to-establish-provenance-for-builds)
-      of every asset and of `checksums.txt` (keyless signature by
+   6. creates a signed [SLSA build provenance attestation](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations/using-artifact-attestations-to-establish-provenance-for-builds)
+      of every asset listed in `checksums.txt` and of `checksums.txt`
+      itself (keyless signature by
       [Sigstore](https://www.sigstore.dev), listed under the repository's
       *Attestations*).
 4. Review the draft and publish it.
@@ -149,7 +153,8 @@ scripts using `releases/latest/download/...` keep working. `<arch>` is
 | `droot_linux_<arch>.tar.gz`, `droot_darwin_<arch>.zip` | `droot_<os>_<arch>/droot`, the licenses, `README.md`, `CHANGELOG.md`, the man page `droot.1` |
 | `droot_<os>_<arch>` | the bare binary |
 | `<archive>.sbom.json` | an SPDX SBOM of the archive (Go modules and Go version) |
-| `checksums.txt` | the SHA-256 of every other asset |
+| `checksums.txt` | the SHA-256 of every asset above |
+| `checksums.txt.sigstore.json` | the cosign signature of `checksums.txt` (a Sigstore bundle) |
 
 ### Verifying a release
 
@@ -161,6 +166,16 @@ $ gh attestation verify droot_linux_amd64 --repo yuuki/droot \
 checks that the file was built from the tag by the release workflow of this
 repository. Verify `checksums.txt` the same way to check many files with
 `sha256sum --ignore-missing -c checksums.txt`.
+
+`gh attestation verify` needs a GitHub account. Without one, check the cosign
+signature of `checksums.txt`, which was made by the same workflow run:
+
+```console
+$ cosign verify-blob checksums.txt --bundle checksums.txt.sigstore.json \
+    --certificate-identity https://github.com/yuuki/droot/.github/workflows/release.yml@refs/tags/v0.8.0 \
+    --certificate-oidc-issuer https://token.actions.githubusercontent.com
+$ sha256sum --ignore-missing -c checksums.txt
+```
 
 ### Reproducing a release
 
@@ -180,7 +195,7 @@ $ sha256sum droot_linux_amd64   # the same as in checksums.txt
 ```
 
 `GOTOOLCHAIN=go1.27.3 go run github.com/goreleaser/goreleaser/v2@v2.20.0
-release --clean --skip=publish,sbom` in the clean checkout of the tag
+release --clean --skip=publish,sbom,sign` in the clean checkout of the tag
 rebuilds all the archives and binaries. (The SBOMs contain a timestamp and
 a random identifier.)
 

@@ -30,7 +30,8 @@ few weeks; droot is maintained on a best-effort basis.
 
 ## Verifying releases
 
-Every release asset has a signed build provenance attestation, which shows
-that it was built from a release tag by the release workflow of this
-repository, and the binaries are reproducible. See
+Every binary and archive of a release has a signed build provenance
+attestation, which shows that it was built from a release tag by the release
+workflow of this repository, `checksums.txt` has a keyless cosign signature
+by the same workflow, and the binaries are reproducible. See
 [Verifying a release](README.md#verifying-a-release).

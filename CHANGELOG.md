@@ -286,8 +286,9 @@ dependencies, many bug and security fixes. Planned as **v0.8.0**.
   layout of 0.7.7 (`droot_linux_amd64.tar.gz`, `droot_darwin_amd64.zip`, bare
   `droot_linux_amd64`, ...); the archives also contain the man page.
 - Signed SLSA build provenance attestations for every release asset
-  (`gh attestation verify`), an SPDX SBOM for every archive, and
-  reproducible binaries and archives.
+  (`gh attestation verify`), a keyless cosign signature of `checksums.txt`
+  (`checksums.txt.sigstore.json`, `cosign verify-blob`), an SPDX SBOM for
+  every archive, and reproducible binaries and archives.
 - `SECURITY.md`: how to report vulnerabilities privately.
 - Documentation: architecture, security considerations, development guide,
   known issues and ideas, and a deployment tutorial with example systemd

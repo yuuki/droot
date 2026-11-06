@@ -199,10 +199,11 @@ jobs:
         with:
           version: v2.20.0
           args: check
+      # Without signing: only the release job has an OIDC token to sign with.
       - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
           version: v2.20.0
-          args: release --snapshot --clean
+          args: release --snapshot --clean --skip=sign
       - name: Preview the release notes
         run: |
           {

@@ -60,13 +60,26 @@ $ chmod +x droot && sudo mv droot /usr/local/bin/
 
 #### Verifying a release
 
-droot runs as root, so check what you install. Every asset has a signed
-build provenance attestation, and every archive an SPDX SBOM (`*.sbom.json`).
+droot runs as root, so check what you install. Every binary and archive has a
+signed build provenance attestation, and every archive an SPDX SBOM
+(`*.sbom.json`).
 To check that a download was built by the release workflow of this repository
 from a release tag, use the [GitHub CLI](https://cli.github.com):
 
 ```console
 $ gh attestation verify droot --repo yuuki/droot --signer-workflow yuuki/droot/.github/workflows/release.yml
+```
+
+Without a GitHub account, verify the [cosign](https://docs.sigstore.dev/cosign/)
+signature of `checksums.txt` (download `checksums.txt` and
+`checksums.txt.sigstore.json` from the same release; replace `v0.8.0` with its
+tag), then the checksum of the download:
+
+```console
+$ cosign verify-blob checksums.txt --bundle checksums.txt.sigstore.json \
+    --certificate-identity https://github.com/yuuki/droot/.github/workflows/release.yml@refs/tags/v0.8.0 \
+    --certificate-oidc-issuer https://token.actions.githubusercontent.com
+$ sha256sum --ignore-missing -c checksums.txt
 ```
 
 The binaries are reproducible; see

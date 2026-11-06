@@ -3,7 +3,8 @@
 # The release workflow (.github/workflows/release.yml) runs CI first, so this
 # file has no test or `go mod tidy` hooks: a release builds exactly the
 # tagged tree. It passes the CHANGELOG.md section of the version as release
-# notes (--release-notes) and attests every asset listed in checksums.txt.
+# notes (--release-notes), provides cosign for the signature of
+# checksums.txt, and attests every asset listed in checksums.txt.
 version: 2
 
 project_name: droot
@@ -78,6 +79,21 @@ sboms:
 checksum:
   name_template: checksums.txt
 
+# A keyless cosign signature of checksums.txt, as a Sigstore bundle
+# (checksums.txt.sigstore.json): the certificate binds it to the release
+# workflow and the tag, through the workflow's GitHub OIDC token. cosign
+# must be in PATH, and the job needs the id-token: write permission. Local
+# and CI snapshots skip it (--skip=sign).
+signs:
+  - cmd: cosign
+    artifacts: checksum
+    signature: "${artifact}.sigstore.json"
+    args:
+      - sign-blob
+      - "--bundle=${signature}"
+      - "${artifact}"
+      - --yes
+
 snapshot:
   version_template: "{{ incpatch .Version }}-next"
 
@@ -107,11 +123,22 @@ release:
   footer: |
     ## Verifying the downloads
 
-    Every asset and `checksums.txt` have a signed [SLSA build provenance attestation](https://github.com/yuuki/droot/attestations) stating that they were built from `{{ .Tag }}` by the release workflow. Verify one with the [GitHub CLI](https://cli.github.com):
+    `checksums.txt` and every asset it lists have a signed [SLSA build provenance attestation](https://github.com/yuuki/droot/attestations) stating that they were built from `{{ .Tag }}` by the release workflow. Verify one with the [GitHub CLI](https://cli.github.com):
 
     ```console
     $ gh attestation verify droot_linux_amd64 --repo yuuki/droot \
         --signer-workflow yuuki/droot/.github/workflows/release.yml --source-ref refs/tags/{{ .Tag }}
     ```
 
-    or verify `checksums.txt` the same way, then the downloads with `sha256sum --ignore-missing -c checksums.txt`. The `*.sbom.json` files are SPDX software bills of materials of the archives.
+    or verify `checksums.txt` the same way, then the downloads with `sha256sum --ignore-missing -c checksums.txt`.
+
+    `checksums.txt` is also signed with [cosign](https://docs.sigstore.dev/cosign/) keyless signing. To verify it without a GitHub account, download `checksums.txt.sigstore.json` too:
+
+    ```console
+    $ cosign verify-blob checksums.txt --bundle checksums.txt.sigstore.json \
+        --certificate-identity https://github.com/yuuki/droot/.github/workflows/release.yml@refs/tags/{{ .Tag }} \
+        --certificate-oidc-issuer https://token.actions.githubusercontent.com
+    $ sha256sum --ignore-missing -c checksums.txt
+    ```
+
+    The `*.sbom.json` files are SPDX software bills of materials of the archives.
