@@ -10,12 +10,14 @@ Releases up to 0.7.7 are described on the
 ### Fixed
 
 - Rootless `droot run` and `droot unshare` pass the descriptors droot
-  inherited on to `COMMAND` with their numbers. The pipe that droot used to
-  start itself in the user namespace took the place of descriptor 3, so the
+  inherited on to `COMMAND` as they are. The pipe that droot used to start
+  itself in the user namespace took the place of descriptor 3, so the
   listening socket of server-starter or dewy (`SERVER_STARTER_PORT=8080=3`)
   or of systemd socket activation was lost.
 - Rootless, a `LISTEN_PID` naming droot is changed to the PID of `COMMAND`,
-  so that systemd socket activation works with `--env LISTEN_PID`.
+  and `LISTEN_PIDFDID` (systemd 259 and later), which identifies droot too,
+  is removed, so that systemd socket activation works with `--env
+  LISTEN_PID`.
 
 ### Documentation
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -71,82 +72,51 @@ func TestRunNeedsInit(t *testing.T) {
 	}
 }
 
-func TestInheritedFiles(t *testing.T) {
-	// Descriptors without FD_CLOEXEC, as inherited across execve(2), are
-	// passed on at their numbers; those with FD_CLOEXEC, like the
-	// descriptors droot opens itself, are not.
-	var cloexec []int
-	// inherit returns a descriptor without FD_CLOEXEC on a new pipe, which
-	// has its own blocking mode.
-	inherit := func(nonBlocking bool) int {
-		var p [2]int
-		if err := unix.Pipe2(p[:], unix.O_CLOEXEC); err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { _ = unix.Close(p[0]); _ = unix.Close(p[1]) })
-		cloexec = append(cloexec, p[0], p[1])
-		if err := unix.SetNonblock(p[0], nonBlocking); err != nil {
-			t.Fatal(err)
-		}
-		fd, err := unix.FcntlInt(uintptr(p[0]), unix.F_DUPFD, 0)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return fd
-	}
-	blocking, nonBlocking := inherit(false), inherit(true)
-
-	files, err := inheritedFiles()
+func TestFirstStageCommand(t *testing.T) {
+	// The pipe of the first stage keeps its own number, named by the
+	// environment: in ExtraFiles, it would become descriptor 3, in place of
+	// the one droot may have inherited (the listening socket of
+	// server-starter), and the inherited descriptors would be moved around.
+	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
 	}
-	at := func(fd int) *os.File {
-		if fd-3 < len(files) {
-			return files[fd-3]
-		}
-		return nil
+	t.Cleanup(func() { _ = r.Close(); _ = w.Close() })
+	cmd, err := firstStageCommand(r, true)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, fd := range []int{blocking, nonBlocking} {
-		f := at(fd)
-		if f == nil {
-			t.Fatalf("descriptor %d is not passed on: %v", fd, files)
-		}
-		// exec.Cmd passes ExtraFiles on with Fd().
-		if got := f.Fd(); got != uintptr(fd) {
-			t.Errorf("entry of descriptor %d: %d", fd, got)
-		}
+	if cmd.ExtraFiles != nil {
+		t.Errorf("ExtraFiles: %v", cmd.ExtraFiles)
 	}
-	for _, fd := range cloexec {
-		if at(fd) != nil {
-			t.Errorf("descriptor %d with FD_CLOEXEC is passed on", fd)
-		}
+	if want := envSync + "=" + strconv.Itoa(int(r.Fd())); !slices.Contains(cmd.Env, want) {
+		t.Errorf("no %s in the environment of the child", want)
 	}
-	// The child shares the mode of the descriptors: Fd() must not change it.
-	for fd, want := range map[int]bool{blocking: false, nonBlocking: true} {
-		fl, err := unix.FcntlInt(uintptr(fd), unix.F_GETFL, 0)
-		if got := fl&unix.O_NONBLOCK != 0; err != nil || got != want {
-			t.Errorf("descriptor %d: non-blocking %v (%v), want %v", fd, got, err, want)
-		}
+	flags, err := unix.FcntlInt(r.Fd(), unix.F_GETFD, 0)
+	if err != nil || flags&unix.FD_CLOEXEC != 0 {
+		t.Errorf("the pipe would not be inherited: flags %#x (%v)", flags, err)
 	}
-	// Closes blocking and nonBlocking, and the descriptors the test
-	// binary itself inherited, which it does not use.
-	closeFiles(files)
-	if _, err := unix.FcntlInt(uintptr(blocking), unix.F_GETFD, 0); err == nil {
-		t.Errorf("closeFiles left descriptor %d open", blocking)
+	if a := cmd.SysProcAttr; a == nil || a.Cloneflags&unix.CLONE_NEWUSER == 0 || !a.Setpgid {
+		t.Errorf("SysProcAttr: %+v", a)
 	}
 }
 
 func TestAdoptListenPID(t *testing.T) {
 	const parentPID = "4242"
 	t.Setenv("LISTEN_PID", parentPID)
+	t.Setenv("LISTEN_PIDFDID", "1234")
 	adoptListenPID(parentPID)
 	if got, want := os.Getenv("LISTEN_PID"), strconv.Itoa(os.Getpid()); got != want {
 		t.Errorf("LISTEN_PID of the supervising droot: got %s, want %s", got, want)
 	}
+	if v, ok := os.LookupEnv("LISTEN_PIDFDID"); ok {
+		t.Errorf("LISTEN_PIDFDID of the supervising droot is kept: %s", v)
+	}
 	// Descriptors meant for another process are left alone.
 	t.Setenv("LISTEN_PID", "1")
+	t.Setenv("LISTEN_PIDFDID", "1234")
 	adoptListenPID(parentPID)
-	if got := os.Getenv("LISTEN_PID"); got != "1" {
-		t.Errorf("LISTEN_PID of another process: got %s", got)
+	if got := os.Getenv("LISTEN_PID") + " " + os.Getenv("LISTEN_PIDFDID"); got != "1 1234" {
+		t.Errorf("LISTEN_PID and LISTEN_PIDFDID of another process: got %s", got)
 	}
 }

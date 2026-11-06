@@ -462,7 +462,7 @@ with its status. In the namespace:
   `droot unshare rm -rf`. As root, extract them with `tar -xpf` as usual.
 - `COMMAND` inherits the open descriptors of droot with their numbers, as when
   run as root; a `LISTEN_PID` naming droot (systemd socket activation) is
-  changed to the PID of `COMMAND`.
+  changed to the PID of `COMMAND`, and `LISTEN_PIDFDID` removed.
 
 ```console
 $ grep "^$USER:" /etc/subuid /etc/subgid

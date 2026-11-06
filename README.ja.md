@@ -368,7 +368,7 @@ root 以外のユーザーが `droot run` を実行すると、**rootless** で�
 - マウントは `--unshare` と同じくプライベートなマウント名前空間で行われ、`COMMAND` とともに消えます。`droot umount` は不要です。
 - `/proc` とデバイスファイルはホストのもののバインドマウントです（新しい procfs には PID 名前空間が必要で、デバイスノードは作成できないため）。
 - ファイルの所有者はそのまま使われます。イメージのユーザーが自分のファイルを所有するように、アーカイブは `droot unshare tar -xpf` で展開し、`droot unshare rm -rf` で削除してください。root の場合は、これまでどおり `tar -xpf` で展開します。
-- root で実行した場合と同じく、`COMMAND` は droot が開いているディスクリプタを同じ番号のまま受け継ぎます。droot を指す `LISTEN_PID`（systemd のソケットアクティベーション）は `COMMAND` の PID に書き換えられます。
+- root で実行した場合と同じく、`COMMAND` は droot が開いているディスクリプタを同じ番号のまま受け継ぎます。droot を指す `LISTEN_PID`（systemd のソケットアクティベーション）は `COMMAND` の PID に書き換えられ、`LISTEN_PIDFDID` は削除されます。
 
 ```console
 $ grep "^$USER:" /etc/subuid /etc/subgid
