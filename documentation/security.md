@@ -120,8 +120,10 @@ users, the reason why some distributions restrict them — nothing droot or
   systemd attributes to the unit of their cgroup and, with the default
   `NotifyAccess=main`, only accepts from its main process, but cannot
   `chmod` or `chown` the socket, which every service of the host uses. The
-  descriptors and variables of socket activation are only passed on when
-  `LISTEN_PID` is the PID of droot.
+  variables of socket activation are only passed on when `LISTEN_PID` is
+  the PID of droot. droot closes no descriptor it inherits: as with any
+  program, those its parent leaves open (socket activation or not) reach
+  `COMMAND`.
 - `droot umount --root /` is refused.
 
 ## Reporting a vulnerability

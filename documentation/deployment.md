@@ -213,8 +213,11 @@ ExecStart=/usr/local/bin/droot run --config /etc/droot/app.toml
 ```
 
 [`examples/systemd/app.socket`](../examples/systemd/app.socket) makes
-systemd listen on port 8080 and start `app.service`, unchanged, at the first
-connection:
+systemd listen on port 8080 and start `app.service` at the first
+connection. The service needs no change, but the socket now starts it:
+stop and disable the service (systemd does not start a socket whose service
+runs already, and an enabled service would start at boot, without waiting
+for a connection), and enable the socket instead.
 
 ```ini
 [Socket]
@@ -228,6 +231,7 @@ WantedBy=sockets.target
 ```console
 # cp app.socket /etc/systemd/system/
 # systemctl daemon-reload
+# systemctl disable --now app
 # systemctl enable --now app.socket
 ```
 

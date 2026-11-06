@@ -239,12 +239,26 @@ func start(m Mapping, ownGroup bool) (*exec.Cmd, func(), error) {
 // (descriptors 3, 4, ..., see systemd.ListenFDs), for the child. They are
 // made close-on-exec here, so that the helpers droot runs (newuidmap,
 // newgidmap) do not inherit them; os/exec clears the flag in the child.
+//
+// A descriptor passed to droot is not close-on-exec (it would not have
+// survived the exec), while every one droot opens is: a LISTEN_FDS
+// counting more than droot was passed is refused before droot hands over,
+// and closes, descriptors of its own.
 func listenFiles() ([]*os.File, error) {
 	n := systemd.ListenFDs(os.LookupEnv, os.Getpid())
 	first := systemd.FirstListenFD
 	for fd := first; fd < first+n; fd++ {
-		if _, err := unix.FcntlInt(uintptr(fd), unix.F_SETFD, unix.FD_CLOEXEC); err != nil {
+		flags, err := unix.FcntlInt(uintptr(fd), unix.F_GETFD, 0)
+		if err != nil {
 			return nil, fmt.Errorf("socket activation: LISTEN_FDS is %d, but descriptor %d is not open: %w", n, fd, err)
+		}
+		if flags&unix.FD_CLOEXEC != 0 {
+			return nil, fmt.Errorf("socket activation: LISTEN_FDS is %d, but descriptor %d was not passed to droot", n, fd)
+		}
+	}
+	for fd := first; fd < first+n; fd++ {
+		if _, err := unix.FcntlInt(uintptr(fd), unix.F_SETFD, unix.FD_CLOEXEC); err != nil {
+			return nil, err
 		}
 	}
 	files := make([]*os.File, 0, n)

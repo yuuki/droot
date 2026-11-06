@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestSubIDs(t *testing.T) {
@@ -76,11 +78,17 @@ func TestListenFiles(t *testing.T) {
 	if files, err := listenFiles(); err != nil || len(files) != 0 {
 		t.Fatalf("got %v, %v", files, err)
 	}
-	// More sockets than open descriptors: refused before any is taken
-	// (closing them would close descriptors of the test).
+	// More sockets than droot was passed: refused before any is taken
+	// (closing them would close descriptors of the test, all close-on-exec,
+	// as Go opens them).
 	t.Setenv("LISTEN_PID", strconv.Itoa(os.Getpid()))
 	t.Setenv("LISTEN_FDS", "100000")
-	if files, err := listenFiles(); err == nil || !strings.Contains(err.Error(), "is not open") || files != nil {
+	files, err := listenFiles()
+	if err == nil || !strings.Contains(err.Error(), "LISTEN_FDS is 100000, but descriptor 3 ") || files != nil {
 		t.Fatalf("got %v, %v", files, err)
+	}
+	// The descriptors are left as they were.
+	if flags, err := unix.FcntlInt(3, unix.F_GETFD, 0); err == nil && flags&unix.FD_CLOEXEC == 0 {
+		t.Errorf("descriptor 3 lost close-on-exec")
 	}
 }

@@ -580,7 +580,9 @@ func doRun(ctx context.Context, cmd *cli.Invocation) (err error) {
 		}
 	}
 	if sock := notifySocketMount(env); sock != "" {
-		if err := bindNotifySocket(mnt, sock); err != nil {
+		if slices.ContainsFunc(mounts, func(m userMount) bool { return m.target == sock }) {
+			log.Debugf("not binding %s=%s: --bind or --tmpfs mounts on it", systemd.NotifySocket, sock)
+		} else if err := bindNotifySocket(root, mnt, sock); err != nil {
 			return err
 		}
 	}
@@ -759,15 +761,36 @@ func notifySocketMount(env []string) string {
 	if v, _ := environ.Lookup(env, systemd.NotifySocket); v != sock {
 		return ""
 	}
-	return sock
+	return filepath.Clean(sock)
 }
 
 // bindNotifySocket bind mounts the socket of systemd's notifications on the
-// same path in the container. The mount is read-only: COMMAND can send
-// notifications (connect(2) and sendmsg(2) need no write access to the
-// mount) but cannot chmod or chown the host's socket. A mount left by a
-// previous run is replaced, in case systemd created the socket again since.
-func bindNotifySocket(mnt *mounter.Mounter, sock string) error {
+// same path in the container, unless it is already there (in a bind mount of
+// its directory). The mount is read-only: COMMAND can send notifications
+// (connect(2) and sendmsg(2) need no write access to the mount) but cannot
+// chmod or chown the host's socket. A mount left by a previous run is
+// replaced, in case systemd created the socket again since.
+//
+// A socket that cannot be bound is only reported: droot may have inherited
+// a NOTIFY_SOCKET that was not meant for it (from a process of a
+// Type=notify service), and COMMAND may not send notifications at all. A
+// failure of the mount itself is an error.
+func bindNotifySocket(root *osutil.Root, mnt *mounter.Mounter, sock string) error {
+	if err := notifySocketTarget(root, sock); err != nil {
+		log.Warnf("%v: COMMAND cannot send notifications to systemd", err)
+		return nil
+	}
+	opts := mounter.BindOptions{ReadOnly: true, Replace: true, SkipSame: true}
+	if err := mnt.BindMount(sock, sock, opts); err != nil {
+		return fmt.Errorf("bind mount the socket of %s, %s: %w", systemd.NotifySocket, sock, err)
+	}
+	log.Debugf("%s=%s is reachable in the container", systemd.NotifySocket, sock)
+	return nil
+}
+
+// notifySocketTarget checks that sock is a socket, and creates its mount
+// point in the container if needed.
+func notifySocketTarget(root *osutil.Root, sock string) error {
 	fi, err := os.Stat(sock)
 	if err != nil {
 		return fmt.Errorf("%s: %w", systemd.NotifySocket, err)
@@ -775,11 +798,11 @@ func bindNotifySocket(mnt *mounter.Mounter, sock string) error {
 	if fi.Mode().Type() != fs.ModeSocket {
 		return fmt.Errorf("%s: %s is not a socket", systemd.NotifySocket, sock)
 	}
-	if err := mnt.BindMount(sock, sock, mounter.BindOptions{ReadOnly: true, Replace: true}); err != nil {
-		return fmt.Errorf("bind mount the socket of %s, %s: %w", systemd.NotifySocket, sock, err)
+	t, err := root.OpenMountTarget(sock, false, mounter.NotKernelFS)
+	if err != nil {
+		return fmt.Errorf("%s: %w", systemd.NotifySocket, err)
 	}
-	log.Debugf("bound %s=%s in the container", systemd.NotifySocket, sock)
-	return nil
+	return t.Close()
 }
 
 func copyHostFiles(root *osutil.Root, files []string) error {

@@ -186,7 +186,8 @@ setuid bits are preserved.
 4. Mount `proc` (nosuid, nodev, noexec) on `/proc`; recursively bind mount
    the host's `/sys` and make it an rslave mount; perform the bind mounts.
    Mount points are resolved with `osutil.Root`, created if missing (as a
-   directory, or as an empty file for file bind mounts) and mounted on through
+   directory, or as an empty file for file bind mounts, with modes 0755 and
+   0644 whatever the umask) and mounted on through
    `/proc/self/fd/N`, so the mount lands on the very directory that was
    resolved. Existing mounts are reused, so `run` can be repeated without
    `umount`. Every mount is made a slave mount, so mounts made inside the
@@ -195,7 +196,12 @@ setuid bits are preserved.
    the source, which a plain remount would clear. Last, a `NOTIFY_SOCKET`
    that is a path (systemd's `/run/systemd/notify`) is bind mounted
    read-only on the same path, replacing the mount of a previous run unless
-   it is the same socket.
+   it is the same socket. Nothing is mounted when a `--bind` or `--tmpfs`
+   mounts on the path, or when the path already is the socket (a `--bind`
+   of its directory: a mount there would make the host's socket busy). A
+   socket that cannot be bound (missing, or no mount point can be created)
+   only gets a warning: droot may have inherited a `NOTIFY_SOCKET` meant for
+   another process.
 5. Create `/var/lock -> ../run/lock` if missing, and populate `/dev`: the
    device nodes `/dev/null` (1:3), `/dev/zero` (1:5), `/dev/full` (1:7),
    `/dev/random` (1:8), `/dev/urandom` (1:9) and `/dev/tty` (5:0), owned by

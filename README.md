@@ -333,16 +333,19 @@ the service, for its two protocols, `Type=notify` and socket activation:
   container (created if missing, like the mount points of `--bind`):
   `COMMAND` can send notifications, but not change the host's socket. An
   abstract socket (`@NAME`) needs no mount: droot shares the host's network
-  namespace.
-- The sockets of socket activation, inherited as descriptors 3, 4, ..., and
-  `LISTEN_FDS`, `LISTEN_PID`, `LISTEN_FDNAMES` and `LISTEN_PIDFDID`
+  namespace. If droot cannot bind the socket (it does not exist, or the
+  mount point cannot be created), it warns and runs `COMMAND` all the same.
+- `LISTEN_FDS`, `LISTEN_PID`, `LISTEN_FDNAMES` and `LISTEN_PIDFDID`
   ([`sd_listen_fds(3)`](https://www.freedesktop.org/software/systemd/man/latest/sd_listen_fds.html)),
-  if `LISTEN_PID` is the PID of droot.
+  if `LISTEN_PID` is the PID of droot. The sockets themselves, descriptors
+  3, 4, ..., are inherited by `COMMAND` like every descriptor droot is
+  given, whatever `LISTEN_PID` says.
 - `WATCHDOG_USEC` and `WATCHDOG_PID` (`WatchdogSec=`), if `WATCHDOG_PID` is
   the PID of droot or is unset.
 
 `--env-file` and `--env` override them: `--env NOTIFY_SOCKET=PATH` gives
-`COMMAND` another socket, which droot does not mount. droot replaces itself
+`COMMAND` another socket, which droot does not mount, and droot does not
+mount the socket over a `--bind` or `--tmpfs` on its path. droot replaces itself
 with `COMMAND`, which keeps its PID: for systemd, `COMMAND` is the main
 process, and the default `NotifyAccess=main` accepts its notifications.
 

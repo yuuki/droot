@@ -837,3 +837,52 @@ func TestNotKernelFSGuardsCopies(t *testing.T) {
 		t.Fatalf("a symlink through /proc must be refused, got %v", err)
 	}
 }
+
+func TestBindMountSkipSame(t *testing.T) {
+	dir := privilegedDir(t)
+	hostRun := filepath.Join(dir, "run")
+	sock := filepath.Join(hostRun, "notify")
+	if err := os.MkdirAll(hostRun, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sock, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(dir, "root")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	m := newTestMounter(t, root)
+
+	// The user binds the host's directory: the file is already there.
+	if err := m.BindMount(hostRun, hostRun, BindOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.BindMount(sock, sock, BindOptions{ReadOnly: true, SkipSame: true}); err != nil {
+		t.Fatal(err)
+	}
+	if mounts, _ := m.Mounts(); len(mounts) != 1 {
+		t.Fatalf("want only the mount of the directory, got %q", mounts)
+	}
+	// The host can still replace its file.
+	if err := os.Remove(sock); err != nil {
+		t.Fatalf("the host's file is busy: %v", err)
+	}
+	if err := os.WriteFile(sock, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Elsewhere, the file is bound as usual, and the mount is reused.
+	other := filepath.Join(dir, "other")
+	if err := os.WriteFile(other, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := m.BindMount(other, "/etc/other", BindOptions{ReadOnly: true, SkipSame: true}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if mounts, _ := m.Mounts(); len(mounts) != 2 {
+		t.Fatalf("want the mounts of the directory and of /etc/other, got %q", mounts)
+	}
+}

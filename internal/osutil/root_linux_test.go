@@ -153,6 +153,34 @@ func TestOpenMountTarget(t *testing.T) {
 	}
 }
 
+func TestOpenMountTargetIgnoresUmask(t *testing.T) {
+	root, rootDir, _ := newTree(t)
+	old := unix.Umask(0o077) // e.g. UMask=0077 in a unit
+	defer unix.Umask(old)
+	for _, tt := range []struct {
+		path string
+		dir  bool
+	}{{"/run/systemd/notify", false}, {"/srv/a/b", true}} {
+		mt, err := root.OpenMountTarget(tt.path, tt.dir, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mt.Close()
+	}
+	for path, want := range map[string]os.FileMode{
+		"/run": os.ModeDir | 0o755, "/run/systemd": os.ModeDir | 0o755, "/run/systemd/notify": 0o644,
+		"/srv": os.ModeDir | 0o755, "/srv/a": os.ModeDir | 0o755, "/srv/a/b": os.ModeDir | 0o755,
+	} {
+		fi, err := os.Lstat(filepath.Join(rootDir, path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := fi.Mode() & (os.ModeType | os.ModePerm); got != want {
+			t.Errorf("%s: mode %v, want %v", path, got, want)
+		}
+	}
+}
+
 func TestOpenFileRefusesSpecialFiles(t *testing.T) {
 	root, rootDir, _ := newTree(t)
 	if err := unix.Mkfifo(filepath.Join(rootDir, "fifo"), 0o644); err != nil {

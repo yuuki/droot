@@ -16,7 +16,9 @@ Releases up to 0.7.7 are described on the
   `LISTEN_PIDFDID` when `LISTEN_PID` is droot's PID; `WATCHDOG_USEC` and
   `WATCHDOG_PID` when `WATCHDOG_PID` is droot's PID or unset), between the
   image's environment and `--env-file`. A `NOTIFY_SOCKET` that is a path
-  is bind mounted read-only on the same path in the container.
+  is bind mounted read-only on the same path in the container, unless a
+  `--bind` or `--tmpfs` mounts on that path or the socket is already
+  there; one that cannot be bound only gets a warning.
 - `examples/systemd/app-notify.service` (`Type=notify`) and
   `examples/systemd/app.socket`, described in the deployment guide.
 
@@ -28,6 +30,10 @@ Releases up to 0.7.7 are described on the
   PID of `COMMAND` instead of that of the supervising droot; its
   notifications need `NotifyAccess=all`, since the supervising droot is the
   main process of the service.
+- The mount points `droot run` creates have mode 0755 (directories) and
+  0644 (empty files for file bind mounts) whatever the umask: under a unit
+  with `UMask=0077`, they were 0700 and 0600, and other users than root
+  could not reach what was mounted below them.
 
 ## [0.8.0] - 2026-11-06
 

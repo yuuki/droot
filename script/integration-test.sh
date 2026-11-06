@@ -37,12 +37,17 @@ assert_eq() { # name actual expected
 mounts_under() { awk -v p="$1" '$5 == p || index($5, p "/") == 1' /proc/self/mountinfo | wc -l; }
 
 cleanup() {
-  local d
+  local d pids
+  # The helpers a failed test left running in the background.
+  pids=$(jobs -p)
+  # shellcheck disable=SC2086 # one PID per word
+  if [[ -n $pids ]]; then kill $pids 2>/dev/null || true; fi
   for d in "$WORK"/*/; do
     "$DROOT" umount --root "$d" >/dev/null 2>&1 || true
   done
   $DOCKER rm -f "$REGISTRY_CONTAINER" >/dev/null 2>&1 || true
   $DOCKER rmi -f "$IMAGE" "$SCRATCH_IMAGE" "$LAYERS_IMAGE" ${REGISTRY_IMAGE:+"$REGISTRY_IMAGE"} >/dev/null 2>&1 || true
+  if [[ -n ${SD_DIR:-} ]]; then rm -rf -- "$SD_DIR"; fi
   if [[ -n "${KEEP_WORKDIR:-}" ]]; then
     echo "work directory kept: $WORK"
   elif [[ $(mounts_under "$WORK") -eq 0 ]]; then
@@ -425,9 +430,12 @@ elif sys.argv[1] == "connect":
     print(s.makefile().readline().strip())
 EOF
 sd_skip=""
+# The python3 to run in the container: the file itself, not a symlink that
+# may lead out of /usr (e.g. to /etc/alternatives).
+SD_PYTHON=$(realpath "$(command -v python3 || echo /nonexistent)" 2>/dev/null || true)
 if ! command -v systemd-socket-activate >/dev/null; then
   sd_skip="systemd-socket-activate is not installed"
-elif [[ $(command -v python3 || true) != /usr/* ]]; then
+elif [[ $SD_PYTHON != /usr/* ]]; then
   sd_skip="python3 is not installed in /usr"
 elif [[ ! -L /bin ]]; then
   sd_skip="/bin is not a symlink to usr/bin"
@@ -453,27 +461,34 @@ wait_until() {
 }
 # notify_server ADDR OUT: starts a notification socket on ADDR in the
 # background (its PID in notify_pid), which writes what it receives to OUT.
+# assert_notified NAME OUT then waits for it (in this shell: a subshell
+# cannot wait for it) and checks that it got READY=1 from the probe.
 notify_server() {
   if [[ $1 == /* ]]; then rm -f "$1"; fi
   python3 "$WORK/sd.py" notify-server "$1" >"$2" &
   notify_pid=$!
   wait_until grep -q '^listening$' "$2" || fail "the notification socket $1 does not listen"
 }
-# activate PREFIX... -- DROOT RUN...: runs droot with two sockets,
-# $WORK/sd-a.sock and $WORK/sd-b.sock (PREFIX runs systemd-socket-activate,
-# e.g. as another user, who must be able to create them), connects to each,
-# and prints what the probe printed and the replies.
+assert_notified() {
+  wait "$notify_pid" || fail "$1: no notification ($(cat "$2"))"
+  assert_eq "$1" "$(tail -n +2 "$2")" "READY=1, sent by the probe"
+}
+# activate PREFIX... -- ARGS...: runs systemd-socket-activate ARGS (droot
+# run ..., after options of its own) with two sockets in $SD_SOCKETS (PREFIX
+# runs systemd-socket-activate, e.g. as another user, who must be able to
+# create them), connects to each, and prints what the probe printed and the
+# replies.
 activate() {
   local prefix=() activator
   while [[ $1 != -- ]]; do prefix+=("$1"); shift; done
   shift
-  rm -f "$SD_SOCKETS/sd-a.sock" "$SD_SOCKETS/sd-b.sock"
-  "${prefix[@]}" systemd-socket-activate -l "$SD_SOCKETS/sd-a.sock" -l "$SD_SOCKETS/sd-b.sock" --fdname=web:admin \
+  rm -f "$SD_SOCKETS/a.sock" "$SD_SOCKETS/b.sock"
+  "${prefix[@]}" systemd-socket-activate -l "$SD_SOCKETS/a.sock" -l "$SD_SOCKETS/b.sock" --fdname=web:admin \
     "$@" >"$WORK/sd-activate.out" 2>"$WORK/sd-activate.err" &
   activator=$!
-  wait_until test -S "$SD_SOCKETS/sd-b.sock" || fail "systemd-socket-activate: $(cat "$WORK/sd-activate.err")"
-  python3 "$WORK/sd.py" connect "$SD_SOCKETS/sd-a.sock" >"$WORK/sd-replies" || true
-  python3 "$WORK/sd.py" connect "$SD_SOCKETS/sd-b.sock" >>"$WORK/sd-replies" || true
+  wait_until test -S "$SD_SOCKETS/b.sock" || fail "systemd-socket-activate: $(cat "$WORK/sd-activate.err")"
+  python3 "$WORK/sd.py" connect "$SD_SOCKETS/a.sock" >"$WORK/sd-replies" || true
+  python3 "$WORK/sd.py" connect "$SD_SOCKETS/b.sock" >>"$WORK/sd-replies" || true
   wait "$activator" || fail "socket activation: $(cat "$WORK/sd-activate.err")"
   cat "$WORK/sd-activate.out" "$WORK/sd-replies"
 }
@@ -482,33 +497,65 @@ SD_PROBE=(sh -c 'export WATCHDOG_PID=$$; exec "$@"' sh)
 if [[ -n $sd_skip ]]; then
   echo "skip - systemd: $sd_skip"
 else
+  # The sockets, in a directory with a short path: the path of a unix
+  # socket has at most 108 bytes, and $WORK follows $TMPDIR.
+  SD_DIR=$(mktemp -d /tmp/droot-sd.XXXXXX)
+  chmod 755 "$SD_DIR"
+  SD_SOCKETS=$SD_DIR
+  sock=$SD_DIR/notify.sock
   usr_root "$WORK/sd"
-  SD_SOCKETS=$WORK
-  sd_run=(run --root "$WORK/sd" --unshare --robind /usr -- python3 /sd.py probe)
+  sd_run=(run --root "$WORK/sd" --unshare --robind /usr -- "$SD_PYTHON" /sd.py probe)
   assert_eq "socket activation: the sockets reach COMMAND, whose PID is LISTEN_PID" \
     "$(activate -- "$DROOT" "${sd_run[@]}")" \
     "$(printf 'LISTEN_PID=self LISTEN_FDS=2 LISTEN_FDNAMES=web:admin\naccepted on fd 3\naccepted on fd 4')"
-  notify_server "$WORK/sd-notify.sock" "$WORK/sd-notify.out"
+  notify_server "$sock" "$WORK/sd-notify.out"
   assert_eq "notifications: NOTIFY_SOCKET and the watchdog reach COMMAND, the socket is bound read-only" \
-    "$(NOTIFY_SOCKET="$WORK/sd-notify.sock" WATCHDOG_USEC=30000000 "${SD_PROBE[@]}" "$DROOT" "${sd_run[@]}")" \
-    "$(printf 'NOTIFY_SOCKET=%s WATCHDOG_USEC=30000000 WATCHDOG_PID=self\nchmod: Read-only file system\nnotified' "$WORK/sd-notify.sock")"
-  wait "$notify_pid"
+    "$(NOTIFY_SOCKET="$sock" WATCHDOG_USEC=30000000 "${SD_PROBE[@]}" "$DROOT" "${sd_run[@]}")" \
+    "$(printf 'NOTIFY_SOCKET=%s WATCHDOG_USEC=30000000 WATCHDOG_PID=self\nchmod: Read-only file system\nnotified' "$sock")"
   # WATCHDOG_PID=self: COMMAND has the PID of droot, the main process.
-  assert_eq "notifications come from COMMAND" "$(tail -n +2 "$WORK/sd-notify.out")" "READY=1, sent by the probe"
+  assert_notified "notifications come from COMMAND" "$WORK/sd-notify.out"
   notify_server "@droot-e2e-$$" "$WORK/sd-abstract.out"
-  NOTIFY_SOCKET="@droot-e2e-$$" "$DROOT" "${sd_run[@]}" >/dev/null
-  wait "$notify_pid"
-  assert_eq "notifications to an abstract socket" "$(tail -n +2 "$WORK/sd-abstract.out")" "READY=1, sent by the probe"
-  assert_eq "the sockets and the watchdog of another process are not passed on" \
+  NOTIFY_SOCKET="@droot-e2e-$$" "$DROOT" "${sd_run[@]}" >/dev/null || fail "droot run with an abstract NOTIFY_SOCKET"
+  assert_notified "notifications to an abstract socket" "$WORK/sd-abstract.out"
+  # Only the variables: the descriptors of droot are inherited anyway.
+  assert_eq "the variables of the sockets and the watchdog of another process are not passed on" \
     "$(LISTEN_PID=1 LISTEN_FDS=1 WATCHDOG_USEC=1 WATCHDOG_PID=1 "$DROOT" "${sd_run[@]}")" "none"
+  # droot may inherit a NOTIFY_SOCKET that is not meant for it.
+  if ! NOTIFY_SOCKET="$SD_DIR/missing.sock" "$DROOT" run --root "$WORK/sd" --unshare --robind /usr -- true 2>"$WORK/sd.err"; then
+    fail "a NOTIFY_SOCKET that cannot be bound must not be fatal: $(cat "$WORK/sd.err")"
+  fi
+  grep -q "COMMAND cannot send notifications" "$WORK/sd.err" || fail "no warning about the missing NOTIFY_SOCKET: $(cat "$WORK/sd.err")"
+  echo "ok - a NOTIFY_SOCKET that cannot be bound is reported, not fatal"
+  # The directories droot creates for the mount point do not follow the
+  # umask (UMask=0077 of a unit): other users than root must reach it.
+  usr_root "$WORK/sd-umask"
+  notify_server "$sock" "$WORK/sd-notify.out"
+  (umask 077 && NOTIFY_SOCKET="$sock" "$DROOT" run --root "$WORK/sd-umask" --unshare --robind /usr --user 65534 -- \
+    "$SD_PYTHON" /sd.py probe >/dev/null) || fail "droot run with umask 077"
+  assert_notified "notifications from another user than root, with umask 077" "$WORK/sd-notify.out"
+  # --bind on the path of the socket wins.
+  notify_server "$SD_DIR/proxy.sock" "$WORK/sd-proxy.out"
+  NOTIFY_SOCKET="$sock" "$DROOT" run --root "$WORK/sd" --unshare --robind /usr --robind "$SD_DIR/proxy.sock:$sock" -- \
+    "$SD_PYTHON" /sd.py probe >/dev/null || fail "droot run with a --bind on NOTIFY_SOCKET"
+  assert_notified "a --bind on the path of NOTIFY_SOCKET is kept" "$WORK/sd-proxy.out"
   # In the host's mount namespace, the socket stays bound after the run,
   # and is bound afresh when the service manager creates it again.
   for i in 1 2; do
-    notify_server "$WORK/sd-notify.sock" "$WORK/sd-notify.out"
-    NOTIFY_SOCKET="$WORK/sd-notify.sock" "$DROOT" run --root "$WORK/sd" --robind /usr -- python3 /sd.py probe >/dev/null
-    wait "$notify_pid"
-    assert_eq "notifications without --unshare, socket $i" "$(tail -n +2 "$WORK/sd-notify.out")" "READY=1, sent by the probe"
+    notify_server "$sock" "$WORK/sd-notify.out"
+    NOTIFY_SOCKET="$sock" "$DROOT" run --root "$WORK/sd" --robind /usr -- "$SD_PYTHON" /sd.py probe >/dev/null ||
+      fail "droot run without --unshare, socket $i"
+    assert_notified "notifications without --unshare, socket $i" "$WORK/sd-notify.out"
   done
+  "$DROOT" umount --root "$WORK/sd"
+  # A --bind of its directory makes the socket reachable already: droot must
+  # not mount it over the host's own, which the host could then no longer
+  # remove or replace.
+  notify_server "$sock" "$WORK/sd-notify.out"
+  NOTIFY_SOCKET="$sock" "$DROOT" run --root "$WORK/sd" --robind /usr --robind "$SD_DIR" -- "$SD_PYTHON" /sd.py probe >/dev/null ||
+    fail "droot run with a --bind of the directory of NOTIFY_SOCKET"
+  assert_notified "notifications through a --bind of the directory of the socket" "$WORK/sd-notify.out"
+  rm "$sock" || fail "droot mounted on the host's socket: the host cannot remove it"
+  echo "ok - the host's socket is not mounted on"
   "$DROOT" umount --root "$WORK/sd"
 fi
 
@@ -570,21 +617,30 @@ else
     usr_root "$WORK/rl-sd"
     chown -hR nobody "$WORK/rl-sd"
     user_prefix nobody
-    SD_SOCKETS=$WORK/xdg-nobody
-    rl_sd_run=(run --root "$WORK/rl-sd" --robind /usr --user 0 -- python3 /sd.py probe)
+    SD_SOCKETS=$SD_DIR/nobody
+    mkdir -m 700 "$SD_SOCKETS"
+    chown nobody "$SD_SOCKETS"
+    rl_sd_run=(run --root "$WORK/rl-sd" --robind /usr --user 0 -- "$SD_PYTHON" /sd.py probe)
     # LISTEN_PIDFDID, like LISTEN_PID, names the supervising droot: it must
     # not reach COMMAND, whose sd_listen_fds(3) would refuse the sockets.
     assert_eq "rootless socket activation: the sockets keep their descriptors, LISTEN_PID is COMMAND's PID" \
       "$(activate "${AS_USER[@]}" -- -E LISTEN_PIDFDID=1 "$RL_DROOT" "${rl_sd_run[@]}")" \
       "$(printf 'LISTEN_PID=self LISTEN_FDS=2 LISTEN_FDNAMES=web:admin\naccepted on fd 3\naccepted on fd 4')"
-    notify_server "$WORK/sd-notify.sock" "$WORK/sd-notify.out"
+    notify_server "$sock" "$WORK/sd-notify.out"
     assert_eq "rootless notifications: NOTIFY_SOCKET is bound read-only, WATCHDOG_PID is COMMAND's PID" \
-      "$("${AS_USER[@]}" NOTIFY_SOCKET="$WORK/sd-notify.sock" WATCHDOG_USEC=30000000 "${SD_PROBE[@]}" "$RL_DROOT" "${rl_sd_run[@]}")" \
-      "$(printf 'NOTIFY_SOCKET=%s WATCHDOG_USEC=30000000 WATCHDOG_PID=self\nchmod: Read-only file system\nnotified' "$WORK/sd-notify.sock")"
-    wait "$notify_pid"
+      "$("${AS_USER[@]}" NOTIFY_SOCKET="$sock" WATCHDOG_USEC=30000000 "${SD_PROBE[@]}" "$RL_DROOT" "${rl_sd_run[@]}")" \
+      "$(printf 'NOTIFY_SOCKET=%s WATCHDOG_USEC=30000000 WATCHDOG_PID=self\nchmod: Read-only file system\nnotified' "$sock")"
     # From COMMAND, a child of the main process (the supervising droot):
     # units need NotifyAccess=all.
-    assert_eq "rootless notifications come from COMMAND" "$(tail -n +2 "$WORK/sd-notify.out")" "READY=1, sent by the probe"
+    assert_notified "rootless notifications come from COMMAND" "$WORK/sd-notify.out"
+    # No mount point can be created (in a read-only tmpfs): reported, not
+    # fatal.
+    if ! "${AS_USER[@]}" NOTIFY_SOCKET="$sock" "$RL_DROOT" run --root "$WORK/rl-sd" --robind /usr --tmpfs /tmp:ro --user 0 -- \
+      true 2>"$WORK/sd.err"; then
+      fail "rootless: a NOTIFY_SOCKET that cannot be bound must not be fatal: $(cat "$WORK/sd.err")"
+    fi
+    grep -q "COMMAND cannot send notifications" "$WORK/sd.err" || fail "rootless: no warning about NOTIFY_SOCKET: $(cat "$WORK/sd.err")"
+    echo "ok - rootless: a NOTIFY_SOCKET that cannot be bound is reported, not fatal"
   fi
 
   # A user with subordinate IDs: ROOTLESS_USER, or the user who ran sudo.
@@ -627,6 +683,19 @@ else
     done
     assert_eq "rootless: COMMAND dies with droot" \
       "$(ps -eo stat=,args= | awk '$1 !~ /Z/ && $2 == "sleep" && $3 == "31"' | wc -l)" "0"
+    if [[ -z $sd_skip ]]; then
+      # With the helpers newuidmap and newgidmap, which must not get the
+      # sockets.
+      mkdir "$WORK/rl-sd-sub"
+      usr_root "$WORK/rl-sd-sub"
+      chown -hR "$SUB_USER" "$WORK/rl-sd-sub"
+      SD_SOCKETS=$SD_DIR/sub
+      mkdir -m 700 "$SD_SOCKETS"
+      chown "$SUB_USER" "$SD_SOCKETS"
+      assert_eq "rootless socket activation with subordinate IDs" \
+        "$(activate "${AS_USER[@]}" -- "$RL_DROOT" run --root "$WORK/rl-sd-sub" --robind /usr --user 0 -- "$SD_PYTHON" /sd.py probe)" \
+        "$(printf 'LISTEN_PID=self LISTEN_FDS=2 LISTEN_FDNAMES=web:admin\naccepted on fd 3\naccepted on fd 4')"
+    fi
   else
     echo "skip - rootless with subordinate IDs: set ROOTLESS_USER to a user with entries in /etc/subuid and /etc/subgid (and install newuidmap)"
   fi

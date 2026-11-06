@@ -576,6 +576,16 @@ func (m *Mounter) BindMount(hostPath, containerPath string, opts BindOptions) er
 		return err
 	}
 	defer t.Close()
+	if opts.SkipSame && sameFile(int(t.File.Fd()), hostPath) {
+		mounted, err := isMountRoot(t.ParentFd(), int(t.File.Fd()))
+		if err != nil {
+			return err
+		}
+		if !mounted {
+			log.Debugf("%s already is %s: not binding it", t.File.Name(), hostPath)
+			return nil
+		}
+	}
 	flags := uintptr(unix.MS_BIND)
 	if opts.Recursive {
 		flags |= unix.MS_REC

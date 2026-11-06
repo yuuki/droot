@@ -219,16 +219,20 @@ func TestNotifySocketMount(t *testing.T) {
 	}
 }
 
-func TestBindNotifySocketNotASocket(t *testing.T) {
+func TestNotifySocketTarget(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "notify")
 	if err := os.WriteFile(file, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// Refused before anything is mounted: no Mounter is needed.
-	if err := bindNotifySocket(nil, file); err == nil || !strings.Contains(err.Error(), "is not a socket") {
+	// Refused before the container is looked at: no Root is needed.
+	if err := notifySocketTarget(nil, file); err == nil || !strings.Contains(err.Error(), "is not a socket") {
 		t.Errorf("a regular file: got %v", err)
 	}
-	if err := bindNotifySocket(nil, file+".missing"); !errors.Is(err, fs.ErrNotExist) {
+	if err := notifySocketTarget(nil, file+".missing"); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("a missing socket: got %v", err)
+	}
+	// Not fatal: droot may have inherited NOTIFY_SOCKET by mistake.
+	if err := bindNotifySocket(nil, nil, file+".missing"); err != nil {
+		t.Errorf("a missing socket must only be reported, got %v", err)
 	}
 }
