@@ -77,13 +77,12 @@ $ go install github.com/yuuki/droot/cmd/droot@latest
 
 ### Homebrew
 
+[tap](https://github.com/yuuki/homebrew-droot) の formula は、macOS または Linux（amd64 と arm64）向けのビルド済みバイナリと man ページをインストールします。
+
 ```console
 $ brew tap yuuki/droot
 $ brew install droot
 ```
-
-> [!WARNING]
-> tap の formula が更新されるまでは、droot 0.7.7 がインストールされます。このバージョンの `droot export` は、Docker API バージョン 1.29 に固定されているため、現在の Docker リリースでは動作しません。ビルド済みバイナリか `go install` を使うことをおすすめします。
 
 <a id="from-source"></a>
 ### ソースから

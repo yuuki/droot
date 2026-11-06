@@ -94,15 +94,13 @@ $ go install github.com/yuuki/droot/cmd/droot@latest
 
 ### Homebrew
 
+The formula of the [tap](https://github.com/yuuki/homebrew-droot) installs the
+prebuilt binary for macOS or Linux (amd64 and arm64) and the man page:
+
 ```console
 $ brew tap yuuki/droot
 $ brew install droot
 ```
-
-> [!WARNING]
-> Until the formula of the tap is updated, it installs droot 0.7.7, whose
-> `droot export` does not work with current Docker releases (it pins the
-> Docker API version 1.29). Prefer the prebuilt binaries or `go install`.
 
 ### From source
 
