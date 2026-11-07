@@ -1,0 +1,24 @@
+# octocov configuration for the complexity metrics (Cognitive and Cyclomatic
+# Complexity) that .github/workflows/complexity.yml measures with cccc and
+# passes as Custom Metrics. It measures no code coverage.
+#
+# The subpath of `repository` gives the pull request comment its own
+# identifier (<!-- octocov:complexity -->) and the title
+# "Code Metrics Report (complexity)", so that it does not replace another
+# octocov comment, such as a coverage report, if one is added later.
+#
+# The reports are stored under the complexity-reports prefix of the `octocov`
+# branch, which must exist before the first push to the default branch:
+# octocov does not create it.
+repository: ${GITHUB_REPOSITORY}/complexity
+comment:
+  if: is_pull_request
+summary:
+  if: true
+report:
+  if: is_default_branch
+  datastores:
+    - github://${GITHUB_REPOSITORY}@octocov/complexity-reports
+diff:
+  datastores:
+    - github://${GITHUB_REPOSITORY}@octocov/complexity-reports

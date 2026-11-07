@@ -73,6 +73,16 @@ CI (`.github/workflows/ci.yml`) runs on every push and pull request:
   for 7 days as the `snapshot` artifact of the run, and a preview of the
   release notes in the run summary.
 
+The Code Complexity workflow (`.github/workflows/complexity.yml`) measures
+the Cognitive and Cyclomatic Complexity of the Go code without its tests
+with [cccc](https://github.com/moznion/cccc), configured by `cccc.toml`, and
+tracks them with [octocov](https://github.com/k1LoW/octocov)
+(`.octocov.complexity.yml`): a comment on each pull request compares them
+with `master`, the job summary lists the 20 most complex functions, and each
+push to `master` stores a report in the `octocov` branch. The numbers are a
+trend to watch: no threshold fails the job. To see them locally:
+`cccc --table --top-cognitive 20 cmd internal`.
+
 ## Dependencies
 
 droot intentionally depends on as little as possible: only
@@ -86,8 +96,8 @@ Dependabot (`.github/dependabot.yml`) proposes monthly, grouped updates of Go
 modules and GitHub Actions, once they have been released for a week. The
 workflows pin every action to a full commit SHA, with its version in a
 comment; Dependabot updates both. The versions of golangci-lint,
-govulncheck, GoReleaser, syft and zizmor are pinned in the `Makefile` and
-the workflows and are updated by hand.
+govulncheck, GoReleaser, syft, zizmor and cccc are pinned in the `Makefile`
+and the workflows and are updated by hand.
 
 ## Releasing
 

@@ -1,0 +1,12 @@
+# Configuration of cccc (https://github.com/moznion/cccc), which measures the
+# Cognitive and Cyclomatic Complexity of the code. Both the Code Complexity
+# workflow (.github/workflows/complexity.yml) and local runs read it:
+#
+#   cccc --table --top-cognitive 20 cmd internal
+#
+# No threshold (max-cognitive, max-cyclomatic) is set: the numbers are tracked
+# as a trend, and fail nothing.
+
+# The Go code without its tests.
+languages = ["go"]
+exclude = ["*_test.go"]
