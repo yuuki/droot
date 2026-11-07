@@ -120,23 +120,9 @@ func doExport(ctx context.Context, cmd *cli.Invocation) error {
 	if algo != "" && !slices.Contains(compressions, algo) {
 		return cmd.UsageError("unknown compression %q: want gzip or zstd", algo)
 	}
-	opts := docker.ExportOptions{
-		Platform:        cmd.String("platform"),
-		Exclude:         cmd.Strings("exclude"),
-		DropDockerFiles: cmd.Bool("drop-docker-files"),
-		Reproducible:    cmd.Bool("reproducible"),
-	}
-	if err := docker.ValidatePatterns(opts.Exclude); err != nil {
-		return cmd.UsageError("%v", err)
-	}
-	if opts.Reproducible {
-		if s, ok := os.LookupEnv("SOURCE_DATE_EPOCH"); ok && s != "" {
-			epoch, err := strconv.ParseInt(s, 10, 64)
-			if err != nil {
-				return fmt.Errorf("invalid SOURCE_DATE_EPOCH %q: want a number of seconds", s)
-			}
-			opts.ClampTime = time.Unix(epoch, 0)
-		}
+	opts, err := exportOptions(cmd)
+	if err != nil {
+		return err
 	}
 
 	var exportImage func(io.Writer) error
@@ -151,24 +137,10 @@ func doExport(ctx context.Context, cmd *cli.Invocation) error {
 		defer img.Close()
 		exportImage = func(w io.Writer) error { return exportFlattened(ctx, img, w, opts) }
 	} else {
-		client, err := docker.NewClientFromEnv()
+		exportImage, err = daemonExport(ctx, cmd, name, opts)
 		if err != nil {
 			return err
 		}
-		if err := client.Ping(ctx); err != nil {
-			return err
-		}
-		if cmd.Bool("pull") {
-			auth, err := docker.RegistryAuth(ctx, name)
-			if err != nil {
-				return fmt.Errorf("registry credentials: %w", err)
-			}
-			log.Infof("pulling %s", docker.WithDefaultTag(name))
-			if err := client.ImagePull(ctx, name, opts.Platform, auth, func(s string) { log.Debugf("%s", s) }); err != nil {
-				return err
-			}
-		}
-		exportImage = func(w io.Writer) error { return docker.ExportImage(ctx, client, name, w, opts) }
 	}
 	var sum hash.Hash
 	export := func(w io.Writer) (err error) {
@@ -196,13 +168,69 @@ func doExport(ctx context.Context, cmd *cli.Invocation) error {
 		return err
 	}
 	if checksum {
-		line := fmt.Sprintf("%x  %s\n", sum.Sum(nil), filepath.Base(output))
-		return writeFile(ctx, output+".sha256", func(w io.Writer) error {
-			_, err := io.WriteString(w, line)
-			return err
-		})
+		return writeChecksum(ctx, output, sum)
 	}
 	return nil
+}
+
+// exportOptions returns the options of the archive given by --platform,
+// --exclude, --drop-docker-files and --reproducible, which clamps the
+// modification times to $SOURCE_DATE_EPOCH, if set.
+func exportOptions(cmd *cli.Invocation) (docker.ExportOptions, error) {
+	opts := docker.ExportOptions{
+		Platform:        cmd.String("platform"),
+		Exclude:         cmd.Strings("exclude"),
+		DropDockerFiles: cmd.Bool("drop-docker-files"),
+		Reproducible:    cmd.Bool("reproducible"),
+	}
+	if err := docker.ValidatePatterns(opts.Exclude); err != nil {
+		return docker.ExportOptions{}, cmd.UsageError("%v", err)
+	}
+	if !opts.Reproducible {
+		return opts, nil
+	}
+	if s, ok := os.LookupEnv("SOURCE_DATE_EPOCH"); ok && s != "" {
+		epoch, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			return docker.ExportOptions{}, fmt.Errorf("invalid SOURCE_DATE_EPOCH %q: want a number of seconds", s)
+		}
+		opts.ClampTime = time.Unix(epoch, 0)
+	}
+	return opts, nil
+}
+
+// daemonExport connects to the Docker daemon, pulls the image name into it
+// for --pull, and returns the function that writes the file system of the
+// image.
+func daemonExport(ctx context.Context, cmd *cli.Invocation, name string, opts docker.ExportOptions) (func(io.Writer) error, error) {
+	client, err := docker.NewClientFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	if err := client.Ping(ctx); err != nil {
+		return nil, err
+	}
+	if cmd.Bool("pull") {
+		auth, err := docker.RegistryAuth(ctx, name)
+		if err != nil {
+			return nil, fmt.Errorf("registry credentials: %w", err)
+		}
+		log.Infof("pulling %s", docker.WithDefaultTag(name))
+		if err := client.ImagePull(ctx, name, opts.Platform, auth, func(s string) { log.Debugf("%s", s) }); err != nil {
+			return nil, err
+		}
+	}
+	return func(w io.Writer) error { return docker.ExportImage(ctx, client, name, w, opts) }, nil
+}
+
+// writeChecksum writes sum, the SHA-256 checksum of the archive written to
+// output, to output.sha256, in the format of sha256sum.
+func writeChecksum(ctx context.Context, output string, sum hash.Hash) error {
+	line := fmt.Sprintf("%x  %s\n", sum.Sum(nil), filepath.Base(output))
+	return writeFile(ctx, output+".sha256", func(w io.Writer) error {
+		_, err := io.WriteString(w, line)
+		return err
+	})
 }
 
 // exportFlattened writes the file system of img, read without daemon, like
@@ -310,40 +338,60 @@ func openCancelable(ctx context.Context, path string) (*os.File, error) {
 //     atomically) so that the links are kept.
 //   - Non-regular files such as /dev/stdout or named pipes are written
 //     directly.
-func writeFile(ctx context.Context, path string, write func(io.Writer) error) (err error) {
-	path, err = followSymlinks(path)
+func writeFile(ctx context.Context, path string, write func(io.Writer) error) error {
+	path, err := followSymlinks(path)
 	if err != nil {
 		return err
 	}
-	fi, statErr := os.Stat(path)
-	if statErr == nil && !fi.Mode().IsRegular() {
-		if fi.IsDir() {
-			return errors.New(path + " is a directory")
-		}
-		f, err := openCancelable(ctx, path)
-		if err != nil {
-			return err
-		}
-		defer f.Close()
-		if osutil.IsTerminal(f) {
-			return errors.New("refusing to write a tar archive to a terminal")
-		}
-		return writeBuffered(ctx, f, write)
+	fi, err := os.Stat(path)
+	if err != nil {
+		// No file at path, or none that can be stat'ed: a new file.
+		return writeAtomically(ctx, path, nil, write)
 	}
-	if statErr == nil {
-		if _, _, nlink, ok := osutil.FileOwner(fi); ok && nlink > 1 {
-			f, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0)
-			if err != nil {
-				return err
-			}
-			if err := writeBuffered(ctx, f, write); err != nil {
-				_ = f.Close()
-				return err
-			}
-			return f.Close()
-		}
+	if fi.IsDir() {
+		return errors.New(path + " is a directory")
 	}
+	if !fi.Mode().IsRegular() {
+		return writeDirectly(ctx, path, write)
+	}
+	if _, _, nlink, ok := osutil.FileOwner(fi); ok && nlink > 1 {
+		return writeInPlace(ctx, path, write)
+	}
+	return writeAtomically(ctx, path, fi, write)
+}
 
+// writeDirectly writes to the file at path that is not a regular file, such
+// as /dev/stdout or a named pipe, refusing a terminal.
+func writeDirectly(ctx context.Context, path string, write func(io.Writer) error) error {
+	f, err := openCancelable(ctx, path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if osutil.IsTerminal(f) {
+		return errors.New("refusing to write a tar archive to a terminal")
+	}
+	return writeBuffered(ctx, f, write)
+}
+
+// writeInPlace truncates the regular file at path and writes it in place.
+func writeInPlace(ctx context.Context, path string, write func(io.Writer) error) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0)
+	if err != nil {
+		return err
+	}
+	if err := writeBuffered(ctx, f, write); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+// writeAtomically writes path through a temporary file in the same
+// directory, which replaces it on success and is removed on failure. The
+// temporary file gets the mode and the owner of fi, the file at path, if
+// it is not nil.
+func writeAtomically(ctx context.Context, path string, fi fs.FileInfo, write func(io.Writer) error) (err error) {
 	tmp, err := createTemp(filepath.Dir(path))
 	if err != nil {
 		return err
@@ -355,7 +403,7 @@ func writeFile(ctx context.Context, path string, write func(io.Writer) error) (e
 		}
 	}()
 
-	if statErr == nil {
+	if fi != nil {
 		if err := tmp.Chmod(fi.Mode().Perm()); err != nil {
 			return err
 		}

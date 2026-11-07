@@ -212,26 +212,58 @@ func (f *flattener) scan(ctx context.Context, i int, l *Layer) error {
 		return err
 	}
 	defer rc.Close()
-	tr := tar.NewReader(rc)
-	var entries []entry
-	var mtimes []time.Time
-	var whiteouts, opaques []string
+	lh, err := f.readHeaders(ctx, i, rc)
+	if err != nil {
+		return err
+	}
+
+	// Whiteouts only delete the files of the layers below. Like the other
+	// paths, theirs are resolved in the merged file system: a symlink to a
+	// directory in a lower layer leads to that directory.
+	f.applyWhiteouts(lh.opaques, lh.whiteouts)
+	for j := range lh.entries {
+		e := &lh.entries[j]
+		if e.skip {
+			continue
+		}
+		if err := f.addEntry(ref{i, j}, e, lh.mtimes[j]); err != nil {
+			return err
+		}
+	}
+	f.entries = append(f.entries, lh.entries)
+	return nil
+}
+
+// layerHeaders is what scan reads of a layer.
+type layerHeaders struct {
+	entries []entry
+	mtimes  []time.Time // the modification times of the entries
+	// whiteouts are the paths deleted by the whiteouts of the layer,
+	// opaques the directories emptied by its opaque whiteouts.
+	whiteouts, opaques []string
+}
+
+// readHeaders reads the headers of layer i from r, to its end, and records
+// the headers of its directories.
+func (f *flattener) readHeaders(ctx context.Context, i int, r io.Reader) (*layerHeaders, error) {
+	tr := tar.NewReader(r)
+	lh := &layerHeaders{}
 	for {
 		if err := ctx.Err(); err != nil {
-			return err
+			return nil, err
 		}
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
-			return fmt.Errorf("read: %w", err)
+			return nil, fmt.Errorf("read: %w", err)
 		}
 		if err := checkName(hdr.Name); err != nil {
-			return err
+			return nil, err
 		}
 		if err := checkName(hdr.Linkname); err != nil {
-			return err
+			return nil, err
 		}
 		name, wh, opaque, meta := parseEntry(hdr.Name)
 		typ, isFile := fileType(hdr.Typeflag)
@@ -244,25 +276,27 @@ func (f *flattener) scan(ctx context.Context, i int, l *Layer) error {
 			e.skip = true
 		case opaque:
 			e.skip = true
-			opaques = append(opaques, wh)
+			lh.opaques = append(lh.opaques, wh)
 		case wh != "":
 			e.skip = true
-			whiteouts = append(whiteouts, wh)
+			lh.whiteouts = append(lh.whiteouts, wh)
 		case typ == tar.TypeDir:
 			h := *hdr
-			f.dirs[ref{i, len(entries)}] = &h
+			f.dirs[ref{i, len(lh.entries)}] = &h
 		}
-		entries = append(entries, e)
-		mtimes = append(mtimes, hdr.ModTime)
+		lh.entries = append(lh.entries, e)
+		lh.mtimes = append(lh.mtimes, hdr.ModTime)
 	}
 	// The end of the stream verifies the digests.
-	if _, err := io.Copy(io.Discard, rc); err != nil {
-		return err
+	if _, err := io.Copy(io.Discard, r); err != nil {
+		return nil, err
 	}
+	return lh, nil
+}
 
-	// Whiteouts only delete the files of the layers below. Like the other
-	// paths, theirs are resolved in the merged file system: a symlink to a
-	// directory in a lower layer leads to that directory.
+// applyWhiteouts empties the directories opaques and deletes the paths
+// whiteouts, those that exist.
+func (f *flattener) applyWhiteouts(opaques, whiteouts []string) {
 	for _, d := range opaques {
 		if _, n, err := f.resolveDir(d); err == nil && n != nil && n.isDir() {
 			n.children = map[string]*node{}
@@ -273,45 +307,43 @@ func (f *flattener) scan(ctx context.Context, i int, l *Layer) error {
 			delete(n.children, path.Base(p))
 		}
 	}
-	for j := range entries {
-		e := &entries[j]
-		if e.skip {
-			continue
-		}
-		r := ref{i, j}
-		parent, _, err := f.resolveDir(path.Dir(e.raw))
-		if err != nil {
-			return fmt.Errorf("%s: %w", e.raw, err)
-		}
-		e.name = path.Join(parent, path.Base(e.raw))
-		if len(e.name) > 2*maxPathLen {
-			return fmt.Errorf("%s: the path through symlinks is too long", e.raw)
-		}
-		// A hard link to a symlink is a symlink: what the target is must
-		// be read before insert, which resets the node of a hard link
-		// that names its own target.
-		hardLink, linkSym, linkTarget := false, false, ""
-		if e.typ == tar.TypeLink {
-			target, err := f.hardLinkTarget(e)
-			if err != nil {
-				return err
-			}
-			t := target.rec
-			if s, ok := f.inode[t]; ok {
-				t = s
-			}
-			f.inode[r] = t
-			hardLink, linkSym, linkTarget = true, target.sym, target.link
-		}
-		n := f.insert(e.name, r, e.typ == tar.TypeDir, mtimes[j])
-		switch {
-		case e.typ == tar.TypeSymlink:
-			n.sym, n.link = true, e.link
-		case hardLink:
-			n.sym, n.link = linkSym, linkTarget
-		}
+}
+
+// addEntry puts the entry e, r, of the layer being scanned, with the
+// modification time mtime, on the tree, and sets e.name, its path in the
+// merged file system.
+func (f *flattener) addEntry(r ref, e *entry, mtime time.Time) error {
+	parent, _, err := f.resolveDir(path.Dir(e.raw))
+	if err != nil {
+		return fmt.Errorf("%s: %w", e.raw, err)
 	}
-	f.entries = append(f.entries, entries)
+	e.name = path.Join(parent, path.Base(e.raw))
+	if len(e.name) > 2*maxPathLen {
+		return fmt.Errorf("%s: the path through symlinks is too long", e.raw)
+	}
+	// A hard link to a symlink is a symlink: what the target is must
+	// be read before insert, which resets the node of a hard link
+	// that names its own target.
+	hardLink, linkSym, linkTarget := false, false, ""
+	if e.typ == tar.TypeLink {
+		target, err := f.hardLinkTarget(e)
+		if err != nil {
+			return err
+		}
+		t := target.rec
+		if s, ok := f.inode[t]; ok {
+			t = s
+		}
+		f.inode[r] = t
+		hardLink, linkSym, linkTarget = true, target.sym, target.link
+	}
+	n := f.insert(e.name, r, e.typ == tar.TypeDir, mtime)
+	switch {
+	case e.typ == tar.TypeSymlink:
+		n.sym, n.link = true, e.link
+	case hardLink:
+		n.sym, n.link = linkSym, linkTarget
+	}
 	return nil
 }
 
@@ -348,6 +380,7 @@ func (f *flattener) resolveDir(name string) (string, *node, error) {
 	return f.resolveFrom(name, &hops)
 }
 
+// resolveFrom is resolveDir, counting in hops the symlinks followed.
 func (f *flattener) resolveFrom(name string, hops *int) (string, *node, error) {
 	todo := components(name)
 	var cur []string
@@ -379,20 +412,9 @@ func (f *flattener) resolveFrom(name string, hops *int) (string, *node, error) {
 			child = p.children[c]
 		}
 		if child != nil && child.sym {
-			*hops++
-			if *hops > maxSymlinks {
-				return "", nil, errors.New("too many levels of symbolic links")
-			}
-			target := child.link
-			if !path.IsAbs(target) {
-				target = "/" + strings.Join(cur, "/") + "/" + target
-			}
-			tp, tn, err := f.resolveFrom(target, hops)
+			tp, err := f.resolveSymlink(cur, c, child, hops)
 			if err != nil {
 				return "", nil, err
-			}
-			if tn == nil {
-				return "", nil, fmt.Errorf("/%s: a symlink to %s, which is not a directory", strings.Join(append(cur, c), "/"), tp)
 			}
 			cur = components(tp)
 			nodes = nodes[:0]
@@ -410,6 +432,27 @@ func (f *flattener) resolveFrom(name string, hops *int) (string, *node, error) {
 		return "", nil, fmt.Errorf("/%s: %w", strings.Join(cur, "/"), errNotDir)
 	}
 	return "/" + strings.Join(cur, "/"), last(), nil
+}
+
+// resolveSymlink returns the target of the symlink sym, the entry c of the
+// directory /cur, resolved by resolveFrom: it must be a directory.
+func (f *flattener) resolveSymlink(cur []string, c string, sym *node, hops *int) (string, error) {
+	*hops++
+	if *hops > maxSymlinks {
+		return "", errors.New("too many levels of symbolic links")
+	}
+	target := sym.link
+	if !path.IsAbs(target) {
+		target = "/" + strings.Join(cur, "/") + "/" + target
+	}
+	tp, tn, err := f.resolveFrom(target, hops)
+	if err != nil {
+		return "", err
+	}
+	if tn == nil {
+		return "", fmt.Errorf("/%s: a symlink to %s, which is not a directory", strings.Join(append(cur, c), "/"), tp)
+	}
+	return tp, nil
 }
 
 // insert puts the entry r on the path name, whose parent directories are
@@ -493,34 +536,7 @@ func (f *flattener) write(ctx context.Context, i int, l *Layer, tw *tar.Writer) 
 		if j >= len(entries) || !entries[j].same(hdr) {
 			return errors.New("the layer changed while it was read")
 		}
-		e, r := entries[j], ref{i, j}
-		if !e.skip {
-			hdr.Typeflag = e.typ
-		}
-		if f.spool[r] {
-			if err := f.keep(r, hdr, tr); err != nil {
-				return err
-			}
-		}
-		if e.skip || !f.survive[r] {
-			continue
-		}
-		if e.typ == tar.TypeDir {
-			if f.emitted[e.name] {
-				continue // written before its content
-			}
-			f.emitted[e.name] = true
-		}
-		if err := f.writeParents(tw, e.name); err != nil {
-			return err
-		}
-		if e.typ == tar.TypeLink {
-			if err := f.writeLink(tw, e.name, hdr, r); err != nil {
-				return err
-			}
-			continue
-		}
-		if err := writeEntry(tw, e.name, hdr, tr); err != nil {
+		if err := f.writeLayerEntry(tw, ref{i, j}, entries[j], hdr, tr); err != nil {
 			return err
 		}
 	}
@@ -528,6 +544,36 @@ func (f *flattener) write(ctx context.Context, i int, l *Layer, tw *tar.Writer) 
 		return err
 	}
 	return nil
+}
+
+// writeLayerEntry writes the entry r, read as hdr and content, if it
+// survives; e is what the first pass saw of it. A file that hard links
+// need after it is deleted is kept first.
+func (f *flattener) writeLayerEntry(tw *tar.Writer, r ref, e entry, hdr *tar.Header, content io.Reader) error {
+	if !e.skip {
+		hdr.Typeflag = e.typ
+	}
+	if f.spool[r] {
+		if err := f.keep(r, hdr, content); err != nil {
+			return err
+		}
+	}
+	if e.skip || !f.survive[r] {
+		return nil
+	}
+	if e.typ == tar.TypeDir {
+		if f.emitted[e.name] {
+			return nil // written before its content
+		}
+		f.emitted[e.name] = true
+	}
+	if err := f.writeParents(tw, e.name); err != nil {
+		return err
+	}
+	if e.typ == tar.TypeLink {
+		return f.writeLink(tw, e.name, hdr, r)
+	}
+	return writeEntry(tw, e.name, hdr, content)
 }
 
 // same reports whether hdr is the entry e of the first pass.

@@ -91,140 +91,189 @@ func (r *Root) displayPath(p string) string {
 
 // lookup resolves unsafePath inside the root. The caller must close res.dir.
 func (r *Root) lookup(unsafePath string, opt lookupOptions) (res resolved, err error) {
-	var stack []int // directories below the root, deepest last
-	cur := func() int {
-		if len(stack) == 0 {
-			return r.fd
-		}
-		return stack[len(stack)-1]
-	}
+	w := &walker{root: r, opt: opt, path: unsafePath, parts: strings.Split(filepath.ToSlash(unsafePath), "/")}
 	defer func() {
-		for _, fd := range stack {
+		for _, fd := range w.stack {
 			if fd != res.dir || err != nil {
 				_ = unix.Close(fd)
 			}
 		}
 	}()
-	keep := func(name string) (resolved, error) {
-		dir := cur()
-		if dir == r.fd {
-			d, err := unix.FcntlInt(uintptr(r.fd), unix.F_DUPFD_CLOEXEC, 0)
-			if err != nil {
-				return resolved{}, err
-			}
-			return resolved{dir: d, name: name, isRoot: name == ""}, nil
-		}
-		return resolved{dir: dir, name: name}, nil
-	}
-	fail := func(e error) (resolved, error) {
-		return resolved{dir: -1}, &fs.PathError{Op: "resolve", Path: r.displayPath(unsafePath), Err: e}
-	}
 
-	parts := strings.Split(filepath.ToSlash(unsafePath), "/")
-	followed := 0
-	for len(parts) > 0 {
-		part := parts[0]
-		parts = parts[1:]
+	for len(w.parts) > 0 {
+		part := w.parts[0]
+		w.parts = w.parts[1:]
 		switch part {
 		case "", ".":
 			continue
 		case "..":
-			if len(stack) > 0 {
-				_ = unix.Close(stack[len(stack)-1])
-				stack = stack[:len(stack)-1]
+			if len(w.stack) > 0 {
+				_ = unix.Close(w.stack[len(w.stack)-1])
+				w.stack = w.stack[:len(w.stack)-1]
 			}
 			continue
 		}
-		last := len(parts) == 0 || allEmpty(parts)
+		last := len(w.parts) == 0 || allEmpty(w.parts)
 
-		fd, err := unix.Openat(cur(), part, unix.O_PATH|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
-		if errors.Is(err, unix.ENOENT) {
-			if last {
-				return keep(part)
-			}
-			if !opt.mkdir {
-				return fail(err)
-			}
-			if opt.check != nil {
-				if err := opt.check(cur()); err != nil {
-					return fail(err)
-				}
-			}
-			mkErr := unix.Mkdirat(cur(), part, 0o755)
-			if mkErr != nil && !errors.Is(mkErr, unix.EEXIST) {
-				return fail(mkErr)
-			}
-			fd, err = unix.Openat(cur(), part, unix.O_PATH|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
-			if err == nil && mkErr == nil {
-				if err := setCreatedMode(fd, true, 0o755); err != nil {
-					_ = unix.Close(fd)
-					return fail(err)
-				}
-			}
-		}
+		end, err := w.step(part, last)
 		if err != nil {
-			return fail(err)
+			return w.fail(err)
 		}
-
-		var st unix.Stat_t
-		if err := unix.Fstat(fd, &st); err != nil {
-			_ = unix.Close(fd)
-			return fail(err)
-		}
-		switch st.Mode & unix.S_IFMT {
-		case unix.S_IFLNK:
-			if last && !opt.followLast {
-				_ = unix.Close(fd)
-				return keep(part)
-			}
-			if opt.noSymlinks {
-				_ = unix.Close(fd)
-				return fail(fmt.Errorf("unexpected symbolic link %q", part))
-			}
-			followed++
-			if followed > maxSymlinks {
-				_ = unix.Close(fd)
-				return fail(unix.ELOOP)
-			}
-			target, err := readlinkFd(fd)
-			_ = unix.Close(fd)
-			if err != nil {
-				return fail(err)
-			}
-			if strings.HasPrefix(target, "/") {
-				for _, d := range stack {
-					_ = unix.Close(d)
-				}
-				stack = stack[:0]
-			}
-			parts = append(strings.Split(target, "/"), parts...)
-		case unix.S_IFDIR:
-			if last {
-				_ = unix.Close(fd)
-				return keep(part)
-			}
-			if opt.check != nil {
-				if err := opt.check(fd); err != nil {
-					_ = unix.Close(fd)
-					return fail(err)
-				}
-			}
-			stack = append(stack, fd)
-		default:
-			_ = unix.Close(fd)
-			if last {
-				return keep(part)
-			}
-			return fail(unix.ENOTDIR)
+		if end {
+			return w.keep(part)
 		}
 	}
 	// The path resolved to a directory reached through "", "." or "..".
-	if len(stack) == 0 {
-		return keep("")
+	if len(w.stack) == 0 {
+		return w.keep("")
 	}
-	dir := stack[len(stack)-1]
-	stack = stack[:len(stack)-1]
+	dir := w.stack[len(w.stack)-1]
+	w.stack = w.stack[:len(w.stack)-1]
 	return resolved{dir: dir}, nil
+}
+
+// walker is a lookup in progress.
+type walker struct {
+	root  *Root
+	opt   lookupOptions
+	path  string   // the path looked up, for errors
+	parts []string // the components left to resolve
+	stack []int    // directories below the root, deepest last
+	// followed is the number of symlinks followed so far.
+	followed int
+}
+
+// cur returns the directory the next component is resolved in.
+func (w *walker) cur() int {
+	if len(w.stack) == 0 {
+		return w.root.fd
+	}
+	return w.stack[len(w.stack)-1]
+}
+
+// keep ends the lookup with name in the current directory.
+func (w *walker) keep(name string) (resolved, error) {
+	dir := w.cur()
+	if dir == w.root.fd {
+		d, err := unix.FcntlInt(uintptr(w.root.fd), unix.F_DUPFD_CLOEXEC, 0)
+		if err != nil {
+			return resolved{}, err
+		}
+		return resolved{dir: d, name: name, isRoot: name == ""}, nil
+	}
+	return resolved{dir: dir, name: name}, nil
+}
+
+// fail ends the lookup with the error e.
+func (w *walker) fail(e error) (resolved, error) {
+	return resolved{dir: -1}, &fs.PathError{Op: "resolve", Path: w.root.displayPath(w.path), Err: e}
+}
+
+// step resolves part, the next component of the path (the last one if
+// last), in the current directory: it enters a directory, follows a symlink
+// or creates a missing directory, as opt says. It returns true when the
+// lookup ends with part.
+func (w *walker) step(part string, last bool) (bool, error) {
+	fd, err := unix.Openat(w.cur(), part, unix.O_PATH|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	switch {
+	case errors.Is(err, unix.ENOENT) && last:
+		return true, nil
+	case errors.Is(err, unix.ENOENT) && w.opt.mkdir:
+		fd, err = w.mkdir(part)
+	}
+	if err != nil {
+		return false, err
+	}
+
+	var st unix.Stat_t
+	if err := unix.Fstat(fd, &st); err != nil {
+		_ = unix.Close(fd)
+		return false, err
+	}
+	switch st.Mode & unix.S_IFMT {
+	case unix.S_IFLNK:
+		if last && !w.opt.followLast {
+			_ = unix.Close(fd)
+			return true, nil
+		}
+		return false, w.follow(fd, part)
+	case unix.S_IFDIR:
+		if last {
+			_ = unix.Close(fd)
+			return true, nil
+		}
+		return false, w.enter(fd)
+	default:
+		_ = unix.Close(fd)
+		if last {
+			return true, nil
+		}
+		return false, unix.ENOTDIR
+	}
+}
+
+// mkdir creates the missing directory part (0755) in the current directory,
+// after opt.check, and opens it. A directory created concurrently is opened
+// as it is.
+func (w *walker) mkdir(part string) (int, error) {
+	if w.opt.check != nil {
+		if err := w.opt.check(w.cur()); err != nil {
+			return -1, err
+		}
+	}
+	mkErr := unix.Mkdirat(w.cur(), part, 0o755)
+	if mkErr != nil && !errors.Is(mkErr, unix.EEXIST) {
+		return -1, mkErr
+	}
+	fd, err := unix.Openat(w.cur(), part, unix.O_PATH|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err == nil && mkErr == nil {
+		if err := setCreatedMode(fd, true, 0o755); err != nil {
+			_ = unix.Close(fd)
+			return -1, err
+		}
+	}
+	return fd, err
+}
+
+// follow follows the symlink part, open as fd, which it closes: the
+// components of its target are resolved next, from the root if it is
+// absolute.
+func (w *walker) follow(fd int, part string) error {
+	if w.opt.noSymlinks {
+		_ = unix.Close(fd)
+		return fmt.Errorf("unexpected symbolic link %q", part)
+	}
+	w.followed++
+	if w.followed > maxSymlinks {
+		_ = unix.Close(fd)
+		return unix.ELOOP
+	}
+	target, err := readlinkFd(fd)
+	_ = unix.Close(fd)
+	if err != nil {
+		return err
+	}
+	if strings.HasPrefix(target, "/") {
+		for _, d := range w.stack {
+			_ = unix.Close(d)
+		}
+		w.stack = w.stack[:0]
+	}
+	w.parts = append(strings.Split(target, "/"), w.parts...)
+	return nil
+}
+
+// enter makes the directory open as fd, after opt.check, the directory the
+// next component is resolved in. It closes fd on failure.
+func (w *walker) enter(fd int) error {
+	if w.opt.check != nil {
+		if err := w.opt.check(fd); err != nil {
+			_ = unix.Close(fd)
+			return err
+		}
+	}
+	w.stack = append(w.stack, fd)
+	return nil
 }
 
 func allEmpty(parts []string) bool {
@@ -371,34 +420,9 @@ func (r *Root) OpenMountTarget(path string, dir bool, check DirCheck) (*MountTar
 
 	fd, err := unix.Openat(res.dir, res.name, unix.O_PATH|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if errors.Is(err, unix.ENOENT) {
-		if check != nil {
-			if err := check(res.dir); err != nil {
-				return fail("mount", err)
-			}
-		}
-		if dir {
-			err = unix.Mkdirat(res.dir, res.name, 0o755)
-		} else {
-			var f int
-			f, err = unix.Openat(res.dir, res.name, unix.O_CREAT|unix.O_EXCL|unix.O_WRONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o644)
-			if err == nil {
-				err = unix.Fchmod(f, 0o644) // not subject to the umask
-				_ = unix.Close(f)
-				if err != nil {
-					return fail("chmod", err)
-				}
-			}
-		}
-		created := err == nil
-		if err != nil && !errors.Is(err, unix.EEXIST) {
-			return fail("create", err)
-		}
-		fd, err = unix.Openat(res.dir, res.name, unix.O_PATH|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
-		if err == nil && created && dir {
-			if err := setCreatedMode(fd, true, 0o755); err != nil {
-				_ = unix.Close(fd)
-				return fail("chmod", err)
-			}
+		var op string
+		if fd, op, err = createMountTarget(res.dir, res.name, dir, check); err != nil {
+			return fail(op, err)
 		}
 	}
 	if err != nil {
@@ -414,6 +438,46 @@ func (r *Root) OpenMountTarget(path string, dir bool, check DirCheck) (*MountTar
 		name:   res.name,
 		dir:    dir,
 	}, nil
+}
+
+// createMountTarget creates the missing mount target name in the directory
+// parent, after check: a directory (dir) or an empty regular file. A target
+// created concurrently is kept as it is. It returns an O_PATH descriptor of
+// the target, or else the operation that failed and its error.
+func createMountTarget(parent int, name string, dir bool, check DirCheck) (fd int, op string, err error) {
+	if check != nil {
+		if err := check(parent); err != nil {
+			return -1, "mount", err
+		}
+	}
+	if dir {
+		err = unix.Mkdirat(parent, name, 0o755)
+	} else {
+		var f int
+		f, err = unix.Openat(parent, name, unix.O_CREAT|unix.O_EXCL|unix.O_WRONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o644)
+		if err == nil {
+			err = unix.Fchmod(f, 0o644) // not subject to the umask
+			_ = unix.Close(f)
+			if err != nil {
+				return -1, "chmod", err
+			}
+		}
+	}
+	created := err == nil
+	if err != nil && !errors.Is(err, unix.EEXIST) {
+		return -1, "create", err
+	}
+	fd, err = unix.Openat(parent, name, unix.O_PATH|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return -1, "open", err
+	}
+	if created && dir {
+		if err := setCreatedMode(fd, true, 0o755); err != nil {
+			_ = unix.Close(fd)
+			return -1, "chmod", err
+		}
+	}
+	return fd, "", nil
 }
 
 // OpenNoFollow returns an O_PATH descriptor of path without following any

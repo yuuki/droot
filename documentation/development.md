@@ -79,9 +79,12 @@ with [cccc](https://github.com/moznion/cccc), configured by `cccc.toml`, and
 tracks them with [octocov](https://github.com/k1LoW/octocov)
 (`.octocov.complexity.yml`): a comment on each pull request compares them
 with `master`, the job summary lists the 20 most complex functions, and each
-push to `master` stores a report in the `octocov` branch. The numbers are a
-trend to watch: no threshold fails the job. To see them locally:
-`cccc --table --top-cognitive 20 cmd internal`.
+push to `master` stores a report in the `octocov` branch. A function,
+method or closure with a Cognitive Complexity over 30 (`max-cognitive` in
+`cccc.toml`) fails the job, with an annotation on it: split it rather than
+raise the limit. To see the numbers locally:
+`cccc --table --top-cognitive 20 cmd internal`, which also exits non-zero
+over the limit.
 
 ## Dependencies
 

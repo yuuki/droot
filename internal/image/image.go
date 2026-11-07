@@ -229,22 +229,9 @@ func resolve(ctx context.Context, s store, d Descriptor, sel selector) (*Image, 
 		if depth > maxNesting {
 			return nil, errors.New("too many nested indexes")
 		}
-		b, mt, err := s.manifest(ctx, d)
+		m, mt, err := readManifest(ctx, s, d)
 		if err != nil {
 			return nil, err
-		}
-		var m manifest
-		if err := json.Unmarshal(b, &m); err != nil {
-			return nil, fmt.Errorf("parse manifest %s: %w", d.Digest, err)
-		}
-		if m.MediaType != "" {
-			mt = m.MediaType
-		}
-		if mt == "" || mt == "application/json" {
-			mt = MediaTypeOCIManifest
-			if m.Manifests != nil {
-				mt = MediaTypeOCIIndex
-			}
 		}
 		switch mt {
 		case MediaTypeOCIIndex, MediaTypeDockerList:
@@ -273,18 +260,48 @@ func resolve(ctx context.Context, s store, d Descriptor, sel selector) (*Image, 
 				return nil, err
 			}
 		}
-		img := &Image{ID: m.Config.Digest, Config: *cfg}
-		for _, l := range m.Layers {
-			if strings.Contains(l.MediaType, "nondistributable") || strings.Contains(l.MediaType, "foreign") {
-				return nil, fmt.Errorf("layer %s is not distributable (%s): not supported", l.Digest, l.MediaType)
-			}
-			img.Layers = append(img.Layers, &Layer{Digest: l.Digest, Size: l.Size, open: blobOpener(s, l)})
-		}
-		if err := setDiffIDs(img); err != nil {
-			return nil, err
-		}
-		return img, nil
+		return newImage(s, m, cfg)
 	}
+}
+
+// readManifest reads the manifest or index d, and returns it with its media
+// type: the one it gives, or else the one of the store, guessed from its
+// content when it is missing or application/json.
+func readManifest(ctx context.Context, s store, d Descriptor) (*manifest, string, error) {
+	b, mt, err := s.manifest(ctx, d)
+	if err != nil {
+		return nil, "", err
+	}
+	var m manifest
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil, "", fmt.Errorf("parse manifest %s: %w", d.Digest, err)
+	}
+	if m.MediaType != "" {
+		mt = m.MediaType
+	}
+	if mt == "" || mt == "application/json" {
+		mt = MediaTypeOCIManifest
+		if m.Manifests != nil {
+			mt = MediaTypeOCIIndex
+		}
+	}
+	return &m, mt, nil
+}
+
+// newImage returns the image of the image manifest m, whose configuration
+// is cfg, with its layers read from s.
+func newImage(s store, m *manifest, cfg *Config) (*Image, error) {
+	img := &Image{ID: m.Config.Digest, Config: *cfg}
+	for _, l := range m.Layers {
+		if strings.Contains(l.MediaType, "nondistributable") || strings.Contains(l.MediaType, "foreign") {
+			return nil, fmt.Errorf("layer %s is not distributable (%s): not supported", l.Digest, l.MediaType)
+		}
+		img.Layers = append(img.Layers, &Layer{Digest: l.Digest, Size: l.Size, open: blobOpener(s, l)})
+	}
+	if err := setDiffIDs(img); err != nil {
+		return nil, err
+	}
+	return img, nil
 }
 
 func blobOpener(s store, d Descriptor) func(context.Context) (io.ReadCloser, error) {

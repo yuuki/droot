@@ -287,49 +287,67 @@ func (inv *Invocation) parse(flags []*Flag, args []string, stopAtArg bool) ([]st
 			positional = append(positional, arg)
 			continue
 		}
-
-		name := strings.TrimPrefix(arg[1:], "-")
-		name, value, hasValue := strings.Cut(name, "=")
-		typed := arg
-		if hasValue {
-			typed = arg[:len(arg)-len(value)-1]
+		used, err := inv.parseFlag(flags, byName, arg, args[i+1:])
+		if err != nil {
+			return nil, err
 		}
-		f := byName[name]
-		if f == nil || name == "" || strings.HasPrefix(name, "-") {
-			msg := "unknown flag " + typed
-			if s := Closest(strings.TrimLeft(name, "-"), flagNames(flags)); s != "" {
-				msg += "; did you mean " + Dashed(s) + "?"
-			}
-			return nil, inv.UsageError("%s", msg)
-		}
-		switch f.Kind {
-		case Bool:
-			b := true
-			if hasValue {
-				var err error
-				if b, err = strconv.ParseBool(value); err != nil {
-					return nil, inv.UsageError("invalid value %q for flag %s: want true or false", value, typed)
-				}
-			}
-			inv.values[f.Name] = b
-		case String, Strings:
-			if !hasValue {
-				if i+1 >= len(args) {
-					return nil, inv.UsageError("flag %s needs an argument", typed)
-				}
-				i++
-				value = args[i]
-			}
-			if f.Kind == String {
-				inv.values[f.Name] = value
-			} else {
-				prev, _ := inv.values[f.Name].([]string)
-				inv.values[f.Name] = append(prev, value)
-			}
-		}
-		inv.set[f.Name] = true
+		i += used
 	}
 	return positional, nil
+}
+
+// parseFlag parses the flag arg into inv: flags are the flags accepted, and
+// byName maps their names to them. A String or Strings flag without "=VALUE"
+// takes the next argument, the first of rest, as its value: parseFlag
+// returns the number of arguments of rest it took.
+func (inv *Invocation) parseFlag(flags []*Flag, byName map[string]*Flag, arg string, rest []string) (int, error) {
+	name := strings.TrimPrefix(arg[1:], "-")
+	name, value, hasValue := strings.Cut(name, "=")
+	typed := arg
+	if hasValue {
+		typed = arg[:len(arg)-len(value)-1]
+	}
+	f := byName[name]
+	if f == nil || name == "" || strings.HasPrefix(name, "-") {
+		return 0, inv.unknownFlag(typed, name, flags)
+	}
+	used := 0
+	switch f.Kind {
+	case Bool:
+		b := true
+		if hasValue {
+			var err error
+			if b, err = strconv.ParseBool(value); err != nil {
+				return 0, inv.UsageError("invalid value %q for flag %s: want true or false", value, typed)
+			}
+		}
+		inv.values[f.Name] = b
+	case String, Strings:
+		if !hasValue {
+			if len(rest) == 0 {
+				return 0, inv.UsageError("flag %s needs an argument", typed)
+			}
+			value, used = rest[0], 1
+		}
+		if f.Kind == String {
+			inv.values[f.Name] = value
+		} else {
+			prev, _ := inv.values[f.Name].([]string)
+			inv.values[f.Name] = append(prev, value)
+		}
+	}
+	inv.set[f.Name] = true
+	return used, nil
+}
+
+// unknownFlag returns the error for the unknown flag typed, of name name,
+// suggesting the closest of the names of flags.
+func (inv *Invocation) unknownFlag(typed, name string, flags []*Flag) error {
+	msg := "unknown flag " + typed
+	if s := Closest(strings.TrimLeft(name, "-"), flagNames(flags)); s != "" {
+		msg += "; did you mean " + Dashed(s) + "?"
+	}
+	return inv.UsageError("%s", msg)
 }
 
 // applyEnv sets the Bool and String flags that were not given on the
