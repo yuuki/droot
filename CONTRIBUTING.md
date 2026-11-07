@@ -17,9 +17,9 @@ the easiest to review.
 2. Make the change, with tests. Read
    [documentation/development.md](documentation/development.md) for the
    tests, the tools and how releases are made, and [AGENTS.md](AGENTS.md)
-   for the full list of commands, the compatibility contracts and the
-   security invariants (for instance: paths inside a container root are
-   resolved with `osutil.Root`).
+   for the compatibility contracts and the security invariants (for
+   instance: paths inside a container root are resolved with
+   `osutil.Root`).
 3. Run `make check` before pushing. It runs the linters, the audit of the
    workflows and the unit tests with the race detector. Also run
    `make test-root` (as root) and `make integration-test` (root and Docker)
@@ -29,10 +29,9 @@ the easiest to review.
    README or the documentation.
 5. Open a pull request and fill in its template.
 
-Commit subjects are short and scoped by package or area, e.g.
-`osutil: split Root.lookup and OpenMountTarget` or `docs: ...`, with the
-reason in the body. droot depends only on `golang.org/x/sys`: please
-discuss a new dependency in the issue first.
+Commits, branches and pull request titles follow the Git conventions in
+AGENTS.md. droot depends only on `golang.org/x/sys`: please discuss a new
+dependency in the issue first.
 
 If you used an AI assistant, review and test its changes yourself as you
 would your own: you are the author of the pull request.

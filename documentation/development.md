@@ -46,8 +46,9 @@ lint the module. `make lint-actions` runs the pinned zizmor with `uvx` (or
 `pipx`), offline unless `GH_TOKEN` is set. `make snapshot` also makes the
 SBOMs when [syft](https://github.com/anchore/syft) is installed.
 
-AI coding agents: see [AGENTS.md](../AGENTS.md) for the commands, the
-compatibility contracts and the security invariants in one place.
+AI coding agents: see [AGENTS.md](../AGENTS.md) for the rules, the
+compatibility contracts and the security invariants that the code does not
+show; `make help` lists the commands.
 
 ## Tests
 

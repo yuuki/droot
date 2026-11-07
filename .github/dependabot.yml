@@ -12,9 +12,10 @@ updates:
     groups:
       go-modules:
         patterns: ["*"]
-    # The "scope: subject" style of the commits of this repository.
+    # Conventional Commits (AGENTS.md): build(deps): ...
     commit-message:
-      prefix: deps
+      prefix: "build"
+      include: "scope"
 
   # Also updates the commit SHAs the workflows pin actions to, and their
   # version comments.
@@ -28,4 +29,5 @@ updates:
       github-actions:
         patterns: ["*"]
     commit-message:
-      prefix: ci
+      prefix: "ci"
+      include: "scope"
