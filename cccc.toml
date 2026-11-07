@@ -4,9 +4,12 @@
 #
 #   cccc --table --top-cognitive 20 cmd internal
 #
-# No threshold (max-cognitive, max-cyclomatic) is set: the numbers are tracked
-# as a trend, and fail nothing.
+# cccc exits non-zero, and the workflow fails, when a function, method or
+# closure has a Cognitive Complexity over max-cognitive: split it rather than
+# raise the limit.
 
 # The Go code without its tests.
 languages = ["go"]
 exclude = ["*_test.go"]
+
+max-cognitive = 30

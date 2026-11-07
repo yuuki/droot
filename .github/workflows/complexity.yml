@@ -4,8 +4,9 @@ name: Code Complexity
 # (https://github.com/moznion/cccc) and tracks them as octocov Custom Metrics:
 # octocov comments the numbers, and their difference from the default branch,
 # on each pull request, adds them to the job summary, and stores a report for
-# each push to the default branch. The numbers are a trend to watch, not a
-# gate: no threshold is set, so the job never fails on complexity.
+# each push to the default branch. A function whose Cognitive Complexity
+# exceeds max-cognitive of cccc.toml fails the job, once the numbers have
+# been tracked.
 on:
   pull_request:
   push:
@@ -27,9 +28,13 @@ jobs:
         with:
           persist-credentials: false
 
-      # Languages and excluded files come from cccc.toml. The cccc version is
-      # pinned so that the numbers only move when the code does.
+      # Languages, excluded files and the limit come from cccc.toml. The cccc
+      # version is pinned so that the numbers only move when the code does.
+      # Over the limit, this step fails after writing cccc.json: the steps
+      # below still track the numbers, and the gate at the end fails the job.
       - name: Measure complexity (cccc)
+        id: cccc
+        continue-on-error: true
         uses: moznion/cccc-action@1d5313811f8451953e46a268c61791a01e40b7df # v1.1.2
         with:
           version: v1.8.6
@@ -84,3 +89,21 @@ jobs:
           config: .octocov.complexity.yml
         env:
           OCTOCOV_CUSTOM_METRICS_COMPLEXITY: custom_metrics_complexity.json
+
+      # Fails the job when cccc did, with an annotation on each function over
+      # max-cognitive of cccc.toml.
+      - name: Complexity gate
+        if: steps.cccc.outcome == 'failure'
+        run: |
+          max=$(python3 -c 'import tomllib; print(tomllib.load(open("cccc.toml", "rb"))["max-cognitive"])')
+          over=$(jq -r --argjson max "$max" '
+            .files[] | .path as $p | .functions[] | recurse(.children[]?)
+            | select(.cognitive > $max)
+            | "::error file=\($p),line=\(.line)::\(.name) has a Cognitive Complexity of \(.cognitive), over the limit of \($max) of cccc.toml"
+          ' cccc.json)
+          if [ -z "$over" ]; then
+            echo "::error::cccc failed: see the Measure complexity (cccc) step"
+          else
+            echo "$over"
+          fi
+          exit 1
