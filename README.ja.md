@@ -466,10 +466,10 @@ $ DOCKER_HOST=ssh://deploy@build.example.com droot export -o app.tar app
 1. フィーチャーブランチを作成します
 1. 変更をコミットします
 1. ローカルの変更を master ブランチに対してリベースします
-1. `make lint test`（`run`、`umount`、`export` を変更した場合は `make integration-test` も）を実行し、成功することを確認します
+1. `make check`（`run`、`umount`、`export` を変更した場合は `make test-root` と `make integration-test` も）を実行し、成功することを確認します
 1. 新しいプルリクエストを作成します
 
-詳細は[開発ガイド](documentation/development.md)を参照してください。
+詳細は [CONTRIBUTING.md](CONTRIBUTING.md) と[開発ガイド](documentation/development.md)を参照してください。
 
 <a id="license"></a>
 ## ライセンス

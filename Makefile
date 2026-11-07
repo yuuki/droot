@@ -6,9 +6,27 @@ LDFLAGS := -s -w -X main.version=$(VERSION)
 # without sudo).
 SUDO := $(if $(filter 0,$(shell id -u)),,sudo)
 
+# Tool versions. The workflows (.github/workflows) pin the same versions:
+# bump them together.
 GOLANGCI_LINT_VERSION := v2.15.0
 GORELEASER_VERSION    := v2.20.0
 GOVULNCHECK_VERSION   := v1.9.0
+ACTIONLINT_VERSION    := v1.7.12
+ZIZMOR_VERSION        := 1.32.0
+
+# golangci-lint refuses a module whose go line is newer than the Go it was
+# built with, and `go run tool@version` builds a tool with the Go of the
+# tool's own go.mod: build it with the Go of this module, or a newer one if
+# the tool needs it (+auto).
+GO_TOOLCHAIN  = $(shell go env GOVERSION)
+GOLANGCI_LINT = GOTOOLCHAIN=$(GO_TOOLCHAIN)+auto go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
+# uvx, or pipx (preinstalled on GitHub-hosted runners), runs the pinned zizmor.
+ZIZMOR        = $(if $(shell command -v uvx 2>/dev/null),uvx zizmor@$(ZIZMOR_VERSION),pipx run zizmor==$(ZIZMOR_VERSION))
+# Extra zizmor options, e.g. --format=github for annotations in CI.
+ZIZMOR_FLAGS ?=
+
+FUZZTIME    ?= 30s
+BENCH_COUNT ?= 6
 
 .DEFAULT_GOAL := build
 
@@ -16,9 +34,15 @@ GOVULNCHECK_VERSION   := v1.9.0
 build: ## Build a static droot binary
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/droot
 
+.PHONY: check
+check: lint lint-actions vet test-scripts test-race ## Pre-PR gate: lint, workflow audit, vet, script and race tests (no root or Docker)
+
 .PHONY: test
 test: ## Run unit tests (tests that need root are skipped)
 	go test -race ./...
+
+.PHONY: test-race
+test-race: test ## Alias of test, which always uses the race detector
 
 .PHONY: test-root
 test-root: ## Run unit tests as root, including the ones that mount file systems
@@ -28,20 +52,33 @@ test-root: ## Run unit tests as root, including the ones that mount file systems
 integration-test: build ## Run end-to-end tests against the local Docker daemon (needs root)
 	$(SUDO) ./script/integration-test.sh ./$(BIN)
 
+.PHONY: test-integration
+test-integration: integration-test ## Alias of integration-test
+
 .PHONY: docs
 docs: ## Regenerate documentation/cli.md and documentation/droot.1 from the command definitions
 	go run ./internal/cmd/gendocs documentation
 
-FUZZTIME ?= 30s
-
+# go test -list runs on its own so that a package that does not build fails
+# the target instead of silently having no fuzz targets.
 .PHONY: fuzz
 fuzz: ## Run every fuzz target for FUZZTIME (default 30s)
 	@set -e; for pkg in $$(go list ./...); do \
-		for f in $$(go test -list '^Fuzz' $$pkg | grep '^Fuzz' || true); do \
+		targets=$$(go test -list '^Fuzz' $$pkg); \
+		for f in $$(echo "$$targets" | grep '^Fuzz' || true); do \
 			echo "== $$pkg $$f"; \
 			go test -run='^$$' -fuzz="^$$f\$$" -fuzztime=$(FUZZTIME) -fuzzminimizetime=5s $$pkg; \
 		done; \
 	done
+
+.PHONY: test-fuzz
+test-fuzz: fuzz ## Alias of fuzz
+
+# The output goes to bench.txt first: a pipe to tee would hide a failure.
+.PHONY: bench
+bench: ## Run the benchmarks BENCH_COUNT times (default 6) into bench.txt, for benchstat
+	go test -run='^$$' -bench=. -benchmem -count=$(BENCH_COUNT) ./... >bench.txt || { cat bench.txt; exit 1; }
+	cat bench.txt
 
 .PHONY: cover
 cover: ## Write a coverage report to coverage.out
@@ -54,12 +91,21 @@ vet: ## Run go vet for every supported platform
 	GOOS=darwin go vet ./...
 
 .PHONY: lint
-lint: ## Run golangci-lint
-	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run
+lint: ## Run golangci-lint and check that go.mod and go.sum are tidy
+	$(GOLANGCI_LINT) run
+	go mod tidy -diff
+
+# Without a GitHub token (GH_TOKEN), zizmor runs offline; CI gives it one for
+# the audits that ask the GitHub API (impostor commits, known vulnerable
+# actions, ...).
+.PHONY: lint-actions
+lint-actions: ## Lint (actionlint) and audit (zizmor) the GitHub Actions workflows
+	go run github.com/rhysd/actionlint/cmd/actionlint@$(ACTIONLINT_VERSION)
+	$(ZIZMOR) $(ZIZMOR_FLAGS) $(if $(GH_TOKEN),,--offline) .
 
 .PHONY: fmt
 fmt: ## Format the code
-	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) fmt
+	$(GOLANGCI_LINT) fmt
 
 .PHONY: tidy
 tidy: ## Tidy go.mod and go.sum
@@ -90,7 +136,7 @@ release-prep: ## Move the Unreleased entries of CHANGELOG.md to a new version: m
 
 .PHONY: clean
 clean: ## Remove build outputs
-	rm -f $(BIN) coverage.out
+	rm -f $(BIN) coverage.out bench.txt
 	rm -rf dist build
 
 .PHONY: help

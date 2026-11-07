@@ -16,13 +16,16 @@
 
 ```console
 $ make help               # list the targets
+$ make check              # before a pull request: lint, lint-actions, vet, test-scripts, test
 $ make build              # static ./droot (CGO_ENABLED=0), version from git describe
-$ make test               # unit tests with the race detector; root-only tests are skipped
+$ make test               # unit tests with the race detector; root-only tests are skipped (alias: test-race)
 $ make test-root          # unit tests as root, including real mounts and mknod (sudo)
-$ make integration-test   # build and run script/integration-test.sh against Docker (sudo)
-$ make fuzz               # run every fuzz target for FUZZTIME (default 30s)
+$ make integration-test   # build and run script/integration-test.sh against Docker (sudo; alias: test-integration)
+$ make fuzz               # run every fuzz target for FUZZTIME (default 30s; alias: test-fuzz)
+$ make bench              # benchmarks, BENCH_COUNT (6) times, into bench.txt for benchstat
 $ make docs               # regenerate documentation/cli.md and droot.1 (a test checks them)
-$ make lint               # golangci-lint (configuration in .golangci.yml)
+$ make lint               # golangci-lint (configuration in .golangci.yml) and go mod tidy -diff
+$ make lint-actions       # actionlint and zizmor on the GitHub Actions workflows
 $ make fmt                # gofmt + goimports
 $ make vet                # go vet for Linux and macOS
 $ make vuln               # govulncheck: known vulnerabilities reachable from droot
@@ -32,13 +35,19 @@ $ make test-scripts       # test the release scripts
 $ make release-prep VERSION=x.y.z   # move the Unreleased changes to a new version
 ```
 
-`make lint`, `make fmt`, `make vuln` and `make snapshot` run pinned versions
-of golangci-lint, govulncheck and GoReleaser with `go run`. These tools may
-require a newer Go than droot itself (GoReleaser v2.20.0 needs Go 1.27.3):
-keep the default `GOTOOLCHAIN=auto` so that the go command downloads it, or
-install the tools separately when `GOTOOLCHAIN=local` is enforced (e.g. a
-distribution's Go). `make snapshot` also makes the SBOMs when
-[syft](https://github.com/anchore/syft) is installed.
+`make lint`, `make fmt`, `make lint-actions`, `make vuln` and
+`make snapshot` run pinned versions of golangci-lint, actionlint,
+govulncheck and GoReleaser with `go run`. These tools may require a newer Go
+than droot itself (GoReleaser v2.20.0 needs Go 1.27.3): keep the default
+`GOTOOLCHAIN=auto` so that the go command downloads it, or install the tools
+separately when `GOTOOLCHAIN=local` is enforced (e.g. a distribution's Go).
+golangci-lint is built with at least the Go of `go.mod`, which it needs to
+lint the module. `make lint-actions` runs the pinned zizmor with `uvx` (or
+`pipx`), offline unless `GH_TOKEN` is set. `make snapshot` also makes the
+SBOMs when [syft](https://github.com/anchore/syft) is installed.
+
+AI coding agents: see [AGENTS.md](../AGENTS.md) for the commands, the
+compatibility contracts and the security invariants in one place.
 
 ## Tests
 
@@ -46,7 +55,8 @@ distribution's Go). `make snapshot` also makes the SBOMs when
 |---|---|---|
 | Unit | `*_test.go` | nothing; Docker is faked (`internal/docker/export_test.go`) or served by `httptest` (`internal/docker/client_test.go`) |
 | Privileged unit | `internal/mounter/mount_linux_test.go`, `internal/osutil/sys_linux_test.go` | root on Linux; skipped otherwise |
-| Fuzz | `fuzz_test.go` of `environ` (`/.drootenv` parsing), `mounter` (`/proc/self/mountinfo` parsing), `osutil` (path resolution of `osutil.Root`, Linux) and `docker` (rewriting of the exported archive) | nothing; `make fuzz` explores for `FUZZTIME` (30s) per target, their seeds and `testdata/fuzz` run with the unit tests |
+| Fuzz | `fuzz_test.go` of `environ` (`/.drootenv` parsing), `mounter` (`/proc/self/mountinfo` parsing), `osutil` (path resolution of `osutil.Root`, Linux), `docker` (rewriting of the exported archive), `image` (the `WWW-Authenticate` header of registries, image references; the flattening of layers is fuzzed in `flatten_test.go`) and `identity` (the image's `/etc/passwd` and `/etc/group`, Linux), and `FuzzParse` of `conffile` | nothing; `make fuzz` explores for `FUZZTIME` (30s) per target, their seeds and `testdata/fuzz` run with the unit tests |
+| Benchmarks | `bench_test.go` of `docker` (rewriting of the exported archive), `image` (flattening) and `osutil` (`osutil.Root` resolution, Linux) | nothing; `make bench`, then `benchstat old.txt bench.txt` |
 | End-to-end | `script/integration-test.sh` | root, Docker (or Podman: `DOCKER=podman DOCKER_HOST=unix:///run/podman/podman.sock`), network access to pull `alpine` and `busybox` |
 
 The privileged mount tests create their scratch directory with
@@ -54,24 +64,39 @@ The privileged mount tests create their scratch directory with
 so that a failing unmount can never make the cleanup delete files through a
 bind mount.
 
-CI (`.github/workflows/ci.yml`) runs on every push and pull request:
+CI (`.github/workflows/ci.yml`) runs on every push to `master` and pull
+request, and weekly (Saturday 01:59 UTC), so that new advisories and Go
+releases are noticed between pushes:
 
 - `lint`: golangci-lint, `go mod tidy -diff` and `make test-scripts`;
 - `test`: the unit tests with the minimum and the latest supported Go
   versions, unprivileged and as root;
-- `fuzz`: `make fuzz`, every fuzz target for 30 seconds;
+- `fuzz`: `make fuzz`, every fuzz target for 30 seconds (3 minutes on the
+  weekly run); the inputs that make a target fail are kept as the
+  `fuzz-failures` artifact;
 - `coverage`: the unit tests as root with a coverage report, shown in the
   job summary and kept as the `coverage` artifact;
 - `integration`: the end-to-end tests on amd64 and arm64 runners against
   Docker, and on amd64 against Podman's Docker-compatible API;
 - `vulnerabilities`: govulncheck with the Go version releases are built
   with, so that a vulnerable dependency or standard library fails CI;
-- `workflows`: [zizmor](https://docs.zizmor.sh), a security linter for
-  GitHub Actions workflows (template injection, excessive permissions,
-  unpinned actions, cache poisoning, ...);
+- `workflows`: `make lint-actions`:
+  [actionlint](https://github.com/rhysd/actionlint) (syntax, expressions,
+  shellcheck of the `run` steps) and [zizmor](https://docs.zizmor.sh), a
+  security linter for GitHub Actions workflows (template injection,
+  excessive permissions, unpinned actions, cache poisoning, ...), with the
+  online audits;
 - `release snapshot`: the release assets built exactly like a release, kept
   for 7 days as the `snapshot` artifact of the run, and a preview of the
   release notes in the run summary.
+
+A run on a pull request is cancelled by a newer push to it; runs on
+`master` are never cancelled.
+
+The Security workflow (`.github/workflows/security.yml`) analyses the Go
+code with [CodeQL](https://codeql.github.com) on every push to `master`,
+pull request and weekly; the results are in the *Security → Code scanning*
+tab. (govulncheck stays in CI, which the release workflow runs too.)
 
 The Code Complexity workflow (`.github/workflows/complexity.yml`) measures
 the Cognitive and Cyclomatic Complexity of the Go code without its tests
@@ -99,8 +124,8 @@ Dependabot (`.github/dependabot.yml`) proposes monthly, grouped updates of Go
 modules and GitHub Actions, once they have been released for a week. The
 workflows pin every action to a full commit SHA, with its version in a
 comment; Dependabot updates both. The versions of golangci-lint,
-govulncheck, GoReleaser, syft, zizmor and cccc are pinned in the `Makefile`
-and the workflows and are updated by hand.
+govulncheck, actionlint, GoReleaser, syft, zizmor and cccc are pinned in the
+`Makefile` and the workflows and are updated by hand.
 
 ## Releasing
 
@@ -213,6 +238,9 @@ These settings are not stored in the repository; set them once:
   `v*` and, optionally, require a reviewer before the release job runs.
 - *Settings → Security → Private vulnerability reporting*: enable it, so
   that vulnerabilities can be reported privately as `SECURITY.md` asks.
+- *Settings → Code security → Code scanning*: keep CodeQL's **default
+  setup** off; the Security workflow is its advanced setup, and GitHub
+  refuses the results of an advanced setup while the default one is on.
 
 ### Version
 
