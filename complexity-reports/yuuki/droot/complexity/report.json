@@ -1,0 +1,60 @@
+{
+  "repository": "yuuki/droot/complexity",
+  "ref": "refs/heads/master",
+  "commit": "5502c153106203c918fe62bd56d483e463ab1986",
+  "base_ref": "refs/heads/master",
+  "timestamp": "2026-11-07T02:42:51.92896036Z",
+  "custom_metrics": [
+    {
+      "key": "code_complexity",
+      "name": "Code Complexity",
+      "metrics": [
+        {
+          "key": "function_count",
+          "name": "Function count",
+          "value": 608
+        },
+        {
+          "key": "cognitive_sum",
+          "name": "Cognitive: total",
+          "value": 2632
+        },
+        {
+          "key": "cognitive_max",
+          "name": "Cognitive: max",
+          "value": 124
+        },
+        {
+          "key": "cognitive_median",
+          "name": "Cognitive: median",
+          "value": 1
+        },
+        {
+          "key": "cognitive_p90",
+          "name": "Cognitive: p90",
+          "value": 11
+        },
+        {
+          "key": "cyclomatic_sum",
+          "name": "Cyclomatic: total",
+          "value": 2633
+        },
+        {
+          "key": "cyclomatic_max",
+          "name": "Cyclomatic: max",
+          "value": 96
+        },
+        {
+          "key": "cyclomatic_median",
+          "name": "Cyclomatic: median",
+          "value": 2
+        },
+        {
+          "key": "cyclomatic_p90",
+          "name": "Cyclomatic: p90",
+          "value": 10
+        }
+      ]
+    }
+  ]
+}
