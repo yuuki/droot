@@ -34,6 +34,22 @@ Releases up to 0.7.7 are described on the
   0644 (empty files for file bind mounts) whatever the umask: under a unit
   with `UMask=0077`, they were 0700 and 0600, and other users than root
   could not reach what was mounted below them.
+- Rootless, the other descriptors droot inherited reach `COMMAND` too, at
+  their numbers: the pipe of the supervising droot took descriptor 3 (or the
+  one after the sockets of socket activation), so the listening socket of
+  server-starter or dewy (`SERVER_STARTER_PORT=8080=3`) was lost. The pipe
+  now keeps a number of its own.
+- `droot export` of an image without a daemon failed with "not a directory"
+  on the paths below a symlink that a later entry of the layer hard-linked
+  to itself (a hard link to a symlink is a symlink).
+
+### Documentation
+
+- Deploying with [dewy](https://github.com/linyows/dewy): the artifact
+  carries the droot archive, extracted by the hook
+  `examples/dewy/droot-extract-release`, and `droot run --unshare --env
+  SERVER_STARTER_PORT` runs the application on the listening socket of dewy
+  (`examples/dewy/app.service`, `documentation/deployment.md`).
 
 ## [0.8.0] - 2026-11-06
 

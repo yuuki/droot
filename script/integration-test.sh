@@ -20,6 +20,7 @@
 set -euo pipefail
 
 DROOT=$(realpath "${1:-./droot}")
+REPO=$(cd "$(dirname "$0")/.." && pwd)
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/droot-e2e.XXXXXX")
 WORK=$(realpath "$WORK")
 IMAGE=droot-e2e:latest
@@ -319,6 +320,11 @@ echo "ok - an empty --user is refused"
 assert_eq "--unshare: mounts in a private namespace" \
   "$("$DROOT" run --root "$WORK/app" --user root --unshare --tmpfs /tmp -- sh -c 'stat -f -c %T /proc /tmp'; mounts_under "$WORK/app")" \
   "$(printf 'proc\ntmpfs\n0')"
+# Listening sockets of server-starter (dewy) or of systemd socket
+# activation: droot replaces itself with COMMAND, which keeps them.
+assert_eq "COMMAND inherits the descriptors of droot" \
+  "$("$DROOT" run --root "$WORK/app" --user root --unshare -- sh -c 'cat <&3; cat <&5' 3<<<fd3 5<<<fd5)" \
+  "$(printf 'fd3\nfd5')"
 assert_eq "--hostname" \
   "$("$DROOT" run --root "$WORK/app" --user root --unshare --hostname droot-e2e -- sh -c 'echo "$(hostname) $HOSTNAME"'; [[ $(hostname) != droot-e2e ]] && echo host-unchanged)" \
   "$(printf 'droot-e2e droot-e2e\nhost-unchanged')"
@@ -353,6 +359,51 @@ if unshare -m --propagation private true 2>/dev/null; then
   fi
   echo "ok - umount --root / is refused"
 fi
+
+echo "# dewy hook (examples/dewy/droot-extract-release)"
+HOOK=$REPO/examples/dewy/droot-extract-release
+# A file system with what the extraction of dewy loses: owners, a setuid
+# file, a hard link, a symbolic link, a sticky directory.
+src=$WORK/dewy/src
+mkdir -p "$src/bin" "$src/tmp" "$src/home/app" "$WORK/dewy/releases/1"
+printf 'x' >"$src/bin/tool"
+chmod 4755 "$src/bin/tool"
+ln "$src/bin/tool" "$src/bin/tool-link"
+ln -s tool "$src/bin/tool-sym"
+chmod 1777 "$src/tmp"
+chmod 755 "$src/home/app"
+chown 1500:1600 "$src/home/app"
+rel=$WORK/dewy/releases/1
+tar -czf "$rel/rootfs.tar.gz" --numeric-owner -C "$src" .
+(cd "$rel" && sha256sum rootfs.tar.gz >rootfs.tar.gz.sha256)
+ln -s "$rel" "$WORK/dewy/current"
+(cd "$WORK/dewy" && "$HOOK" >/dev/null)
+assert_eq "dewy hook: owners, modes, setuid bits and links are kept" \
+  "$(ls "$rel"; cd "$rel/rootfs" && stat -c '%n %u:%g %a %h' bin/tool tmp home/app && readlink bin/tool-sym && [[ bin/tool -ef bin/tool-link ]] && echo hard-link)" \
+  "$(printf 'rootfs\nrootfs.tar.gz.sha256\nbin/tool 0:0 4755 2\ntmp 0:0 1777 2\nhome/app 1500:1600 755 2\ntool\nhard-link')"
+touch "$rel/rootfs/marker"
+(cd "$WORK/dewy" && "$HOOK" >/dev/null)
+[[ -e "$rel/rootfs/marker" ]] || fail "dewy hook: a release already extracted must be left alone"
+echo "ok - dewy hook: a release already extracted is left alone"
+# The archive of an image, run with droot.
+rel=$WORK/dewy/releases/2
+mkdir "$rel"
+"$DROOT" export -q --compress gzip --checksum -o "$rel/rootfs.tar.gz" "$IMAGE"
+ln -sfn "$rel" "$WORK/dewy/current"
+(cd "$WORK/dewy" && "$HOOK" >/dev/null)
+assert_eq "dewy hook: droot run --root current/rootfs" \
+  "$("$DROOT" run --unshare --root "$WORK/dewy/current/rootfs")" "myapp-ok from-entrypoint from-cmd"
+# A failure leaves no rootfs, and gives the space back.
+rel=$WORK/dewy/releases/3
+mkdir "$rel"
+cp "$WORK/dewy/releases/2/rootfs.tar.gz.sha256" "$rel/"
+printf 'not the archive' | gzip >"$rel/rootfs.tar.gz"
+ln -sfn "$rel" "$WORK/dewy/current"
+if (cd "$WORK/dewy" && "$HOOK" >/dev/null 2>&1); then
+  fail "dewy hook: an archive whose checksum does not match must not be extracted"
+fi
+assert_eq "dewy hook: an archive whose checksum does not match is not extracted, and removed" \
+  "$(ls "$rel")" "rootfs.tar.gz.sha256"
 
 echo "# systemd"
 # Notifications (sd_notify(3)) and socket activation (sd_listen_fds(3))
@@ -609,6 +660,16 @@ else
   fi
   grep -q "do not exist in the user namespace" "$WORK/rl.err" || fail "rootless: $(cat "$WORK/rl.err")"
   echo "ok - rootless without subordinate IDs: the image's USER is refused"
+  # The pipe of the first stage must not take the place of an inherited
+  # descriptor (the listening socket of server-starter is descriptor 3).
+  assert_eq "rootless: COMMAND inherits the descriptors of droot" \
+    "$(as_user nobody "$RL_DROOT" run --root "$WORK/rl-nobody" --user 0 -- sh -c 'cat <&3; cat <&5' 3<<<fd3 5<<<fd5)" \
+    "$(printf 'fd3\nfd5')"
+  # With socket activation, the sockets are 3 and 4: the descriptors after
+  # them must not be taken by the pipe either.
+  assert_eq "rootless: COMMAND inherits the descriptors after the sockets of socket activation" \
+    "$(as_user nobody sh -c 'export LISTEN_PID=$$ LISTEN_FDS=2; exec "$0" run --root "$1" --user 0 -- sh -c "cat <&3; cat <&4; cat <&5"' "$RL_DROOT" "$WORK/rl-nobody" 3<<<fd3 4<<<fd4 5<<<fd5)" \
+    "$(printf 'fd3\nfd4\nfd5')"
 
   if [[ -n $sd_skip ]]; then
     echo "skip - rootless systemd: $sd_skip"

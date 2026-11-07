@@ -72,8 +72,8 @@ func KeepParentDeathSignal() error {
 
 // firstStage waits until the parent has written the ID maps (it closes the
 // descriptor fd after writing a byte), then executes droot again, as root of
-// the namespace. The descriptors below fd, the sockets of socket
-// activation, are left open.
+// the namespace. The other descriptors, the sockets of socket activation
+// and those droot inherited, are left open.
 func firstStage(fd string) {
 	n, err := strconv.Atoi(fd)
 	if err != nil {
@@ -197,7 +197,8 @@ func Run(ctx context.Context, m Mapping) error {
 // (by timeout(1), kill -- -PGID, ...) reach it only once, passed on by droot.
 //
 // The sockets of socket activation keep their descriptors (3, 4, ...) in
-// the child; the pipe it waits on follows them.
+// the child, and so do the other descriptors droot inherited; the pipe it
+// waits on keeps its own number (see firstStageCommand).
 func start(m Mapping, ownGroup bool) (*exec.Cmd, func(), error) {
 	sockets, err := listenFiles()
 	if err != nil {
@@ -209,18 +210,18 @@ func start(m Mapping, ownGroup bool) (*exec.Cmd, func(), error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	defer r.Close()
-	cmd := exec.Command("/proc/self/exe", os.Args[1:]...) //nolint:gosec // G204: droot itself, with its own arguments
-	cmd.Args[0] = os.Args[0]
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	cmd.ExtraFiles = append(cmd.ExtraFiles, sockets...)
-	cmd.ExtraFiles = append(cmd.ExtraFiles, r)
-	syncFD := systemd.FirstListenFD + len(sockets)
-	cmd.Env = append(os.Environ(), envSync+"="+strconv.Itoa(syncFD), envParent+"="+strconv.Itoa(os.Getpid()))
-	cmd.SysProcAttr = &syscall.SysProcAttr{Cloneflags: syscall.CLONE_NEWUSER, Pdeathsig: syscall.SIGKILL, Setpgid: ownGroup}
-	if err := cmd.Start(); err != nil {
+	cmd, err := firstStageCommand(r, sockets, ownGroup)
+	if err == nil {
+		err = cmd.Start()
+		if err != nil {
+			err = fmt.Errorf("create a user namespace: %w%s", err, disabledHint(err))
+		}
+	}
+	// The child has its copy; the ID map helpers below must not get one.
+	_ = r.Close()
+	if err != nil {
 		_ = w.Close()
-		return nil, nil, fmt.Errorf("create a user namespace: %w%s", err, disabledHint(err))
+		return nil, nil, err
 	}
 	if err := writeMaps(cmd.Process.Pid, &m); err != nil {
 		_ = w.Close()
@@ -233,6 +234,31 @@ func start(m Mapping, ownGroup bool) (*exec.Cmd, func(), error) {
 		_, _ = w.Write([]byte{0})
 		_ = w.Close()
 	}, nil
+}
+
+// firstStageCommand returns the command of the first stage, which waits on
+// r, the read end of a pipe. sockets, those of socket activation (see
+// listenFiles), are passed in ExtraFiles, which keeps their numbers (3, 4,
+// ...) and clears their close-on-exec flag in the child.
+//
+// The child inherits r at its own number, named by the environment, rather
+// than after them in ExtraFiles: the other descriptors droot inherited
+// without close-on-exec, such as the listening socket of server-starter
+// (dewy, SERVER_STARTER_PORT=8080=3), must reach COMMAND as they are, with
+// their numbers. os/exec leaves them open in the child, and droot does not
+// touch them.
+func firstStageCommand(r *os.File, sockets []*os.File, ownGroup bool) (*exec.Cmd, error) {
+	fd := r.Fd()
+	if _, err := unix.FcntlInt(fd, unix.F_SETFD, 0); err != nil {
+		return nil, fmt.Errorf("create a user namespace: clear the close-on-exec flag of a pipe: %w", err)
+	}
+	cmd := exec.Command("/proc/self/exe", os.Args[1:]...) //nolint:gosec // G204: droot itself, with its own arguments
+	cmd.Args[0] = os.Args[0]
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	cmd.ExtraFiles = sockets
+	cmd.Env = append(os.Environ(), envSync+"="+strconv.FormatUint(uint64(fd), 10), envParent+"="+strconv.Itoa(os.Getpid()))
+	cmd.SysProcAttr = &syscall.SysProcAttr{Cloneflags: syscall.CLONE_NEWUSER, Pdeathsig: syscall.SIGKILL, Setpgid: ownGroup}
+	return cmd, nil
 }
 
 // listenFiles returns the sockets that socket activation passed to droot
@@ -295,7 +321,7 @@ func disabledHint(err error) string {
 func writeMaps(pid int, m *Mapping) error {
 	proc := "/proc/" + strconv.Itoa(pid) + "/"
 	write := func(name, content string) error {
-		if err := os.WriteFile(proc+name, []byte(content), 0); err != nil { //nolint:gosec // G703: /proc/PID/ of the child
+		if err := os.WriteFile(proc+name, []byte(content), 0); err != nil {
 			return fmt.Errorf("write the ID maps of the user namespace: %w", err)
 		}
 		return nil

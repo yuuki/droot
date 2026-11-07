@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -68,6 +69,37 @@ func TestRunNeedsInit(t *testing.T) {
 	// A test binary must not run itself again in a user namespace.
 	if err := Run(context.Background(), Mapping{}); err == nil || !strings.Contains(err.Error(), "userns.Init") {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func TestFirstStageCommand(t *testing.T) {
+	// The pipe of the first stage keeps its own number, named by the
+	// environment: in ExtraFiles, after the sockets of socket activation, it
+	// would take the place of a descriptor droot inherited (the listening
+	// socket of server-starter is descriptor 3).
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = r.Close(); _ = w.Close() })
+	for _, sockets := range [][]*os.File{nil, {w}} {
+		cmd, err := firstStageCommand(r, sockets, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(cmd.ExtraFiles, sockets) {
+			t.Errorf("ExtraFiles: %v, want the sockets %v", cmd.ExtraFiles, sockets)
+		}
+		if want := envSync + "=" + strconv.Itoa(int(r.Fd())); !slices.Contains(cmd.Env, want) {
+			t.Errorf("no %s in the environment of the child", want)
+		}
+		flags, err := unix.FcntlInt(r.Fd(), unix.F_GETFD, 0)
+		if err != nil || flags&unix.FD_CLOEXEC != 0 {
+			t.Errorf("the pipe would not be inherited: flags %#x (%v)", flags, err)
+		}
+		if a := cmd.SysProcAttr; a == nil || a.Cloneflags&unix.CLONE_NEWUSER == 0 || !a.Setpgid {
+			t.Errorf("SysProcAttr: %+v", a)
+		}
 	}
 }
 

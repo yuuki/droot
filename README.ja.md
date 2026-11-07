@@ -146,6 +146,30 @@ $ sudo mkdir /tmp/app && sudo tar -xpzf app.tar.gz -C /tmp/app   # 上記のよ�
 $ sudo capze --keep 5 /tmp/app /var/containers/app
 ```
 
+<a id="integration-with-dewy"></a>
+### dewy との連携
+
+[dewy](https://github.com/linyows/dewy) を使うと、サーバーがリリースを取りに行く形でデプロイできます。dewy はレジストリ（GitHub Releases、S3、GCS など）をポーリングし、新しいバージョンを `releases/` に展開して `current` シンボリックリンクを切り替え、接続を切らずにサーバーを再起動します（server-starter と同じく、待ち受けソケットは dewy が保持します）。dewy 自身の展開処理はルートファイルシステムを扱えない（シンボリックリンクを拒否し、所有者を保持しない）ため、配布物には droot のアーカイブを入れ、フック [`examples/dewy/droot-extract-release`](examples/dewy/droot-extract-release) で展開します。
+
+```console
+$ mkdir -p build
+$ droot export --compress gzip --checksum -o build/rootfs.tar.gz app:1.2.3
+$ tar -czf app_linux_amd64.tar.gz -C build rootfs.tar.gz rootfs.tar.gz.sha256
+$ sha256sum app_linux_amd64.tar.gz > app_linux_amd64.tar.gz.sha256
+$ gh release create v1.2.3 app_linux_amd64.tar.gz app_linux_amd64.tar.gz.sha256
+```
+
+サーバーでは、フックを `/usr/local/bin/droot-extract-release` に置き、`GITHUB_TOKEN` を設定したうえで、root で `/var/containers/app` から次のように実行します。
+
+```console
+# dewy server --registry ghr://example/app --port 8080 --health-path /health \
+    --after-deploy-hook /usr/local/bin/droot-extract-release --log-level info \
+    -- droot run --unshare --env SERVER_STARTER_PORT --env SERVER_STARTER_GENERATION \
+         --root /var/containers/app/current/rootfs
+```
+
+`--unshare` は必須です。dewy は古いリリースを削除するため、これがないと `droot run` のバインドマウントを通じてホストのファイルが削除されます。アプリケーションは、dewy の待ち受けソケットを `SERVER_STARTER_PORT` から受け取ります。systemd ユニットと詳細は [dewy によるデプロイ](documentation/deployment.md#deploying-with-dewy)（英語）を参照してください。
+
 <a id="commands"></a>
 ## コマンド
 
@@ -239,6 +263,7 @@ droot は次の順に処理を行います。
 - `COMMAND` は、droot を起動したシェルの `PATH` ではなく、コンテナの環境の `PATH`（ない場合は `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`）から検索されます。
 - イメージの `STOPSIGNAL` は保存されますが、使用されません。droot はスーパーバイザーではないためです。たとえば systemd ユニットの `KillSignal=` として設定してください。
 - `--cp` を使うと、コンテナの `/etc/passwd` と `/etc/group` はホストのものになります。そのため、イメージの `USER` はホストにも存在するか、`--user` で上書きする必要があります。
+- `COMMAND` は、droot が開いているディスクリプタ（close-on-exec でないもの）を受け継ぎます。dewy や server-starter の待ち受けソケットなどです。ただし droot の環境変数は、systemd の変数（[後述](#notifications-and-socket-activation)）を除いて受け継がないので、それ以外は `--env SERVER_STARTER_PORT` のように `--env` で渡してください。
 
 <a id="resource-limits"></a>
 #### リソース制限
@@ -363,6 +388,7 @@ root 以外のユーザーが `droot run` を実行すると、**rootless** で�
 - マウントは `--unshare` と同じくプライベートなマウント名前空間で行われ、`COMMAND` とともに消えます。`droot umount` は不要です。
 - `/proc` とデバイスファイルはホストのもののバインドマウントです（新しい procfs には PID 名前空間が必要で、デバイスノードは作成できないため）。
 - ファイルの所有者はそのまま使われます。イメージのユーザーが自分のファイルを所有するように、アーカイブは `droot unshare tar -xpf` で展開し、`droot unshare rm -rf` で削除してください。root の場合は、これまでどおり `tar -xpf` で展開します。
+- root で実行した場合と同じく、`COMMAND` は droot が開いているディスクリプタを同じ番号のまま受け継ぎます。
 
 ```console
 $ grep "^$USER:" /etc/subuid /etc/subgid
@@ -418,7 +444,7 @@ $ DOCKER_HOST=ssh://deploy@build.example.com droot export -o app.tar app
 <a id="documentation"></a>
 ## ドキュメント
 
-- [アプリケーションのデプロイ](documentation/deployment.md): `docker build` から systemd サービスまで（[ユニットの例](examples/systemd)付き）
+- [アプリケーションのデプロイ](documentation/deployment.md): `docker build` から systemd サービスまで（[ユニットの例](examples/systemd)付き）、および [dewy によるデプロイ](documentation/deployment.md#deploying-with-dewy)
 - [コマンドラインリファレンス](documentation/cli.md)
 - [droot の仕組み](documentation/architecture.md)
 - [セキュリティに関する考慮事項](documentation/security.md)

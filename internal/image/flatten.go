@@ -287,9 +287,13 @@ func (f *flattener) scan(ctx context.Context, i int, l *Layer) error {
 		if len(e.name) > 2*maxPathLen {
 			return fmt.Errorf("%s: the path through symlinks is too long", e.raw)
 		}
-		var target *node
+		// A hard link to a symlink is a symlink: what the target is must
+		// be read before insert, which resets the node of a hard link
+		// that names its own target.
+		hardLink, linkSym, linkTarget := false, false, ""
 		if e.typ == tar.TypeLink {
-			if target, err = f.hardLinkTarget(e); err != nil {
+			target, err := f.hardLinkTarget(e)
+			if err != nil {
 				return err
 			}
 			t := target.rec
@@ -297,13 +301,14 @@ func (f *flattener) scan(ctx context.Context, i int, l *Layer) error {
 				t = s
 			}
 			f.inode[r] = t
+			hardLink, linkSym, linkTarget = true, target.sym, target.link
 		}
 		n := f.insert(e.name, r, e.typ == tar.TypeDir, mtimes[j])
 		switch {
 		case e.typ == tar.TypeSymlink:
 			n.sym, n.link = true, e.link
-		case target != nil:
-			n.sym, n.link = target.sym, target.link
+		case hardLink:
+			n.sym, n.link = linkSym, linkTarget
 		}
 	}
 	f.entries = append(f.entries, entries)

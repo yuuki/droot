@@ -257,15 +257,19 @@ through the `userns` package first:
    from 1 on — if the user has both, and `newuidmap` and `newgidmap` are
    installed; otherwise the user alone.
 2. Start `/proc/self/exe` with the same arguments in a new user namespace
-   (`CLONE_NEWUSER`, with `PR_SET_PDEATHSIG` set to `SIGKILL`). This first
-   stage blocks on a pipe while the parent writes its ID maps: with
+   (`CLONE_NEWUSER`, with `PR_SET_PDEATHSIG` set to `SIGKILL`). The child
+   inherits the descriptors droot inherited without close-on-exec (the
+   listening socket of server-starter, for instance) as they are, and so
+   does the command. The sockets of socket activation (`LISTEN_FDS`, if
+   `LISTEN_PID` is the PID of droot) are passed to the child at the same
+   descriptors, 3, 4, ...; in the parent, they are close-on-exec, so that
+   `newuidmap` and `newgidmap` do not inherit them. This first stage blocks
+   on a pipe, inherited at its own number (given in the environment, rather
+   than after the sockets, where it would take the place of an inherited
+   descriptor), while the parent writes its ID maps: with
    `newuidmap`/`newgidmap`, or directly (`setgroups` denied, then a
    one-line `uid_map` and `gid_map`), which an unprivileged process may do
-   for its own IDs. The sockets of socket activation (`LISTEN_FDS`, if
-   `LISTEN_PID` is the PID of droot) are passed to the child at the same
-   descriptors, 3, 4, ..., and the pipe right after them; in the parent,
-   they are close-on-exec, so that `newuidmap` and `newgidmap` do not
-   inherit them.
+   for its own IDs.
 3. Released, the first stage executes droot again: having become root of
    the namespace before this `execve(2)`, the second stage gets the
    capabilities of the namespace, re-arms the parent-death signal (cleared by
