@@ -42,6 +42,26 @@ Releases up to 0.7.7 are described on the
 - `droot export` of an image without a daemon failed with "not a directory"
   on the paths below a symlink that a later entry of the layer hard-linked
   to itself (a hard link to a symlink is a symlink).
+- The 30-second timeout of a Docker credential helper (`credsStore`,
+  `credHelpers`) held only if the helper was a single process: when it is a
+  script whose child hangs (e.g. on a locked keychain) or outlives it,
+  `droot export` waited for that child to close its output, possibly
+  forever. droot now stops reading a second after the helper exits or is
+  killed.
+
+### Development
+
+- `make check`, the checks to run before a pull request (lint,
+  `go mod tidy -diff`, actionlint and zizmor with `make lint-actions`, vet,
+  the release scripts' test and the unit tests), `make bench` with
+  benchmarks of the archive rewriting, the flattening of layers and the
+  path resolution, and the aliases `test-race`, `test-fuzz` and
+  `test-integration`.
+- Fuzz targets for the image's `/etc/passwd` and `/etc/group`, the
+  `WWW-Authenticate` header of registries and image references.
+- CodeQL analysis (`.github/workflows/security.yml`), a weekly run of CI
+  (longer fuzzing, new advisories), timeouts on every CI job, `AGENTS.md`
+  for coding agents and `CONTRIBUTING.md`.
 
 ### Documentation
 

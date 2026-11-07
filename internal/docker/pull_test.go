@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestWithDefaultTag(t *testing.T) {
@@ -158,5 +159,43 @@ func TestImagePull(t *testing.T) {
 	err = c.ImagePull(context.Background(), "denied/app:1", "", "", nil)
 	if err == nil || !strings.Contains(err.Error(), "pull access denied") {
 		t.Errorf("an error message in the stream must fail the pull, got %v", err)
+	}
+}
+
+// TestCredentialHelperChildKeepsOutputOpen checks that a credential helper
+// that is a script does not hold droot beyond its timeout, or beyond its own
+// exit, when a child of the script keeps its output open.
+func TestCredentialHelperChildKeepsOutputOpen(t *testing.T) {
+	bin := t.TempDir()
+	for name, script := range map[string]string{
+		// The child (sleep) hangs, as on a locked keychain, and keeps the
+		// output of the killed script open.
+		"docker-credential-hang": "#!/bin/sh\nread server\nsleep 10\n",
+		// The script answers and exits, leaving a child with its output.
+		"docker-credential-daemon": "#!/bin/sh\nread server\necho '{\"Username\":\"u\",\"Secret\":\"s\"}'\nsleep 10 &\n",
+	} {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	if _, err := credentialHelper(ctx, "hang", "registry.example.com"); err == nil {
+		t.Error("a helper killed by the timeout must fail")
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Errorf("the timeout did not hold: the helper took %v", d)
+	}
+
+	start = time.Now()
+	creds, err := credentialHelper(context.Background(), "daemon", "registry.example.com")
+	if err != nil || creds == nil || *creds != (authConfig{Username: "u", Password: "s"}) {
+		t.Errorf("got %+v, %v", creds, err)
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Errorf("droot waited for the child of the helper: %v", d)
 	}
 }

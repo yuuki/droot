@@ -5,6 +5,11 @@ on:
     branches: [master]
   pull_request:
   workflow_dispatch:
+  # Weekly, for what changes without a commit: new vulnerability advisories
+  # (vulnerabilities), Go releases (go-version: stable) and runner images. The
+  # fuzz targets also run longer.
+  schedule:
+    - cron: "59 1 * * 6"
   # The release workflow runs CI on the tagged commit before releasing it.
   workflow_call:
 
@@ -15,12 +20,15 @@ concurrency:
   # "ci" keeps the group apart from the caller's when called by the release
   # workflow (github.workflow is then the caller's name).
   group: ${{ github.workflow }}-ci-${{ github.ref }}
-  cancel-in-progress: true
+  # Only a new push to a pull request cancels its previous run: every commit
+  # of master (and a release, whose event is the tag push) is checked.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   lint:
     name: lint
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -39,6 +47,7 @@ jobs:
   test:
     name: test (go ${{ matrix.go }})
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -55,7 +64,7 @@ jobs:
         with:
           go-version: ${{ matrix.go }}
       - name: Unit tests
-        run: go test -race ./...
+        run: make test-race
       - name: Unit tests as root (mount, mknod, capabilities)
         run: sudo env "PATH=$PATH" GOTOOLCHAIN=local go test -race -count=1 ./internal/mounter/... ./internal/osutil/... ./internal/identity/...
       - name: Vet for macOS
@@ -64,6 +73,10 @@ jobs:
   fuzz:
     name: fuzz
     runs-on: ubuntu-latest
+    # About 7 minutes on pull requests, 45 on the weekly schedule.
+    timeout-minutes: ${{ github.event_name == 'schedule' && 75 || 25 }}
+    env:
+      FUZZTIME: ${{ github.event_name == 'schedule' && '3m' || '30s' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -74,11 +87,21 @@ jobs:
       # The seed corpora (f.Add and testdata/fuzz) also run with the unit
       # tests; this explores beyond them for a little while.
       - name: Fuzz every target
-        run: make fuzz FUZZTIME=30s
+        run: make fuzz FUZZTIME="$FUZZTIME"
+      # A failing input is written to testdata/fuzz/FuzzXxx of its package:
+      # keep it, to reproduce the failure and add it as a regression seed.
+      - name: Keep the failing inputs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-failures
+          path: "**/testdata/fuzz/**"
+          retention-days: 30
 
   coverage:
     name: coverage
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -117,6 +140,7 @@ jobs:
   integration:
     name: integration (${{ matrix.runner }}, ${{ matrix.engine }})
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -151,6 +175,7 @@ jobs:
   vulnerabilities:
     name: vulnerabilities
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -166,16 +191,24 @@ jobs:
   workflows:
     name: workflows
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: zizmor (security of the GitHub Actions workflows)
-        uses: zizmorcore/zizmor-action@45d7276c9ca790aabd705e31ca99c6185c3e76dd # v0.8.1
+      # For actionlint, which make runs with go run.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          version: 1.32.0
-          advanced-security: false
-          annotations: true
+          go-version: stable
+      # actionlint (syntax, expressions, shellcheck of the run steps) and
+      # zizmor (template injection, excessive permissions, unpinned actions,
+      # cache poisoning, ...), with the versions of the Makefile. The token
+      # (read-only, see the permissions above) lets zizmor run its online
+      # audits; --format=github annotates the findings.
+      - name: actionlint and zizmor
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: make lint-actions ZIZMOR_FLAGS=--format=github
 
   # Builds the release assets exactly like the release workflow, without
   # publishing them, installs the deb and rpm packages, and keeps the assets
@@ -183,6 +216,7 @@ jobs:
   snapshot:
     name: release snapshot
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

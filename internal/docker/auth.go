@@ -187,9 +187,15 @@ func credentialHelper(ctx context.Context, name, server string) (*authConfig, er
 	defer cancel()
 	cmd := exec.CommandContext(ctx, path, "get")
 	cmd.Stdin = strings.NewReader(server)
+	// A helper that is a script may leave a child that keeps its output
+	// open, once killed by the timeout or even once it exited: stop reading
+	// a second later, so that the timeout holds.
+	cmd.WaitDelay = time.Second
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	if err := cmd.Run(); err != nil {
+	// ErrWaitDelay: the helper exited successfully, and its answer is
+	// complete; only a child of it kept the output open.
+	if err := cmd.Run(); err != nil && !errors.Is(err, exec.ErrWaitDelay) {
 		out := strings.TrimSpace(stdout.String() + stderr.String())
 		if strings.Contains(strings.ToLower(out), "credentials not found") {
 			return nil, nil

@@ -620,10 +620,10 @@ $ DOCKER_HOST=ssh://deploy@build.example.com droot export -o app.tar app
 1. Create a feature branch
 1. Commit your changes
 1. Rebase your local changes against the master branch
-1. Run `make lint test` (and `make integration-test` if you changed `run`, `umount` or `export`) and confirm that they pass
+1. Run `make check` (and `make test-root` and `make integration-test` if you changed `run`, `umount` or `export`) and confirm that they pass
 1. Create a new Pull Request
 
-See the [development guide](documentation/development.md) for details.
+See [CONTRIBUTING.md](CONTRIBUTING.md) and the [development guide](documentation/development.md) for details.
 
 ## License
 
