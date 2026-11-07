@@ -248,7 +248,7 @@ type bindMount struct {
 	opts            mounter.BindOptions
 }
 
-func doRun(ctx context.Context, cmd *cli.Invocation) (err error) {
+func doRun(ctx context.Context, cmd *cli.Invocation) error {
 	if err := setup(cmd); err != nil {
 		return err
 	}
@@ -264,20 +264,107 @@ func doRun(ctx context.Context, cmd *cli.Invocation) (err error) {
 	if rootless && cmd.IsSet("config") {
 		return runRootless(ctx)
 	}
+	opts, err := parseRunOptions(cmd)
+	if err != nil {
+		return err
+	}
 
-	argv := cmd.Args()
+	// Every path inside the container is resolved through this descriptor
+	// so that a process of a previous run cannot redirect droot to the host
+	// file system by swapping directories for symlinks.
+	root, err := osutil.OpenRoot(opts.rootDir)
+	if err != nil {
+		return err
+	}
+	r := &runner{cmd: cmd, opts: opts, root: root}
+	defer func() { _ = r.root.Close() }() // r.root may be opened again (see unshareMounts)
+
+	// The image configuration saved by droot export, if any, gives the
+	// defaults of COMMAND, --user and --workdir, and the environment.
+	if r.cfg, err = imageconfig.Read(root); err != nil {
+		return err
+	}
+	argv := r.cfg.Command(opts.args)
+	if len(argv) == 0 || argv[0] == "" {
+		if r.cfg != nil {
+			return cmd.UsageError("a command to run is required: the image defines neither ENTRYPOINT nor CMD")
+		}
+		return cmd.UsageError("a command to run is required")
+	}
+	if rootless {
+		return runRootless(ctx)
+	}
+	return r.run(ctx, argv)
+}
+
+// runOptions are the options of droot run that are parsed before the setup.
+type runOptions struct {
+	args     []string // COMMAND, from the command line or the --config file
+	rootDir  string   // --root, resolved
+	binds    []bindMount
+	tmpfs    []tmpfsMount
+	keepCaps map[uintptr]bool // the bounding set (see boundingSet)
+	rlimits  []osutil.Rlimit
+}
+
+// parseRunOptions applies the --config file, checks the options of droot
+// run and parses those that need it.
+func parseRunOptions(cmd *cli.Invocation) (*runOptions, error) {
+	args, err := commandArgs(cmd)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkRunFlags(cmd); err != nil {
+		return nil, err
+	}
+	opts := &runOptions{args: args}
+	if opts.rootDir, err = mounter.ResolveRootDir(cmd.String("root")); err != nil {
+		return nil, err
+	}
+	if opts.binds, err = parseBinds(cmd.Strings("bind"), false); err != nil {
+		return nil, err
+	}
+	robinds, err := parseBinds(cmd.Strings("robind"), true)
+	if err != nil {
+		return nil, err
+	}
+	opts.binds = append(opts.binds, robinds...)
+	if cmd.Bool("no-dropcaps") && (cmd.IsSet("cap-add") || cmd.IsSet("cap-drop")) {
+		return nil, cmd.UsageError("--cap-add and --cap-drop cannot be used with --no-dropcaps")
+	}
+	if opts.keepCaps, err = boundingSet(cmd.Strings("cap-add"), cmd.Strings("cap-drop")); err != nil {
+		return nil, err
+	}
+	if opts.rlimits, err = parseEach(cmd.Strings("ulimit"), osutil.ParseRlimit); err != nil {
+		return nil, err
+	}
+	if opts.tmpfs, err = parseEach(cmd.Strings("tmpfs"), parseTmpfsOption); err != nil {
+		return nil, err
+	}
+	return opts, nil
+}
+
+// commandArgs applies the --config file, if any, and returns COMMAND as
+// given: the arguments, or else the command of the file.
+func commandArgs(cmd *cli.Invocation) ([]string, error) {
+	args := cmd.Args()
 	if cmd.IsSet("config") {
 		command, err := applyConfigFile(cmd, cmd.String("config"))
 		if err != nil {
-			return err
+			return nil, err
 		}
-		if len(argv) == 0 {
-			argv = command
+		if len(args) == 0 {
+			args = command
 		}
 	}
-	if len(argv) > 0 && argv[0] == "" {
-		return cmd.UsageError("COMMAND must not be empty")
+	if len(args) > 0 && args[0] == "" {
+		return nil, cmd.UsageError("COMMAND must not be empty")
 	}
+	return args, nil
+}
+
+// checkRunFlags checks the options of droot run that are used as they are.
+func checkRunFlags(cmd *cli.Invocation) error {
 	if cmd.String("root") == "" {
 		return cmd.UsageError("--root is required")
 	}
@@ -294,104 +381,56 @@ func doRun(ctx context.Context, cmd *cli.Invocation) (err error) {
 	if cmd.IsSet("hostname") && (cmd.String("hostname") == "" || len(cmd.String("hostname")) > 64) {
 		return cmd.UsageError("--hostname must have 1 to 64 characters")
 	}
-	workdir := cmd.String("workdir")
-	if cmd.IsSet("workdir") && !filepath.IsAbs(workdir) {
+	if workdir := cmd.String("workdir"); cmd.IsSet("workdir") && !filepath.IsAbs(workdir) {
 		return cmd.UsageError("--workdir must be an absolute path: %q", workdir)
 	}
+	return nil
+}
 
-	rootDir, err := mounter.ResolveRootDir(cmd.String("root"))
-	if err != nil {
-		return err
-	}
+// parseBinds parses the specs of --bind, or of --robind if readonly.
+func parseBinds(specs []string, readonly bool) ([]bindMount, error) {
+	return parseEach(specs, func(spec string) (bindMount, error) { return parseBindOption(spec, readonly) })
+}
 
-	var binds []bindMount
-	for _, spec := range cmd.Strings("bind") {
-		b, err := parseBindOption(spec, false)
+// parseEach parses every spec with parse, stopping at the first error.
+func parseEach[T any](specs []string, parse func(string) (T, error)) ([]T, error) {
+	var values []T
+	for _, spec := range specs {
+		v, err := parse(spec)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		binds = append(binds, b)
+		values = append(values, v)
 	}
-	for _, spec := range cmd.Strings("robind") {
-		b, err := parseBindOption(spec, true)
-		if err != nil {
-			return err
-		}
-		binds = append(binds, b)
-	}
-	if cmd.Bool("no-dropcaps") && (cmd.IsSet("cap-add") || cmd.IsSet("cap-drop")) {
-		return cmd.UsageError("--cap-add and --cap-drop cannot be used with --no-dropcaps")
-	}
-	keep, err := boundingSet(cmd.Strings("cap-add"), cmd.Strings("cap-drop"))
-	if err != nil {
-		return err
-	}
-	var rlimits []osutil.Rlimit
-	for _, spec := range cmd.Strings("ulimit") {
-		l, err := osutil.ParseRlimit(spec)
-		if err != nil {
-			return err
-		}
-		rlimits = append(rlimits, l)
-	}
-	bindNetFiles := cmd.Bool("bind-net-files")
-	var tmpfs []tmpfsMount
-	for _, spec := range cmd.Strings("tmpfs") {
-		t, err := parseTmpfsOption(spec)
-		if err != nil {
-			return err
-		}
-		tmpfs = append(tmpfs, t)
-	}
+	return values, nil
+}
 
-	// Every path inside the container is resolved through this descriptor
-	// so that a process of a previous run cannot redirect droot to the host
-	// file system by swapping directories for symlinks.
-	root, err := osutil.OpenRoot(rootDir)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = root.Close() }() // root may be opened again below
+// runner sets up the container of droot run, as root, and executes COMMAND
+// in it.
+type runner struct {
+	cmd  *cli.Invocation
+	opts *runOptions
+	// root is the root directory of the container, opened again in a
+	// private mount namespace.
+	root *osutil.Root
+	cfg  *imageconfig.Config // nil without image configuration
+	// rootless is set in a user namespace: rootless, or in a container.
+	rootless bool
+	// privateNS is set when the mounts are made in a private mount
+	// namespace.
+	privateNS bool
+}
 
-	// The image configuration saved by droot export, if any, gives the
-	// defaults of COMMAND, --user and --workdir, and the environment.
-	cfg, err := imageconfig.Read(root)
+// run sets up the container and executes argv in it. It only returns on
+// error.
+func (r *runner) run(ctx context.Context, argv []string) error {
+	extraEnv, err := commandLineEnv(r.cmd)
 	if err != nil {
-		return err
-	}
-	argv = cfg.Command(argv)
-	if len(argv) == 0 || argv[0] == "" {
-		if cfg != nil {
-			return cmd.UsageError("a command to run is required: the image defines neither ENTRYPOINT nor CMD")
-		}
-		return cmd.UsageError("a command to run is required")
-	}
-	if rootless {
-		return runRootless(ctx)
-	}
-
-	// The environment given on the command line, in increasing order of
-	// precedence: --env-file, then --env. Files and values are read on the
-	// host, before the chroot.
-	var extraEnv []string
-	for _, file := range cmd.Strings("env-file") {
-		env, err := environ.ReadEnvFileFrom(file, os.LookupEnv)
-		if err != nil {
-			return fmt.Errorf("--env-file: %w", err)
-		}
-		extraEnv = append(extraEnv, env...)
-	}
-	cliEnv, err := environ.ExpandBare(cmd.Strings("env"), os.LookupEnv)
-	if err != nil {
-		return err
-	}
-	extraEnv = append(extraEnv, cliEnv...)
-	if err := environ.Validate(extraEnv); err != nil {
 		return err
 	}
 
 	// Root of a user namespace: rootless, or in a container.
-	rootless = osutil.InUserNamespace()
+	r.rootless = osutil.InUserNamespace()
 
 	// From now on and up to the exec, everything happens on this OS
 	// thread: the capability bounding set is a per-thread attribute, and
@@ -401,81 +440,20 @@ func doRun(ctx context.Context, cmd *cli.Invocation) (err error) {
 	// Serialize the setup of concurrent runs on the same root (they would
 	// race on the --cp copies and on the creation of mount points and
 	// devices). The lock is released at the exec.
-	waiting := func() { log.Infof("waiting for another droot working on %s", rootDir) }
-	lock := osutil.LockRoot
-	if userns.Supervised() {
-		lock = func(ctx context.Context, rootDir string, waiting func()) (func(), error) {
-			return osutil.LockRootUser(ctx, os.Getenv("XDG_RUNTIME_DIR"), rootDir, waiting)
-		}
-	}
-	unlock, err := lock(ctx, rootDir, waiting)
+	unlock, err := lockRoot(ctx, r.opts.rootDir)
 	if err != nil {
 		return err
 	}
 	defer unlock()
-	readOnly := cmd.Bool("read-only")
 	// In a user namespace, only the mounts of a mount namespace it owns
 	// can be changed.
-	privateNS := cmd.Bool("unshare") || readOnly || rootless
-	if privateNS {
-		if err := osutil.UnshareMountNamespace(); err != nil {
-			if rootless && errors.Is(err, syscall.EPERM) {
-				err = fmt.Errorf("%w (in a user namespace without privileges: on Ubuntu, see the sysctl kernel.apparmor_restrict_unprivileged_userns)", err)
-			}
-			return err
-		}
-		if readOnly {
-			if err := mounter.BindRootOnItself(rootDir); err != nil {
-				return err
-			}
-		}
-		// The descriptor of the root refers to a mount of the host's
-		// namespace, where this thread can no longer mount.
-		reopened, err := osutil.OpenRoot(rootDir)
-		if err != nil {
-			return err
-		}
-		_ = root.Close()
-		root = reopened
-	}
-	if cmd.Bool("unshare-ipc") {
-		if err := osutil.UnshareIPCNamespace(); err != nil {
-			return err
-		}
-	}
-	if cmd.IsSet("hostname") {
-		if err := osutil.SetHostname(cmd.String("hostname")); err != nil {
-			return err
-		}
-	}
-
-	userSpec, groupSpec := cmd.String("user"), cmd.String("group")
-	imageUser := !cmd.IsSet("user") && cfg != nil && cfg.User != ""
-	if imageUser {
-		// USER is NAME, UID, NAME:GROUP or UID:GID.
-		var group string
-		userSpec, group, _ = strings.Cut(cfg.User, ":")
-		if !cmd.IsSet("group") {
-			groupSpec = group
-		}
-		log.Debugf("running as the image's USER %s", cfg.User)
-	}
-	if !cmd.IsSet("workdir") && cfg != nil {
-		workdir = cfg.WorkingDir
-	}
-	if workdir == "" {
-		workdir = "/"
-	}
-	baseEnv, err := containerEnv(root, cfg)
-	if err != nil {
+	r.privateNS = r.cmd.Bool("unshare") || r.cmd.Bool("read-only") || r.rootless
+	if err := r.unshare(); err != nil {
 		return err
 	}
-	// The variables systemd sets for droot (NOTIFY_SOCKET, LISTEN_FDS,
-	// ...), which describe the notification socket, the sockets and the
-	// watchdog COMMAND inherits, between the image's and those of the
-	// command line.
-	sdEnv := systemd.Env(os.LookupEnv, os.Getpid())
-	env, err := environ.Merge(baseEnv, append(sdEnv, extraEnv...))
+
+	user := r.user()
+	env, err := r.environment(extraEnv)
 	if err != nil {
 		return err
 	}
@@ -486,35 +464,183 @@ func doRun(ctx context.Context, cmd *cli.Invocation) (err error) {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if cmd.Bool("copy-files") {
+	if r.cmd.Bool("copy-files") {
 		files := hostFiles
-		if bindNetFiles {
+		if r.cmd.Bool("bind-net-files") {
 			files = slices.DeleteFunc(slices.Clone(files), func(f string) bool { return slices.Contains(netFiles, f) })
 		}
-		if err := copyHostFiles(root, files); err != nil {
+		if err := copyHostFiles(r.root, files); err != nil {
 			return err
 		}
 	}
 
-	cred, err := identity.Resolve(root, userSpec, groupSpec)
+	cred, err := r.credential(user)
 	if err != nil {
-		if imageUser {
-			return fmt.Errorf("the image's USER %s: %w (use --user to run as another user; with --cp, the container's /etc/passwd is the host's)", cfg.User, err)
+		return err
+	}
+	env = defaultEnv(env, cred)
+	if r.cmd.IsSet("hostname") {
+		env = environ.SetDefault(env, "HOSTNAME", r.cmd.String("hostname"))
+	}
+	return r.mountAndExec(ctx, argv, env, cred)
+}
+
+// commandLineEnv returns the environment given on the command line, in
+// increasing order of precedence: --env-file, then --env. Files and values
+// are read on the host, before the chroot.
+func commandLineEnv(cmd *cli.Invocation) ([]string, error) {
+	var extraEnv []string
+	for _, file := range cmd.Strings("env-file") {
+		env, err := environ.ReadEnvFileFrom(file, os.LookupEnv)
+		if err != nil {
+			return nil, fmt.Errorf("--env-file: %w", err)
+		}
+		extraEnv = append(extraEnv, env...)
+	}
+	cliEnv, err := environ.ExpandBare(cmd.Strings("env"), os.LookupEnv)
+	if err != nil {
+		return nil, err
+	}
+	extraEnv = append(extraEnv, cliEnv...)
+	if err := environ.Validate(extraEnv); err != nil {
+		return nil, err
+	}
+	return extraEnv, nil
+}
+
+// lockRoot locks rootDir for the setup of a run, waiting for the other runs
+// that hold the lock, and returns the function that releases it.
+func lockRoot(ctx context.Context, rootDir string) (unlock func(), err error) {
+	waiting := func() { log.Infof("waiting for another droot working on %s", rootDir) }
+	if userns.Supervised() {
+		return osutil.LockRootUser(ctx, os.Getenv("XDG_RUNTIME_DIR"), rootDir, waiting)
+	}
+	return osutil.LockRoot(ctx, rootDir, waiting)
+}
+
+// unshare makes the private namespaces of the run: the mount namespace if
+// privateNS is set, the IPC namespace of --unshare-ipc and the UTS namespace
+// of --hostname.
+func (r *runner) unshare() error {
+	if r.privateNS {
+		if err := r.unshareMounts(); err != nil {
+			return err
+		}
+	}
+	if r.cmd.Bool("unshare-ipc") {
+		if err := osutil.UnshareIPCNamespace(); err != nil {
+			return err
+		}
+	}
+	if r.cmd.IsSet("hostname") {
+		if err := osutil.SetHostname(r.cmd.String("hostname")); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// unshareMounts makes a private mount namespace, binds the root on itself
+// there for --read-only, and opens the root again in it.
+func (r *runner) unshareMounts() error {
+	if err := osutil.UnshareMountNamespace(); err != nil {
+		if r.rootless && errors.Is(err, syscall.EPERM) {
+			err = fmt.Errorf("%w (in a user namespace without privileges: on Ubuntu, see the sysctl kernel.apparmor_restrict_unprivileged_userns)", err)
 		}
 		return err
 	}
-	if rootless {
-		if err := checkMapped(cred); err != nil {
+	if r.cmd.Bool("read-only") {
+		if err := mounter.BindRootOnItself(r.opts.rootDir); err != nil {
 			return err
 		}
 	}
-	log.Debugf("running as uid=%d gid=%d groups=%v", cred.UID, cred.GID, cred.Groups)
-	env = defaultEnv(env, cred)
-	if cmd.IsSet("hostname") {
-		env = environ.SetDefault(env, "HOSTNAME", cmd.String("hostname"))
+	// The descriptor of the root refers to a mount of the host's
+	// namespace, where this thread can no longer mount.
+	reopened, err := osutil.OpenRoot(r.opts.rootDir)
+	if err != nil {
+		return err
 	}
+	_ = r.root.Close()
+	r.root = reopened
+	return nil
+}
 
-	mnt := mounter.NewMounter(root)
+// userSpec is the user and the group to run COMMAND as, as given.
+type userSpec struct {
+	user, group string
+	fromImage   bool // user is the image's USER
+}
+
+// user returns the user and the group of --user and --group, the image's
+// USER giving those that are not set.
+func (r *runner) user() userSpec {
+	spec := userSpec{user: r.cmd.String("user"), group: r.cmd.String("group")}
+	if r.cmd.IsSet("user") || r.cfg == nil || r.cfg.User == "" {
+		return spec
+	}
+	// USER is NAME, UID, NAME:GROUP or UID:GID.
+	var group string
+	spec.user, group, _ = strings.Cut(r.cfg.User, ":")
+	spec.fromImage = true
+	if !r.cmd.IsSet("group") {
+		spec.group = group
+	}
+	log.Debugf("running as the image's USER %s", r.cfg.User)
+	return spec
+}
+
+// workdir returns the working directory of COMMAND: --workdir, or else the
+// image's WORKDIR, or else /.
+func (r *runner) workdir() string {
+	workdir := r.cmd.String("workdir")
+	if !r.cmd.IsSet("workdir") && r.cfg != nil {
+		workdir = r.cfg.WorkingDir
+	}
+	if workdir == "" {
+		workdir = "/"
+	}
+	return workdir
+}
+
+// environment returns the environment of COMMAND, without the defaults of
+// defaultEnv: that of the image, then the variables of systemd, then
+// extraEnv, the environment of the command line.
+func (r *runner) environment(extraEnv []string) ([]string, error) {
+	baseEnv, err := containerEnv(r.root, r.cfg)
+	if err != nil {
+		return nil, err
+	}
+	// The variables systemd sets for droot (NOTIFY_SOCKET, LISTEN_FDS,
+	// ...), which describe the notification socket, the sockets and the
+	// watchdog COMMAND inherits, between the image's and those of the
+	// command line.
+	sdEnv := systemd.Env(os.LookupEnv, os.Getpid())
+	return environ.Merge(baseEnv, append(sdEnv, extraEnv...))
+}
+
+// credential resolves the user and the groups of spec in the container and
+// checks that they can be switched to.
+func (r *runner) credential(spec userSpec) (*identity.Credential, error) {
+	cred, err := identity.Resolve(r.root, spec.user, spec.group)
+	if err != nil {
+		if spec.fromImage {
+			return nil, fmt.Errorf("the image's USER %s: %w (use --user to run as another user; with --cp, the container's /etc/passwd is the host's)", r.cfg.User, err)
+		}
+		return nil, err
+	}
+	if r.rootless {
+		if err := checkMapped(cred); err != nil {
+			return nil, err
+		}
+	}
+	log.Debugf("running as uid=%d gid=%d groups=%v", cred.UID, cred.GID, cred.Groups)
+	return cred, nil
+}
+
+// mountAndExec makes the mounts of the container and executes argv in it.
+// It only returns on error.
+func (r *runner) mountAndExec(ctx context.Context, argv, env []string, cred *identity.Credential) (err error) {
+	mnt := mounter.NewMounter(r.root)
 	// If anything fails before COMMAND is executed, remove the mounts made
 	// so far (mounts of a previous run that were reused are kept). Once
 	// droot has switched to an unprivileged user, it no longer can.
@@ -523,27 +649,85 @@ func doRun(ctx context.Context, cmd *cli.Invocation) (err error) {
 		if err == nil {
 			return
 		}
-		if released > 0 && !privateNS {
-			log.Warnf("%d mount(s) made for COMMAND are left in place: remove them with 'droot umount --root %s'", released, rootDir)
+		if released > 0 && !r.privateNS {
+			log.Warnf("%d mount(s) made for COMMAND are left in place: remove them with 'droot umount --root %s'", released, r.opts.rootDir)
 		} else if rbErr := mnt.Rollback(); rbErr != nil {
 			log.Warnf("could not remove the mounts made before the failure (use 'droot umount'): %v", rbErr)
 		}
 	}()
+	if err := r.mount(ctx, mnt, env); err != nil {
+		return err
+	}
+
+	return execInRoot(ctx, r.opts.rootDir, argv, env, cred, execOptions{
+		beforeSwitch:    func() { released = mnt.Release() },
+		workdir:         r.workdir(),
+		dropCaps:        !r.cmd.Bool("no-dropcaps"),
+		keepCaps:        r.opts.keepCaps,
+		rlimits:         r.opts.rlimits,
+		noNewPrivileges: !r.cmd.IsSet("no-new-privileges") || r.cmd.Bool("no-new-privileges"),
+		seccomp:         r.cmd.String("seccomp") == "default",
+	})
+}
+
+// mount makes the mounts of the container with mnt: /proc and /sys, those
+// of the command line and that of systemd's notification socket, populates
+// /dev, and makes the root read-only for --read-only. env is the
+// environment of COMMAND.
+func (r *runner) mount(ctx context.Context, mnt *mounter.Mounter, env []string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if err := mnt.MountSysProc(); err != nil {
 		return err
 	}
-	if !cmd.Bool("no-mask") {
+	if !r.cmd.Bool("no-mask") {
 		if err := mnt.ProtectKernelFS(); err != nil {
 			return err
 		}
 	}
-	// Bind and tmpfs mounts, parents before children (like Docker), so
-	// that `--tmpfs /data --bind H:/data/x` binds H inside the tmpfs.
+	mounts := r.userMounts(mnt)
+	for _, m := range mounts {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := m.mount(); err != nil {
+			return err
+		}
+	}
+	if r.cmd.Bool("bind-net-files") {
+		if err := bindNetFiles(mnt); err != nil {
+			return err
+		}
+	}
+	if sock := notifySocketMount(env); sock != "" {
+		if slices.ContainsFunc(mounts, func(m userMount) bool { return m.target == sock }) {
+			log.Debugf("not binding %s=%s: --bind or --tmpfs mounts on it", systemd.NotifySocket, sock)
+		} else if err := bindNotifySocket(r.root, mnt, sock); err != nil {
+			return err
+		}
+	}
+
+	linkVarLock(r.root)
+
+	shm := !slices.ContainsFunc(r.opts.tmpfs, func(t tmpfsMount) bool { return t.path == "/dev/shm" })
+	if err := setupDev(r.root, mnt, shm, r.rootless); err != nil {
+		return err
+	}
+	if r.cmd.Bool("read-only") {
+		if err := mnt.RemountRootReadonly(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// userMounts returns the bind and tmpfs mounts of the command line, to be
+// made with mnt, parents before children (like Docker), so that
+// `--tmpfs /data --bind H:/data/x` binds H inside the tmpfs.
+func (r *runner) userMounts(mnt *mounter.Mounter) []userMount {
 	var mounts []userMount
-	for _, b := range binds {
+	for _, b := range r.opts.binds {
 		mounts = append(mounts, userMount{target: b.container, mount: func() error {
 			if err := mnt.BindMount(b.host, b.container, b.opts); err != nil {
 				return fmt.Errorf("bind mount %s on %s: %w", b.host, b.container, err)
@@ -551,7 +735,7 @@ func doRun(ctx context.Context, cmd *cli.Invocation) (err error) {
 			return nil
 		}})
 	}
-	for _, t := range tmpfs {
+	for _, t := range r.opts.tmpfs {
 		mounts = append(mounts, userMount{target: t.path, mount: func() error {
 			if err := mnt.MountFS("tmpfs", t.path, t.opts, nil); err != nil {
 				return fmt.Errorf("mount a tmpfs on %s: %w", t.path, err)
@@ -562,52 +746,20 @@ func doRun(ctx context.Context, cmd *cli.Invocation) (err error) {
 	slices.SortStableFunc(mounts, func(a, b userMount) int {
 		return strings.Count(a.target, "/") - strings.Count(b.target, "/")
 	})
-	for _, m := range mounts {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if err := m.mount(); err != nil {
-			return err
-		}
-	}
-	if bindNetFiles {
-		for _, f := range netFiles {
-			// Replace the mount of a previous run: the host may have
-			// replaced the file since (e.g. with rename(2)).
-			if err := mnt.BindMount(f, f, mounter.BindOptions{ReadOnly: true, Replace: true}); err != nil {
-				return fmt.Errorf("bind mount %s: %w", f, err)
-			}
-		}
-	}
-	if sock := notifySocketMount(env); sock != "" {
-		if slices.ContainsFunc(mounts, func(m userMount) bool { return m.target == sock }) {
-			log.Debugf("not binding %s=%s: --bind or --tmpfs mounts on it", systemd.NotifySocket, sock)
-		} else if err := bindNotifySocket(root, mnt, sock); err != nil {
-			return err
-		}
-	}
+	return mounts
+}
 
-	linkVarLock(root)
-
-	shm := !slices.ContainsFunc(tmpfs, func(t tmpfsMount) bool { return t.path == "/dev/shm" })
-	if err := setupDev(root, mnt, shm, rootless); err != nil {
-		return err
-	}
-	if readOnly {
-		if err := mnt.RemountRootReadonly(); err != nil {
-			return err
+// bindNetFiles bind mounts the host's netFiles read-only for
+// --bind-net-files.
+func bindNetFiles(mnt *mounter.Mounter) error {
+	for _, f := range netFiles {
+		// Replace the mount of a previous run: the host may have
+		// replaced the file since (e.g. with rename(2)).
+		if err := mnt.BindMount(f, f, mounter.BindOptions{ReadOnly: true, Replace: true}); err != nil {
+			return fmt.Errorf("bind mount %s: %w", f, err)
 		}
 	}
-
-	return execInRoot(ctx, rootDir, argv, env, cred, execOptions{
-		beforeSwitch:    func() { released = mnt.Release() },
-		workdir:         workdir,
-		dropCaps:        !cmd.Bool("no-dropcaps"),
-		keepCaps:        keep,
-		rlimits:         rlimits,
-		noNewPrivileges: !cmd.IsSet("no-new-privileges") || cmd.Bool("no-new-privileges"),
-		seccomp:         cmd.String("seccomp") == "default",
-	})
+	return nil
 }
 
 // runRootless runs droot again as root of a new user namespace, mapping the
