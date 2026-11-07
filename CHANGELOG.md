@@ -340,8 +340,9 @@ dependencies, many bug and security fixes.
   reproducible binaries and archives.
 - `SECURITY.md`: how to report vulnerabilities privately.
 - Documentation: architecture, security considerations, development guide,
-  known issues and ideas, and a deployment tutorial with example systemd
-  units (`examples/systemd`). A Japanese README (`README.ja.md`).
+  known issues and ideas, a comparison with other tools (enroot, systemd,
+  Podman), and a deployment tutorial with example systemd units
+  (`examples/systemd`). A Japanese README (`README.ja.md`).
 - CI on GitHub Actions (lint, unit tests as user and root on the minimum and
   latest Go, coverage report, fuzzing, end-to-end tests against Docker on
   amd64 and arm64 and against Podman, govulncheck, a security linter for the

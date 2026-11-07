@@ -603,6 +603,8 @@ $ DOCKER_HOST=ssh://deploy@build.example.com droot export -o app.tar app
 - [Command line reference](documentation/cli.md)
 - [How droot works](documentation/architecture.md)
 - [Security considerations](documentation/security.md)
+- [Comparison with other tools](documentation/comparison.md): enroot,
+  systemd, Podman
 - [Development guide](documentation/development.md)
 - [Known issues and ideas](documentation/roadmap.md)
 - [Changelog](CHANGELOG.md)
