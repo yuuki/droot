@@ -250,6 +250,7 @@ droot は次の順に処理を行います。
 | `--hostname NAME` | ホスト名が `NAME` であるプライベートな UTS 名前空間で `COMMAND` を実行します（`NAME` は `HOSTNAME` のデフォルト値にもなります）。ホスト自体の名前は変更されません。 |
 | `--read-only` | `COMMAND` から見て `ROOT_DIR` を読み取り専用にします（バインドマウントと tmpfs はそれぞれのモードを保ちます。書き込みが必要な場所には `--tmpfs /tmp` や `--bind` などを追加してください）。読み取り専用のマウントが `COMMAND` とともに消えるように、`--unshare` も有効になります。 |
 | `--no-mask` | `/proc` と `/sys` をそのままにします。機密性の高いファイルのマスクも、`/proc/sys` や `/sys` などの読み取り専用化も行いません（危険）。以前の実行で行われたマスクは、`droot umount` するまで残ります。 |
+| `--no-systemd` | systemd の変数（`NOTIFY_SOCKET`、`LISTEN_*`、`WATCHDOG_*`）を `COMMAND` に渡さず、通知ソケットもコンテナにバインドしません（[通知とソケットアクティベーション](#notifications-and-socket-activation)を参照）。サービスマネージャーへの経路をコンテナに一切持たせたくない場合や、droot 宛てではない `NOTIFY_SOCKET` を droot が引き継いでしまった場合に使います。引き継いだディスクリプタはそのまま残ります。 |
 | `--no-new-privileges` | `no_new_privs` フラグを設定します。setuid プログラム（`su`、`sudo` など）やファイル capability によって `COMMAND` に権限が付与されることはなくなります。デフォルトで有効です。`sudo` や `su` を必要とするアプリケーションでは `--no-new-privileges=false` で無効にできます。 |
 | `--seccomp PROFILE` | `default` を指定すると、Docker のデフォルトプロファイルと同様に、アプリケーションが本来行う必要のないシステムコールを拒否する seccomp フィルタを設定します。名前空間の作成（`unshare`、`setns`、名前空間フラグ付きの `clone`）、マウント、モジュールやカーネルのロード、キーリング、`bpf`、perf イベント、`userfaultfd`、io_uring、時刻の設定、スワップ、再起動などが `EPERM` で失敗します（`clone3` は C ライブラリが `clone` を使うよう `ENOSYS` で失敗します）。amd64、arm64、arm、386 に対応しています。他のアーキテクチャのプログラム（64 ビットカーネル上の 32 ビットプログラムなど）はシステムコールを一切実行できません。デフォルトの `unconfined` ではフィルタを設定しません。 |
 
@@ -297,7 +298,7 @@ systemd の下では、systemd がサービスのメインプロセスである 
 - `LISTEN_FDS`、`LISTEN_PID`、`LISTEN_FDNAMES`、`LISTEN_PIDFDID`（[`sd_listen_fds(3)`](https://www.freedesktop.org/software/systemd/man/latest/sd_listen_fds.html)）。`LISTEN_PID` が droot の PID である場合に限ります。ソケットそのもの（ファイルディスクリプタ 3、4、...）は、`LISTEN_PID` の値にかかわらず、droot に渡された他のディスクリプタと同様に `COMMAND` に継承されます。
 - `WATCHDOG_USEC` と `WATCHDOG_PID`（`WatchdogSec=`）。`WATCHDOG_PID` が droot の PID であるか、未設定の場合に限ります。
 
-これらは `--env-file` と `--env` で上書きできます。`--env NOTIFY_SOCKET=PATH` を指定すると `COMMAND` には別のソケットが渡され、droot はそれをマウントしません。また、そのパスに `--bind` や `--tmpfs` でマウントしたものがある場合も、droot はその上にソケットをマウントしません。droot は `COMMAND` で自分自身を置き換え、`COMMAND` は droot の PID を引き継ぎます。そのため systemd から見ると `COMMAND` がメインプロセスであり、デフォルトの `NotifyAccess=main` のままで通知が受け付けられます。
+これらは `--env-file` と `--env` で上書きできます。`--env NOTIFY_SOCKET=PATH` を指定すると `COMMAND` には別のソケットが渡され、droot はそれをマウントしません。また、そのパスに `--bind` や `--tmpfs` でマウントしたものがある場合も、droot はその上にソケットをマウントしません。`--no-systemd`（`--config` では `no-systemd = true`）を指定すると、これらの変数はすべて渡されず、何もバインドされません。たとえば、自分の `NOTIFY_SOCKET` を設定したままにする `Type=notify` サービスのプロセスから droot が起動される場合に使います。空の `--env NOTIFY_SOCKET=` では代わりになりません。libsystemd は空の変数をエラーとして扱うためです。droot が引き継いだディスクリプタは、それでも `COMMAND` に渡ります。droot は `COMMAND` で自分自身を置き換え、`COMMAND` は droot の PID を引き継ぎます。そのため systemd から見ると `COMMAND` がメインプロセスであり、デフォルトの `NotifyAccess=main` のままで通知が受け付けられます。
 
 ```ini
 [Service]

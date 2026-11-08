@@ -53,11 +53,11 @@ func runCommand() *cli.Command {
 			"Under systemd, COMMAND gets the notification socket (NOTIFY_SOCKET, for\n" +
 			"Type=notify), the sockets of socket activation (LISTEN_FDS, LISTEN_PID,\n" +
 			"LISTEN_FDNAMES) and the watchdog (WATCHDOG_USEC, WATCHDOG_PID) of droot,\n" +
-			"which --env and --env-file override. A NOTIFY_SOCKET that is a path is bind\n" +
-			"mounted read-only on the same path in the container; its mount point is only\n" +
-			"created on ROOT_DIR's own file system or in a --tmpfs. Rootless, the\n" +
-			"notifications come from a child of droot, the main process of the service:\n" +
-			"set NotifyAccess=all in the unit.\n\n" +
+			"which --env and --env-file override and --no-systemd leaves out. A\n" +
+			"NOTIFY_SOCKET that is a path is bind mounted read-only on the same path in\n" +
+			"the container; its mount point is only created on ROOT_DIR's own file system\n" +
+			"or in a --tmpfs. Rootless, the notifications come from a child of droot, the\n" +
+			"main process of the service: set NotifyAccess=all in the unit.\n\n" +
 			"--config FILE reads options from FILE, in a subset of TOML: lines KEY = VALUE,\n" +
 			"where KEY is the long name of an option and VALUE a string (\"...\" or '...'),\n" +
 			"true or false, or an array of strings for repeatable options; command, an\n" +
@@ -108,6 +108,8 @@ func runCommand() *cli.Command {
 				Usage: "make the root directory read-only for COMMAND (implies --unshare); use --tmpfs or --bind for the paths it writes"},
 			{Name: "no-mask", Kind: cli.Bool,
 				Usage: "do not mask the sensitive files of /proc and /sys nor make /proc/sys, /sys and the like read-only (dangerous)"},
+			{Name: "no-systemd", Kind: cli.Bool,
+				Usage: "do not pass systemd's notification socket, socket activation and watchdog variables (NOTIFY_SOCKET, LISTEN_*, WATCHDOG_*) on to COMMAND, nor bind the notification socket in the container; inherited descriptors are kept"},
 			{Name: "no-new-privileges", Kind: cli.Bool,
 				Usage: "set no_new_privs: setuid programs and file capabilities cannot grant privileges to COMMAND (default: true; --no-new-privileges=false lets programs such as sudo or su work)"},
 			{Name: "seccomp", Kind: cli.String, Placeholder: "PROFILE",
@@ -614,8 +616,11 @@ func (r *runner) environment(extraEnv []string) ([]string, error) {
 	// The variables systemd sets for droot (NOTIFY_SOCKET, LISTEN_FDS,
 	// ...), which describe the notification socket, the sockets and the
 	// watchdog COMMAND inherits, between the image's and those of the
-	// command line.
-	sdEnv := systemd.Env(os.LookupEnv, os.Getpid())
+	// command line, unless --no-systemd.
+	var sdEnv []string
+	if !r.cmd.Bool("no-systemd") {
+		sdEnv = systemd.Env(os.LookupEnv, os.Getpid())
+	}
 	return environ.Merge(baseEnv, append(sdEnv, extraEnv...))
 }
 
@@ -728,11 +733,14 @@ func (r *runner) mount(ctx context.Context, mnt *mounter.Mounter, env []string) 
 }
 
 // bindNotifySocket bind mounts the socket of systemd's notifications of
-// COMMAND (env) in the container, if any (see notifySocketMount), unless one
-// of mounts, those of the command line, mounts on its path. Its mount point
-// may be created on the root's own file system and in tmpfs, the mounts of
-// --tmpfs.
+// COMMAND (env) in the container, if any (see notifySocketMount), unless
+// --no-systemd is given or one of mounts, those of the command line, mounts
+// on its path. Its mount point may be created on the root's own file system
+// and in tmpfs, the mounts of --tmpfs.
 func (r *runner) bindNotifySocket(mnt *mounter.Mounter, env []string, mounts []userMount, tmpfs []*os.File) error {
+	if r.cmd.Bool("no-systemd") {
+		return nil
+	}
 	sock := notifySocketMount(env)
 	if sock == "" {
 		return nil

@@ -10,11 +10,13 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
 	"golang.org/x/sys/unix"
 
+	"github.com/yuuki/droot/internal/cli"
 	"github.com/yuuki/droot/internal/identity"
 	"github.com/yuuki/droot/internal/imageconfig"
 	"github.com/yuuki/droot/internal/mounter"
@@ -328,5 +330,71 @@ func TestBindNotifySocketWithin(t *testing.T) {
 	var st unix.Stat_t
 	if err := unix.Stat(filepath.Join(rootDir, sock), &st); err != nil || st.Mode&unix.S_IFMT != unix.S_IFSOCK {
 		t.Errorf("the socket is not bound in the container: %v, mode %o", err, st.Mode)
+	}
+}
+
+// TestNoSystemd checks that --no-systemd leaves out the variables of
+// systemd and the bind of NOTIFY_SOCKET (#57).
+func TestNoSystemd(t *testing.T) {
+	rootDir := t.TempDir()
+	root, err := osutil.OpenRoot(rootDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	sock := filepath.Join(t.TempDir(), "notify")
+	l, err := net.ListenUnixgram("unixgram", &net.UnixAddr{Name: sock, Net: "unixgram"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	pid := strconv.Itoa(os.Getpid())
+	for k, v := range map[string]string{
+		"NOTIFY_SOCKET": sock, "LISTEN_PID": pid, "LISTEN_FDS": "1", "LISTEN_FDNAMES": "web",
+		"WATCHDOG_USEC": "30000000", "WATCHDOG_PID": pid,
+	} {
+		t.Setenv(k, v)
+	}
+
+	run := func(argv ...string) []string {
+		t.Helper()
+		var env []string
+		app := NewApp("test")
+		app.Stdout = io.Discard
+		app.Command("run").Action = func(_ context.Context, cmd *cli.Invocation) error {
+			extraEnv, err := commandLineEnv(cmd)
+			if err != nil {
+				return err
+			}
+			r := &runner{cmd: cmd, root: root}
+			if env, err = r.environment(extraEnv); err != nil {
+				return err
+			}
+			// No Mounter: with --no-systemd, nothing is looked at.
+			if cmd.Bool("no-systemd") {
+				return r.bindNotifySocket(nil, env, nil, nil)
+			}
+			return nil
+		}
+		if err := app.Run(context.Background(), append([]string{"droot", "run", "-r", rootDir}, append(argv, "--", "true")...)); err != nil {
+			t.Fatal(err)
+		}
+		return env
+	}
+
+	want := []string{"NOTIFY_SOCKET=" + sock, "LISTEN_PID=" + pid, "LISTEN_FDS=1", "LISTEN_FDNAMES=web", "WATCHDOG_USEC=30000000", "WATCHDOG_PID=" + pid}
+	if got := run(); !slices.Equal(got, want) {
+		t.Errorf("without --no-systemd: got %q, want %q", got, want)
+	}
+	if got := run("--no-systemd"); len(got) != 0 {
+		t.Errorf("--no-systemd: got %q, want no variable", got)
+	}
+	// What the command line asks for explicitly is kept, but the socket is
+	// not bound.
+	if got, want := run("--no-systemd", "--env", "NOTIFY_SOCKET"), []string{"NOTIFY_SOCKET=" + sock}; !slices.Equal(got, want) {
+		t.Errorf("--no-systemd --env NOTIFY_SOCKET: got %q, want %q", got, want)
+	}
+	if entries, _ := os.ReadDir(rootDir); len(entries) != 0 {
+		t.Errorf("--no-systemd: droot created %v in the container", entries)
 	}
 }

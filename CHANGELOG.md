@@ -22,6 +22,12 @@ Releases up to 0.7.7 are described on the
   or in a `--tmpfs`, never in a host directory bound over its directory
   ([#56](https://github.com/yuuki/droot/issues/56)). A socket that cannot
   be bound only gets a warning.
+- `droot run --no-systemd` (`no-systemd = true` in `--config`) passes none
+  of these variables on to `COMMAND` and binds no notification socket, for
+  containers that must have no channel to the service manager, or a droot
+  that inherited a `NOTIFY_SOCKET` not meant for it
+  ([#57](https://github.com/yuuki/droot/issues/57)). The inherited
+  descriptors are kept.
 - `examples/systemd/app-notify.service` (`Type=notify`) and
   `examples/systemd/app.socket`, described in the deployment guide.
 

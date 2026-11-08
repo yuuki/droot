@@ -625,6 +625,17 @@ else
   NOTIFY_SOCKET="$sock" "$DROOT" run --root "$WORK/sd" --read-only --robind /usr --tmpfs "$SD_DIR" -- "$SD_PYTHON" /sd.py probe >/dev/null ||
     fail "droot run with a --tmpfs on the directory of NOTIFY_SOCKET"
   assert_notified "notifications through a --tmpfs on the directory of the socket" "$WORK/sd-notify.out"
+  # --no-systemd: no variable, no mount and no warning (#57).
+  assert_eq "--no-systemd: none of the variables of systemd reach COMMAND" \
+    "$(NOTIFY_SOCKET="$sock" WATCHDOG_USEC=30000000 "${SD_PROBE[@]}" "$DROOT" run --no-systemd "${sd_run[@]:1}")" "none"
+  printf 'root = "%s"\nrobind = ["/usr"]\nno-systemd = true\ncommand = ["true"]\n' "$WORK/sd" >"$WORK/sd-no-systemd.toml"
+  for notify in "$sock" "$SD_DIR/missing.sock"; do
+    NOTIFY_SOCKET="$notify" "$DROOT" run --config "$WORK/sd-no-systemd.toml" 2>"$WORK/sd.err" ||
+      fail "droot run with no-systemd = true: $(cat "$WORK/sd.err")"
+    assert_eq "no-systemd = true, NOTIFY_SOCKET=${notify##*/}: nothing bound, no warning" \
+      "$(mounts_under "$WORK/sd$notify") $(cat "$WORK/sd.err")" "0 "
+  done
+  "$DROOT" umount --root "$WORK/sd"
 fi
 
 echo "# rootless"

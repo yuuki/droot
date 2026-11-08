@@ -121,7 +121,10 @@ users, the reason why some distributions restrict them — nothing droot or
   `NotifyAccess=main`, only accepts from its main process, but cannot
   `chmod` or `chown` the socket, which every service of the host uses. The
   variables of socket activation are only passed on when `LISTEN_PID` is
-  the PID of droot. droot closes no descriptor it inherits: as with any
+  the PID of droot. `--no-systemd` passes none of these variables and binds
+  no socket, e.g. when droot inherits a `NOTIFY_SOCKET` that is not meant
+  for it (with `NotifyAccess=all`, the processes of the container could
+  otherwise send that unit `STOPPING=1`, `FDSTORE=1`, ...). droot closes no descriptor it inherits: as with any
   program, those its parent leaves open (socket activation or not) reach
   `COMMAND`.
 - `droot umount --root /` is refused.

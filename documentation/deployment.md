@@ -203,6 +203,10 @@ the units it would have without it:
   `LISTEN_PID` and `LISTEN_FDNAMES`
   ([`sd_listen_fds(3)`](https://www.freedesktop.org/software/systemd/man/latest/sd_listen_fds.html)).
 
+`--no-systemd` (`no-systemd = true` in the `--config` file) turns this off
+for a container that must have no channel to the service manager: droot
+then passes none of these variables and binds no socket.
+
 [`examples/systemd/app-notify.service`](../examples/systemd/app-notify.service)
 is `app.service` for an application that notifies systemd:
 

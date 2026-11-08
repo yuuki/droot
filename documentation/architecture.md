@@ -195,7 +195,7 @@ setuid bits are preserved.
    remounted with `MS_RDONLY` *plus* the nosuid/nodev/noexec/atime flags of
    the source, which a plain remount would clear. Last, a `NOTIFY_SOCKET`
    that is a path (systemd's `/run/systemd/notify`) is bind mounted
-   read-only on the same path, replacing the mount of a previous run unless
+   read-only on the same path (not with `--no-systemd`), replacing the mount of a previous run unless
    it is the same socket. Nothing is mounted when a `--bind` or `--tmpfs`
    mounts on the path, or when the path already is the socket (a `--bind`
    of its directory: a mount there would make the host's socket busy).
@@ -232,8 +232,8 @@ setuid bits are preserved.
 7. `chroot(2)` into the root and `chdir(2)` to the working directory.
 8. Merge the environment: the image's, then the variables of systemd that
    are for droot (`NOTIFY_SOCKET`; `LISTEN_*` if `LISTEN_PID` is the PID of
-   droot; `WATCHDOG_*` if `WATCHDOG_PID` is, or is unset), then
-   `--env-file`, then `--env`, plus the defaults of `PATH`, `HOME`, `USER`
+   droot; `WATCHDOG_*` if `WATCHDOG_PID` is, or is unset; none with
+   `--no-systemd`), then `--env-file`, then `--env`, plus the defaults of `PATH`, `HOME`, `USER`
    and `LOGNAME`. The sockets of socket activation are inherited: droot
    keeps them open, without close-on-exec, at descriptors 3, 4, ...
 9. Drop every capability not in the keep list from the bounding set with
