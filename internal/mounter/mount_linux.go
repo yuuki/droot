@@ -84,30 +84,40 @@ func isMountRoot(parent, fd int) (bool, error) {
 var ErrOtherMount = errors.New("is on another mount than the container root")
 
 // OnMountOf returns an osutil.DirCheck accepting only directories on the
-// same mount as the descriptor fd, e.g. to make sure a directory of the
-// container is not a bind mount of a host directory.
-func OnMountOf(fd int) osutil.DirCheck {
+// same mount as one of the descriptors fds, e.g. to make sure a directory of
+// the container is not a bind mount of a host directory.
+func OnMountOf(fds ...int) osutil.DirCheck {
 	return func(dir int) error {
-		id, err1 := mountID(fd)
-		did, err2 := mountID(dir)
-		if err1 == nil && err2 == nil {
-			if id != did {
-				return ErrOtherMount
+		for _, fd := range fds {
+			same, err := onSameMount(fd, dir)
+			if err != nil {
+				return err
 			}
-			return nil
+			if same {
+				return nil
+			}
 		}
-		var st, dst unix.Stat_t
-		if err := unix.Fstat(fd, &st); err != nil {
-			return err
-		}
-		if err := unix.Fstat(dir, &dst); err != nil {
-			return err
-		}
-		if st.Dev != dst.Dev {
-			return ErrOtherMount
-		}
-		return nil
+		return ErrOtherMount
 	}
+}
+
+// onSameMount reports whether the descriptors a and b are on the same mount.
+func onSameMount(a, b int) (bool, error) {
+	id, err1 := mountID(a)
+	bid, err2 := mountID(b)
+	if err1 == nil && err2 == nil {
+		return id == bid, nil
+	}
+	// Kernels without mnt_id in fdinfo: compare devices. This misses bind
+	// mounts within the same file system.
+	var st, bst unix.Stat_t
+	if err := unix.Fstat(a, &st); err != nil {
+		return false, err
+	}
+	if err := unix.Fstat(b, &bst); err != nil {
+		return false, err
+	}
+	return st.Dev == bst.Dev, nil
 }
 
 func mount(source, target, fstype string, flags uintptr, data string) error {
@@ -571,7 +581,7 @@ func (m *Mounter) BindMount(hostPath, containerPath string, opts BindOptions) er
 		return fmt.Errorf("bind mount source: %w", err)
 	}
 
-	t, err := m.root.OpenMountTarget(containerPath, fi.IsDir(), NotKernelFS)
+	t, err := m.root.OpenMountTargetWithin(containerPath, fi.IsDir(), NotKernelFS, opts.Within)
 	if err != nil {
 		return err
 	}
@@ -584,6 +594,11 @@ func (m *Mounter) BindMount(hostPath, containerPath string, opts BindOptions) er
 		if !mounted {
 			log.Debugf("%s already is %s: not binding it", t.File.Name(), hostPath)
 			return nil
+		}
+	}
+	if opts.Within != nil {
+		if err := opts.Within(t.ParentFd()); err != nil {
+			return &fs.PathError{Op: "mount", Path: t.File.Name(), Err: err}
 		}
 	}
 	flags := uintptr(unix.MS_BIND)
@@ -650,8 +665,9 @@ func (m *Mounter) BindDevice(path string, check osutil.DirCheck) error {
 // MountFS mounts a new file system of type fstype (e.g. tmpfs or devpts) on
 // the directory containerPath, created if needed. An existing mount is
 // reused. check, if not nil, is applied to the directories traversed, in
-// addition to the refusal of kernel file systems.
-func (m *Mounter) MountFS(fstype, containerPath string, opts FSOptions, check osutil.DirCheck) error {
+// addition to the refusal of kernel file systems. It returns an O_PATH
+// descriptor of the mount (e.g. for OnMountOf), which the caller closes.
+func (m *Mounter) MountFS(fstype, containerPath string, opts FSOptions, check osutil.DirCheck) (*os.File, error) {
 	both := func(fd int) error {
 		if check != nil {
 			if err := check(fd); err != nil {
@@ -662,7 +678,7 @@ func (m *Mounter) MountFS(fstype, containerPath string, opts FSOptions, check os
 	}
 	t, err := m.root.OpenMountTarget(containerPath, true, both)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer t.Close()
 	var flags uintptr
@@ -681,11 +697,7 @@ func (m *Mounter) MountFS(fstype, containerPath string, opts FSOptions, check os
 	if opts.NoAtime {
 		flags |= unix.MS_NOATIME
 	}
-	mnt, err := m.mountOn(t, fstype, fstype, flags, strings.Join(opts.Data, ","), false)
-	if err != nil {
-		return err
-	}
-	return mnt.Close()
+	return m.mountOn(t, fstype, fstype, flags, strings.Join(opts.Data, ","), false)
 }
 
 // remountReadonlyRecursive makes the mount open as mnt and every mount below

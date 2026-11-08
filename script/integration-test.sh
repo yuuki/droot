@@ -608,6 +608,23 @@ else
   rm "$sock" || fail "droot mounted on the host's socket: the host cannot remove it"
   echo "ok - the host's socket is not mounted on"
   "$DROOT" umount --root "$WORK/sd"
+  # A --bind of another host directory over the directory of the socket:
+  # droot creates no mount point in it (#56), with or without --unshare.
+  mkdir "$WORK/sd-hostdir"
+  notify_server "$sock" "$WORK/sd-notify.out"
+  for unshare in --unshare ""; do
+    # shellcheck disable=SC2086 # $unshare is one option or none
+    NOTIFY_SOCKET="$sock" "$DROOT" run --root "$WORK/sd" $unshare --robind /usr --bind "$WORK/sd-hostdir:$SD_DIR" -- true 2>"$WORK/sd.err" ||
+      fail "droot run ${unshare:-without --unshare} with a --bind over the directory of NOTIFY_SOCKET: $(cat "$WORK/sd.err")"
+    grep -q "COMMAND cannot send notifications" "$WORK/sd.err" || fail "no warning about the socket that is not bound: $(cat "$WORK/sd.err")"
+    assert_eq "${unshare:-no --unshare}: no mount point of NOTIFY_SOCKET in a host directory bound over its directory" \
+      "$(ls -A "$WORK/sd-hostdir")" ""
+  done
+  "$DROOT" umount --root "$WORK/sd"
+  # In a --tmpfs, it is created, also with --read-only.
+  NOTIFY_SOCKET="$sock" "$DROOT" run --root "$WORK/sd" --read-only --robind /usr --tmpfs "$SD_DIR" -- "$SD_PYTHON" /sd.py probe >/dev/null ||
+    fail "droot run with a --tmpfs on the directory of NOTIFY_SOCKET"
+  assert_notified "notifications through a --tmpfs on the directory of the socket" "$WORK/sd-notify.out"
 fi
 
 echo "# rootless"

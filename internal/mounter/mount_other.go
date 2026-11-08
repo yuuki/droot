@@ -5,6 +5,7 @@ package mounter
 import (
 	"errors"
 	"fmt"
+	"os"
 	"runtime"
 
 	"github.com/yuuki/droot/internal/osutil"
@@ -17,7 +18,7 @@ var ErrOtherMount = errors.New("is on another mount than the container root")
 func NotKernelFS(int) error { return unsupported() }
 
 // OnMountOf is only supported on Linux.
-func OnMountOf(int) osutil.DirCheck { return func(int) error { return unsupported() } }
+func OnMountOf(...int) osutil.DirCheck { return func(int) error { return unsupported() } }
 
 func unsupported() error {
 	return fmt.Errorf("mounting is not supported on %s/%s: droot run and droot umount require Linux", runtime.GOOS, runtime.GOARCH)
@@ -36,7 +37,9 @@ func (m *Mounter) BindMount(string, string, BindOptions) error { return unsuppor
 func (m *Mounter) BindDevice(string, osutil.DirCheck) error { return unsupported() }
 
 // MountFS is only supported on Linux.
-func (m *Mounter) MountFS(string, string, FSOptions, osutil.DirCheck) error { return unsupported() }
+func (m *Mounter) MountFS(string, string, FSOptions, osutil.DirCheck) (*os.File, error) {
+	return nil, unsupported()
+}
 
 // Rollback is only supported on Linux.
 func (m *Mounter) Rollback() error { return unsupported() }

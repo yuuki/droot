@@ -54,7 +54,8 @@ func runCommand() *cli.Command {
 			"Type=notify), the sockets of socket activation (LISTEN_FDS, LISTEN_PID,\n" +
 			"LISTEN_FDNAMES) and the watchdog (WATCHDOG_USEC, WATCHDOG_PID) of droot,\n" +
 			"which --env and --env-file override. A NOTIFY_SOCKET that is a path is bind\n" +
-			"mounted read-only on the same path in the container. Rootless, the\n" +
+			"mounted read-only on the same path in the container; its mount point is only\n" +
+			"created on ROOT_DIR's own file system or in a --tmpfs. Rootless, the\n" +
 			"notifications come from a child of droot, the main process of the service:\n" +
 			"set NotifyAccess=all in the unit.\n\n" +
 			"--config FILE reads options from FILE, in a subset of TOML: lines KEY = VALUE,\n" +
@@ -686,7 +687,15 @@ func (r *runner) mount(ctx context.Context, mnt *mounter.Mounter, env []string) 
 			return err
 		}
 	}
-	mounts := r.userMounts(mnt)
+	// The mounts of --tmpfs, where droot creates the mount point of the
+	// notification socket if needed, as on the root's own file system.
+	var tmpfs []*os.File
+	defer func() {
+		for _, f := range tmpfs {
+			_ = f.Close()
+		}
+	}()
+	mounts := r.userMounts(mnt, &tmpfs)
 	for _, m := range mounts {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -700,12 +709,8 @@ func (r *runner) mount(ctx context.Context, mnt *mounter.Mounter, env []string) 
 			return err
 		}
 	}
-	if sock := notifySocketMount(env); sock != "" {
-		if slices.ContainsFunc(mounts, func(m userMount) bool { return m.target == sock }) {
-			log.Debugf("not binding %s=%s: --bind or --tmpfs mounts on it", systemd.NotifySocket, sock)
-		} else if err := bindNotifySocket(r.root, mnt, sock); err != nil {
-			return err
-		}
+	if err := r.bindNotifySocket(mnt, env, mounts, tmpfs); err != nil {
+		return err
 	}
 
 	linkVarLock(r.root)
@@ -722,10 +727,32 @@ func (r *runner) mount(ctx context.Context, mnt *mounter.Mounter, env []string) 
 	return nil
 }
 
+// bindNotifySocket bind mounts the socket of systemd's notifications of
+// COMMAND (env) in the container, if any (see notifySocketMount), unless one
+// of mounts, those of the command line, mounts on its path. Its mount point
+// may be created on the root's own file system and in tmpfs, the mounts of
+// --tmpfs.
+func (r *runner) bindNotifySocket(mnt *mounter.Mounter, env []string, mounts []userMount, tmpfs []*os.File) error {
+	sock := notifySocketMount(env)
+	if sock == "" {
+		return nil
+	}
+	if slices.ContainsFunc(mounts, func(m userMount) bool { return m.target == sock }) {
+		log.Debugf("not binding %s=%s: --bind or --tmpfs mounts on it", systemd.NotifySocket, sock)
+		return nil
+	}
+	fds := []int{r.root.Fd()}
+	for _, f := range tmpfs {
+		fds = append(fds, int(f.Fd()))
+	}
+	return bindNotifySocket(r.root, mnt, sock, mounter.OnMountOf(fds...))
+}
+
 // userMounts returns the bind and tmpfs mounts of the command line, to be
 // made with mnt, parents before children (like Docker), so that
-// `--tmpfs /data --bind H:/data/x` binds H inside the tmpfs.
-func (r *runner) userMounts(mnt *mounter.Mounter) []userMount {
+// `--tmpfs /data --bind H:/data/x` binds H inside the tmpfs. The mounts of
+// --tmpfs add a descriptor of theirs to tmpfs.
+func (r *runner) userMounts(mnt *mounter.Mounter, tmpfs *[]*os.File) []userMount {
 	var mounts []userMount
 	for _, b := range r.opts.binds {
 		mounts = append(mounts, userMount{target: b.container, mount: func() error {
@@ -737,9 +764,11 @@ func (r *runner) userMounts(mnt *mounter.Mounter) []userMount {
 	}
 	for _, t := range r.opts.tmpfs {
 		mounts = append(mounts, userMount{target: t.path, mount: func() error {
-			if err := mnt.MountFS("tmpfs", t.path, t.opts, nil); err != nil {
+			f, err := mnt.MountFS("tmpfs", t.path, t.opts, nil)
+			if err != nil {
 				return fmt.Errorf("mount a tmpfs on %s: %w", t.path, err)
 			}
+			*tmpfs = append(*tmpfs, f)
 			return nil
 		}})
 	}
@@ -923,26 +952,47 @@ func notifySocketMount(env []string) string {
 // chmod or chown the host's socket. A mount left by a previous run is
 // replaced, in case systemd created the socket again since.
 //
+// The user did not ask for this mount, so droot makes it only in directories
+// that within accepts: those of the root's own file system and of --tmpfs,
+// not those bound from the host, where the mount point would be left behind
+// (and busy until 'droot umount' without --unshare).
+//
 // A socket that cannot be bound is only reported: droot may have inherited
 // a NOTIFY_SOCKET that was not meant for it (from a process of a
 // Type=notify service), and COMMAND may not send notifications at all. A
 // failure of the mount itself is an error.
-func bindNotifySocket(root *osutil.Root, mnt *mounter.Mounter, sock string) error {
-	if err := notifySocketTarget(root, sock); err != nil {
-		log.Warnf("%v: COMMAND cannot send notifications to systemd", err)
+func bindNotifySocket(root *osutil.Root, mnt *mounter.Mounter, sock string, within osutil.DirCheck) error {
+	if err := notifySocketTarget(root, sock, within); err != nil {
+		warnNotifySocket(sock, err)
 		return nil
 	}
-	opts := mounter.BindOptions{ReadOnly: true, Replace: true, SkipSame: true}
+	opts := mounter.BindOptions{ReadOnly: true, Replace: true, SkipSame: true, Within: within}
 	if err := mnt.BindMount(sock, sock, opts); err != nil {
+		if errors.Is(err, mounter.ErrOtherMount) {
+			warnNotifySocket(sock, err)
+			return nil
+		}
 		return fmt.Errorf("bind mount the socket of %s, %s: %w", systemd.NotifySocket, sock, err)
 	}
 	log.Debugf("%s=%s is reachable in the container", systemd.NotifySocket, sock)
 	return nil
 }
 
+// warnNotifySocket reports that the socket sock of systemd's notifications
+// cannot be bound in the container, because of err.
+func warnNotifySocket(sock string, err error) {
+	if errors.Is(err, mounter.ErrOtherMount) {
+		log.Debugf("%s: %v", systemd.NotifySocket, err)
+		err = fmt.Errorf("%s: not binding %s in the container: its path there is on a mount other than ROOT_DIR's own file system "+
+			"and --tmpfs (a --bind of a host directory?), where droot makes no mount on its own; --bind %s binds it",
+			systemd.NotifySocket, sock, sock)
+	}
+	log.Warnf("%v: COMMAND cannot send notifications to systemd", err)
+}
+
 // notifySocketTarget checks that sock is a socket, and creates its mount
-// point in the container if needed.
-func notifySocketTarget(root *osutil.Root, sock string) error {
+// point in the container if needed, in directories within accepts.
+func notifySocketTarget(root *osutil.Root, sock string, within osutil.DirCheck) error {
 	fi, err := os.Stat(sock)
 	if err != nil {
 		return fmt.Errorf("%s: %w", systemd.NotifySocket, err)
@@ -950,8 +1000,11 @@ func notifySocketTarget(root *osutil.Root, sock string) error {
 	if fi.Mode().Type() != fs.ModeSocket {
 		return fmt.Errorf("%s: %s is not a socket", systemd.NotifySocket, sock)
 	}
-	t, err := root.OpenMountTarget(sock, false, mounter.NotKernelFS)
+	t, err := root.OpenMountTargetWithin(sock, false, mounter.NotKernelFS, within)
 	if err != nil {
+		if errors.Is(err, mounter.ErrOtherMount) {
+			return err
+		}
 		return fmt.Errorf("%s: %w", systemd.NotifySocket, err)
 	}
 	return t.Close()
@@ -1012,20 +1065,25 @@ func setupDev(root *osutil.Root, mnt *mounter.Mounter, shm, userns bool) error {
 			log.Warnf("cannot create %s: %v", l.path, err)
 		}
 	}
-	err := mnt.MountFS("devpts", "/dev/pts", devpts, onRoot)
+	pts, err := mnt.MountFS("devpts", "/dev/pts", devpts, onRoot)
 	if err != nil && userns && !osutil.GIDMapped(ttyGID) {
 		// Without the group tty, as in rootless mode without
 		// subordinate IDs.
 		opts := devpts
 		opts.Data = slices.DeleteFunc(slices.Clone(devpts.Data), func(o string) bool { return strings.HasPrefix(o, "gid=") })
-		err = mnt.MountFS("devpts", "/dev/pts", opts, onRoot)
+		pts, err = mnt.MountFS("devpts", "/dev/pts", opts, onRoot)
 	}
 	if err != nil {
 		log.Warnf("cannot mount devpts on /dev/pts (pseudo-terminals will not work): %v", err)
+	} else {
+		_ = pts.Close()
 	}
 	if shm {
-		if err := mnt.MountFS("tmpfs", "/dev/shm", shmfs, onRoot); err != nil {
+		f, err := mnt.MountFS("tmpfs", "/dev/shm", shmfs, onRoot)
+		if err != nil {
 			log.Warnf("cannot mount a tmpfs on /dev/shm: %v", err)
+		} else {
+			_ = f.Close()
 		}
 	}
 	return nil

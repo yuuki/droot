@@ -634,9 +634,11 @@ func TestRollback(t *testing.T) {
 	if err := m.ProtectKernelFS(); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.MountFS("tmpfs", "/tmp", FSOptions{}, nil); err != nil {
+	tmp, err := m.MountFS("tmpfs", "/tmp", FSOptions{}, nil)
+	if err != nil {
 		t.Fatal(err)
 	}
+	_ = tmp.Close()
 	if err := m.BindMount(host, "/data/inner", BindOptions{ReadOnly: true}); err != nil {
 		t.Fatal(err)
 	}
@@ -884,5 +886,79 @@ func TestBindMountSkipSame(t *testing.T) {
 	}
 	if mounts, _ := m.Mounts(); len(mounts) != 2 {
 		t.Fatalf("want the mounts of the directory and of /etc/other, got %q", mounts)
+	}
+}
+
+func TestBindMountWithin(t *testing.T) {
+	dir := privilegedDir(t)
+	hostRun := filepath.Join(dir, "run")
+	sock := filepath.Join(hostRun, "notify")
+	hostData := filepath.Join(dir, "data")
+	root := filepath.Join(dir, "root")
+	for _, d := range []string{hostRun, hostData, root} {
+		if err := os.Mkdir(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(sock, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(hostData, "existing"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m := newTestMounter(t, root)
+	tmpfs, err := m.MountFS("tmpfs", "/tmp", FSOptions{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tmpfs.Close()
+	within := OnMountOf(m.root.Fd(), int(tmpfs.Fd()))
+	opts := BindOptions{ReadOnly: true, SkipSame: true, Within: within}
+
+	// A host directory bound over a parent: nothing is created or mounted
+	// in it, whether the mount point exists or not.
+	if err := m.BindMount(hostData, "/srv", BindOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{"/srv/systemd/notify", "/srv/existing"} {
+		if err := m.BindMount(sock, target, opts); !errors.Is(err, ErrOtherMount) {
+			t.Errorf("BindMount on %s: want ErrOtherMount, got %v", target, err)
+		}
+	}
+	if entries, _ := os.ReadDir(hostData); len(entries) != 1 {
+		t.Errorf("something was created in the host's directory: %v", entries)
+	}
+	if err := os.Remove(filepath.Join(hostData, "existing")); err != nil {
+		t.Errorf("the host's file is busy: %v", err)
+	}
+
+	// On the root's file system and in the tmpfs, the mount point is
+	// created.
+	for _, target := range []string{"/run/systemd/notify", "/tmp/systemd/notify"} {
+		if err := m.BindMount(sock, target, opts); err != nil {
+			t.Errorf("BindMount on %s: %v", target, err)
+		}
+	}
+
+	// A bind of the directory of the socket already makes it reachable:
+	// SkipSame applies before Within.
+	if err := m.BindMount(hostRun, "/var/run", BindOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.BindMount(sock, "/var/run/notify", opts); err != nil {
+		t.Errorf("BindMount through a bind of the directory: %v", err)
+	}
+	mounts, err := m.Mounts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"/tmp", "/srv", "/run/systemd/notify", "/tmp/systemd/notify", "/var/run"}
+	for i, w := range want {
+		want[i] = filepath.Join(root, w)
+	}
+	slices.Sort(mounts)
+	slices.Sort(want)
+	if !slices.Equal(mounts, want) {
+		t.Errorf("mounts: got %q, want %q", mounts, want)
 	}
 }

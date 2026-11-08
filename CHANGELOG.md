@@ -18,7 +18,10 @@ Releases up to 0.7.7 are described on the
   image's environment and `--env-file`. A `NOTIFY_SOCKET` that is a path
   is bind mounted read-only on the same path in the container, unless a
   `--bind` or `--tmpfs` mounts on that path or the socket is already
-  there; one that cannot be bound only gets a warning.
+  there. Its mount point is only created on `ROOT_DIR`'s own file system
+  or in a `--tmpfs`, never in a host directory bound over its directory
+  ([#56](https://github.com/yuuki/droot/issues/56)). A socket that cannot
+  be bound only gets a warning.
 - `examples/systemd/app-notify.service` (`Type=notify`) and
   `examples/systemd/app.socket`, described in the deployment guide.
 

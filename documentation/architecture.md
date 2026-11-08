@@ -198,10 +198,14 @@ setuid bits are preserved.
    read-only on the same path, replacing the mount of a previous run unless
    it is the same socket. Nothing is mounted when a `--bind` or `--tmpfs`
    mounts on the path, or when the path already is the socket (a `--bind`
-   of its directory: a mount there would make the host's socket busy). A
-   socket that cannot be bound (missing, or no mount point can be created)
-   only gets a warning: droot may have inherited a `NOTIFY_SOCKET` meant for
-   another process.
+   of its directory: a mount there would make the host's socket busy).
+   The user did not ask for this mount, so its mount point is only created
+   in, and mounted on in, directories on `ROOT_DIR`'s own mount or on a
+   mount of `--tmpfs` (`Root.OpenMountTargetWithin`, `BindOptions.Within`):
+   never in a host directory that a `--bind` mounts over a parent of the
+   path, where it would be left behind. A socket that cannot be bound
+   (missing, or no mount point can be created) only gets a warning: droot
+   may have inherited a `NOTIFY_SOCKET` meant for another process.
 5. Create `/var/lock -> ../run/lock` if missing, and populate `/dev`: the
    device nodes `/dev/null` (1:3), `/dev/zero` (1:5), `/dev/full` (1:7),
    `/dev/random` (1:8), `/dev/urandom` (1:9) and `/dev/tty` (5:0), owned by

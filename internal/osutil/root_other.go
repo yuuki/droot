@@ -52,6 +52,11 @@ func (*Root) OpenMountTarget(string, bool, DirCheck) (*MountTarget, error) {
 	return nil, unsupported("OpenMountTarget")
 }
 
+// OpenMountTargetWithin is only supported on Linux.
+func (*Root) OpenMountTargetWithin(string, bool, DirCheck, DirCheck) (*MountTarget, error) {
+	return nil, unsupported("OpenMountTarget")
+}
+
 // OpenNoFollow is only supported on Linux.
 func (*Root) OpenNoFollow(string) (*os.File, error) { return nil, unsupported("OpenNoFollow") }
 

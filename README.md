@@ -370,11 +370,15 @@ the service, for its two protocols, `Type=notify` and socket activation:
   [`sd_notify(3)`](https://www.freedesktop.org/software/systemd/man/latest/sd_notify.html)
   (`READY=1`, `STATUS=...`, `WATCHDOG=1`, ...). A path, such as
   `/run/systemd/notify`, is bind mounted read-only on the same path in the
-  container (created if missing, like the mount points of `--bind`):
-  `COMMAND` can send notifications, but not change the host's socket. An
-  abstract socket (`@NAME`) needs no mount: droot shares the host's network
+  container: `COMMAND` can send notifications, but not change the host's
+  socket. The mount point is created if missing, but only on `ROOT_DIR`'s
+  own file system or in a `--tmpfs`: never in a host directory that a
+  `--bind` mounts over its directory (with `--bind /var/lib/app/run:/run`,
+  `--bind /run/systemd/notify` binds the socket explicitly). An abstract
+  socket (`@NAME`) needs no mount: droot shares the host's network
   namespace. If droot cannot bind the socket (it does not exist, or the
-  mount point cannot be created), it warns and runs `COMMAND` all the same.
+  mount point cannot be created there), it warns and runs `COMMAND` all
+  the same.
 - `LISTEN_FDS`, `LISTEN_PID`, `LISTEN_FDNAMES` and `LISTEN_PIDFDID`
   ([`sd_listen_fds(3)`](https://www.freedesktop.org/software/systemd/man/latest/sd_listen_fds.html)),
   if `LISTEN_PID` is the PID of droot. The sockets themselves, descriptors

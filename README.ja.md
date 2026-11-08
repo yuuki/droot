@@ -293,7 +293,7 @@ LimitNOFILE=65536
 
 systemd の下では、systemd がサービスのメインプロセスである droot に渡す、2 つのプロトコル（`Type=notify` とソケットアクティベーション）のための情報を `COMMAND` も受け取ります。
 
-- `NOTIFY_SOCKET`。[`sd_notify(3)`](https://www.freedesktop.org/software/systemd/man/latest/sd_notify.html) のソケットです（`READY=1`、`STATUS=...`、`WATCHDOG=1` など）。`/run/systemd/notify` のようなパスの場合は、コンテナ内の同じパスに読み取り専用でバインドマウントされます（存在しなければ `--bind` のマウントポイントと同様に作成されます）。`COMMAND` は通知を送れますが、ホストのソケットを変更することはできません。抽象ソケット（`@NAME`）はマウント不要です。droot はホストのネットワーク名前空間を共有しているためです。ソケットをバインドできない場合（ソケットが存在しない、マウントポイントを作成できないなど）、droot は警告を出したうえで、そのまま `COMMAND` を実行します。
+- `NOTIFY_SOCKET`。[`sd_notify(3)`](https://www.freedesktop.org/software/systemd/man/latest/sd_notify.html) のソケットです（`READY=1`、`STATUS=...`、`WATCHDOG=1` など）。`/run/systemd/notify` のようなパスの場合は、コンテナ内の同じパスに読み取り専用でバインドマウントされます。`COMMAND` は通知を送れますが、ホストのソケットを変更することはできません。マウントポイントは存在しなければ作成されますが、作成されるのは `ROOT_DIR` 自身のファイルシステムか `--tmpfs` の中だけです。`--bind` でそのディレクトリを覆うホストのディレクトリには作成されません（`--bind /var/lib/app/run:/run` の場合は、`--bind /run/systemd/notify` で明示的にソケットをバインドします）。抽象ソケット（`@NAME`）はマウント不要です。droot はホストのネットワーク名前空間を共有しているためです。ソケットをバインドできない場合（ソケットが存在しない、そこにマウントポイントを作成できないなど）、droot は警告を出したうえで、そのまま `COMMAND` を実行します。
 - `LISTEN_FDS`、`LISTEN_PID`、`LISTEN_FDNAMES`、`LISTEN_PIDFDID`（[`sd_listen_fds(3)`](https://www.freedesktop.org/software/systemd/man/latest/sd_listen_fds.html)）。`LISTEN_PID` が droot の PID である場合に限ります。ソケットそのもの（ファイルディスクリプタ 3、4、...）は、`LISTEN_PID` の値にかかわらず、droot に渡された他のディスクリプタと同様に `COMMAND` に継承されます。
 - `WATCHDOG_USEC` と `WATCHDOG_PID`（`WatchdogSec=`）。`WATCHDOG_PID` が droot の PID であるか、未設定の場合に限ります。
 

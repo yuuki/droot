@@ -47,6 +47,12 @@ type BindOptions struct {
 	// mount on it would make hostPath busy on the host, which could then
 	// no longer remove or replace it.
 	SkipSame bool
+	// Within, if not nil, must accept the directory the mount point is in,
+	// and those in which the mount point or its missing parents are
+	// created: e.g. OnMountOf, so that a mount droot makes on its own
+	// neither creates nor mounts anything in a directory bound from the
+	// host. It is not called when SkipSame applies: nothing is mounted.
+	Within osutil.DirCheck
 }
 
 // FSOptions are the options of a new file system mount (MountFS).
