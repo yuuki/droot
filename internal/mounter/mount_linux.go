@@ -596,7 +596,7 @@ func (m *Mounter) BindMount(hostPath, containerPath string, opts BindOptions) er
 			return nil
 		}
 	}
-	if opts.Within != nil {
+	if opts.Within != nil && opts.WithinParent {
 		if err := opts.Within(t.ParentFd()); err != nil {
 			return &fs.PathError{Op: "mount", Path: t.File.Name(), Err: err}
 		}

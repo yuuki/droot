@@ -119,7 +119,10 @@ users, the reason why some distributions restrict them — nothing droot or
   in the container read-only: its processes can send notifications, which
   systemd attributes to the unit of their cgroup and, with the default
   `NotifyAccess=main`, only accepts from its main process, but cannot
-  `chmod` or `chown` the socket, which every service of the host uses. The
+  `chmod` or `chown` the socket, which every service of the host uses.
+  Rootless, the container gets a socket of the supervising droot instead,
+  which relays the notifications of `COMMAND` only: systemd's socket is not
+  reachable from the container. The
   variables of socket activation are only passed on when `LISTEN_PID` is
   the PID of droot. `--no-systemd` passes none of these variables and binds
   no socket, e.g. when droot inherits a `NOTIFY_SOCKET` that is not meant

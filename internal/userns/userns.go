@@ -14,7 +14,9 @@
 // The sockets of socket activation keep their descriptors (3, 4, ...) in the
 // child, which takes over the variables of systemd naming the parent by its
 // PID (see systemd.Adopt): COMMAND, which the second stage becomes, is the
-// process they are for.
+// process they are for. Its notifications are relayed by the parent, the
+// main process of the service, which systemd accepts them from (see
+// Options.RelayNotifications).
 package userns
 
 import (
@@ -33,7 +35,20 @@ const (
 	// envParent is the PID of the supervising droot, which the child
 	// must not survive.
 	envParent = "_DROOT_USERNS_PARENT"
+	// envNotifyRelay is the socket of the relay of the notifications of
+	// COMMAND (see Options.RelayNotifications).
+	envNotifyRelay = "_DROOT_USERNS_NOTIFY_RELAY"
 )
+
+// Options are the options of Run.
+type Options struct {
+	// RelayNotifications relays the notifications of COMMAND to the
+	// notification socket of systemd (NOTIFY_SOCKET, a path), from the
+	// supervising droot, the main process of the service (see
+	// systemd.Relay): the child gets the socket of the relay instead
+	// (NotifyRelay). For droot run, whose child becomes COMMAND.
+	RelayNotifications bool
+}
 
 // Range maps Size IDs of the namespace, from Inside, to the IDs of the host
 // from Outside.

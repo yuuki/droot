@@ -454,11 +454,12 @@ if sys.argv[1] == "probe":
             except OSError as e:
                 print("chmod: " + os.strerror(e.errno), flush=True)
         s = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
-        s.sendto(("READY=1\nSTATUS=pid " + pid).encode(), address(notify))
+        s.sendto(("READY=1\nSTATUS=pid %s %d" % (pid, os.getppid())).encode(), address(notify))
         print("notified", flush=True)
 elif sys.argv[1] == "notify-server":
     # The service manager: receives a notification on ADDR, and tells
-    # whether the process that sent it is the one it says it is.
+    # whether the process that sent it is the probe it says it is, or its
+    # parent (rootless, the supervising droot relays it).
     s = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
     s.setsockopt(socket.SOL_SOCKET, socket.SO_PASSCRED, 1)
     s.bind(address(sys.argv[2]))
@@ -470,9 +471,10 @@ elif sys.argv[1] == "notify-server":
     sender = [struct.unpack("iii", d[:12])[0] for level, kind, d in ancillary
               if level == socket.SOL_SOCKET and kind == socket.SCM_CREDENTIALS][0]
     lines = msg.decode().split("\n")
-    claimed = [int(l.split()[1]) for l in lines if l.startswith("STATUS=pid ")]
+    claimed = [l.split()[1:] for l in lines if l.startswith("STATUS=pid ")]
+    by = {str(sender): "the probe"} if not claimed else {claimed[0][0]: "the probe", claimed[0][1]: "the parent of the probe"}
     print(" ".join(l for l in lines if not l.startswith("STATUS=")) + ", sent by " +
-          ("the probe" if claimed == [sender] else "PID %d" % sender), flush=True)
+          by.get(str(sender), "PID %d" % sender), flush=True)
 elif sys.argv[1] == "connect":
     # A client of a socket of socket activation.
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -512,8 +514,9 @@ wait_until() {
 }
 # notify_server ADDR OUT: starts a notification socket on ADDR in the
 # background (its PID in notify_pid), which writes what it receives to OUT.
-# assert_notified NAME OUT then waits for it (in this shell: a subshell
-# cannot wait for it) and checks that it got READY=1 from the probe.
+# assert_notified NAME OUT [SENDER] then waits for it (in this shell: a
+# subshell cannot wait for it) and checks that it got READY=1 from SENDER,
+# the probe by default.
 notify_server() {
   if [[ $1 == /* ]]; then rm -f "$1"; fi
   python3 "$WORK/sd.py" notify-server "$1" >"$2" &
@@ -522,7 +525,7 @@ notify_server() {
 }
 assert_notified() {
   wait "$notify_pid" || fail "$1: no notification ($(cat "$2"))"
-  assert_eq "$1" "$(tail -n +2 "$2")" "READY=1, sent by the probe"
+  assert_eq "$1" "$(tail -n +2 "$2")" "READY=1, sent by ${3:-the probe}"
 }
 # activate PREFIX... -- ARGS...: runs systemd-socket-activate ARGS (droot
 # run ..., after options of its own) with two sockets in $SD_SOCKETS (PREFIX
@@ -719,9 +722,18 @@ else
     assert_eq "rootless notifications: NOTIFY_SOCKET is bound read-only, WATCHDOG_PID is COMMAND's PID" \
       "$("${AS_USER[@]}" NOTIFY_SOCKET="$sock" WATCHDOG_USEC=30000000 "${SD_PROBE[@]}" "$RL_DROOT" "${rl_sd_run[@]}")" \
       "$(printf 'NOTIFY_SOCKET=%s WATCHDOG_USEC=30000000 WATCHDOG_PID=self\nchmod: Read-only file system\nnotified' "$sock")"
-    # From COMMAND, a child of the main process (the supervising droot):
-    # units need NotifyAccess=all.
-    assert_notified "rootless notifications come from COMMAND" "$WORK/sd-notify.out"
+    # The supervising droot, the main process of the service, relays them
+    # (#58): the default NotifyAccess=main accepts them. Its socket is gone.
+    assert_notified "rootless notifications of COMMAND are relayed by the supervising droot" "$WORK/sd-notify.out" "the parent of the probe"
+    assert_eq "rootless: the socket of the notification relay is removed" \
+      "$(find "$WORK/xdg-nobody" -name 'droot-notify-*')" ""
+    # Through a --bind of its directory, systemd's socket is in the
+    # container already: the relay is mounted over it, in the private mount
+    # namespace of the run.
+    notify_server "$sock" "$WORK/sd-notify.out"
+    "${AS_USER[@]}" NOTIFY_SOCKET="$sock" "$RL_DROOT" run --root "$WORK/rl-sd" --robind /usr --robind "$SD_DIR" --user 0 -- \
+      "$SD_PYTHON" /sd.py probe >/dev/null || fail "rootless: droot run with a --bind of the directory of NOTIFY_SOCKET"
+    assert_notified "rootless: notifications relayed through a --bind of the directory of the socket" "$WORK/sd-notify.out" "the parent of the probe"
     # No mount point can be created (in a read-only tmpfs): reported, not
     # fatal.
     if ! "${AS_USER[@]}" NOTIFY_SOCKET="$sock" "$RL_DROOT" run --root "$WORK/rl-sd" --robind /usr --tmpfs /tmp:ro --user 0 -- \
@@ -784,6 +796,12 @@ else
       assert_eq "rootless socket activation with subordinate IDs" \
         "$(activate "${AS_USER[@]}" -- "$RL_DROOT" run --root "$WORK/rl-sd-sub" --robind /usr --user 0 -- "$SD_PYTHON" /sd.py probe)" \
         "$(printf 'LISTEN_PID=self LISTEN_FDS=2 LISTEN_FDNAMES=web:admin\naccepted on fd 3\naccepted on fd 4')"
+      # COMMAND run as another user than the user's own reaches the relay
+      # too.
+      notify_server "$sock" "$WORK/sd-notify.out"
+      "${AS_USER[@]}" NOTIFY_SOCKET="$sock" "$RL_DROOT" run --root "$WORK/rl-sd-sub" --robind /usr --user 1000 --group 1000 -- \
+        "$SD_PYTHON" /sd.py probe >/dev/null || fail "rootless: droot run as a subordinate ID with NOTIFY_SOCKET"
+      assert_notified "rootless: the notifications of COMMAND run as a subordinate ID are relayed" "$WORK/sd-notify.out" "the parent of the probe"
     fi
   else
     echo "skip - rootless with subordinate IDs: set ROOTLESS_USER to a user with entries in /etc/subuid and /etc/subgid (and install newuidmap)"

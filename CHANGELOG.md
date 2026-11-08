@@ -36,9 +36,12 @@ Releases up to 0.7.7 are described on the
 - Rootless, the sockets of socket activation reach `COMMAND`: the
   supervising droot passed a pipe of its own as descriptor 3, which
   replaced the first socket. `LISTEN_PID` and `WATCHDOG_PID` are now the
-  PID of `COMMAND` instead of that of the supervising droot; its
-  notifications need `NotifyAccess=all`, since the supervising droot is the
-  main process of the service.
+  PID of `COMMAND` instead of that of the supervising droot. The
+  supervising droot, the main process of the service, relays the
+  notifications of `COMMAND` (not those of its children, and without
+  `MAINPID=`) from a socket of its own bound in the container instead of
+  systemd's, so that the default `NotifyAccess=main` accepts them
+  ([#58](https://github.com/yuuki/droot/issues/58)).
 - The mount points `droot run` creates have mode 0755 (directories) and
   0644 (empty files for file bind mounts) whatever the umask: under a unit
   with `UMask=0077`, they were 0700 and 0600, and other users than root

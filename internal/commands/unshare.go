@@ -52,7 +52,7 @@ func doUnshare(ctx context.Context, cmd *cli.Invocation) error {
 		if err != nil {
 			return err
 		}
-		return userns.Run(ctx, m)
+		return userns.Run(ctx, m, userns.Options{})
 	}
 	if !osutil.InUserNamespace() {
 		return cmd.UsageError("droot unshare is for users other than root: root extracts archives as they are")

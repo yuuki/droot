@@ -22,5 +22,8 @@ func KeepParentDeathSignal() error { return nil }
 // CurrentMapping is only supported on Linux.
 func CurrentMapping() (Mapping, error) { return Mapping{}, errUnsupported }
 
+// NotifyRelay is "" outside Linux.
+func NotifyRelay() string { return "" }
+
 // Run is only supported on Linux.
-func Run(context.Context, Mapping) error { return errUnsupported }
+func Run(context.Context, Mapping, Options) error { return errUnsupported }

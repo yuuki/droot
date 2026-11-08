@@ -200,10 +200,12 @@ setuid bits are preserved.
    mounts on the path, or when the path already is the socket (a `--bind`
    of its directory: a mount there would make the host's socket busy).
    The user did not ask for this mount, so its mount point is only created
-   in, and mounted on in, directories on `ROOT_DIR`'s own mount or on a
-   mount of `--tmpfs` (`Root.OpenMountTargetWithin`, `BindOptions.Within`):
-   never in a host directory that a `--bind` mounts over a parent of the
-   path, where it would be left behind. A socket that cannot be bound
+   in directories on `ROOT_DIR`'s own mount or on a mount of `--tmpfs`
+   (`Root.OpenMountTargetWithin`, `BindOptions.Within`): never in a host
+   directory that a `--bind` mounts over a parent of the path, where it
+   would be left behind. In the host's mount namespace, an existing mount
+   point in such a directory is refused too (`BindOptions.WithinParent`):
+   the mount would make the host's file busy. A socket that cannot be bound
    (missing, or no mount point can be created) only gets a warning: droot
    may have inherited a `NOTIFY_SOCKET` meant for another process.
 5. Create `/var/lock -> ../run/lock` if missing, and populate `/dev`: the
@@ -298,8 +300,19 @@ through the `userns` package first:
    once; on a terminal, it stays in the group of droot for job control, and
    the signals the terminal sends to its foreground group are not passed
    on while droot is in the foreground. Under systemd, the parent stays
-   the main process of the service: the notifications of `COMMAND`, its
-   child, need `NotifyAccess=all`.
+   the main process of the service, so it relays the notifications of
+   `COMMAND`, its child (`systemd.Relay`): before starting the child, it
+   binds a datagram socket with `SO_PASSCRED` in a new 0700 directory of
+   `$XDG_RUNTIME_DIR` (or `$TMPDIR`), which the second stage bind mounts
+   on the path of `NOTIFY_SOCKET` in the container instead of systemd's
+   socket (named by `_DROOT_USERNS_NOTIFY_RELAY`). The parent forwards to
+   systemd's socket, from itself, each datagram whose `SCM_CREDENTIALS`
+   name `COMMAND` (those of its children are dropped, as
+   `NotifyAccess=main` would), with the descriptors it carries
+   (`SCM_RIGHTS`: `FDSTORE=1`, `BARRIER=1`), which it then closes, and
+   without its `MAINPID=`, `MAINPIDFD=` and `MAINPIDFDID=` lines. Once
+   `COMMAND` has exited, it relays what is still queued, then removes the
+   socket.
 
 Run rootless, droot re-executes itself before reading anything: `--config`
 and `--env-file` may be pipes, which only the second stage must read.

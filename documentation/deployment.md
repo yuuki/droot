@@ -255,16 +255,22 @@ and `WATCHDOG_PID` are its PID.
 
 Rootless (a unit with `User=`, or a user service), droot stays the main
 process and supervises the application, its child. droot passes the
-sockets on to it and makes `LISTEN_PID` and `WATCHDOG_PID` its PID, but
-systemd only accepts notifications from other processes than the main one
-with `NotifyAccess=all`:
+sockets on to it and makes `LISTEN_PID` and `WATCHDOG_PID` its PID, and
+relays its notifications: the application gets a socket of droot in place
+of systemd's, and droot forwards what the application itself sends (not
+its children, and without `MAINPID=`), from the main process, which the
+default `NotifyAccess=main` accepts:
 
 ```ini
 [Service]
 Type=notify
-NotifyAccess=all
 KillMode=mixed
 ```
+
+An application whose notifications come from a child (a shell script
+running `systemd-notify --ready`) should `exec` the program that notifies;
+or else bind systemd's socket in the container with `--bind $NOTIFY_SOCKET`
+and set `NotifyAccess=all`.
 
 ## Rolling back
 

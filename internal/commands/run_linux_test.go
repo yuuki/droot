@@ -228,14 +228,14 @@ func TestNotifySocketTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Refused before the container is looked at: no Root is needed.
-	if err := notifySocketTarget(nil, file, nil); err == nil || !strings.Contains(err.Error(), "is not a socket") {
+	if err := notifySocketTarget(nil, notifyBind{sock: file, source: file}); err == nil || !strings.Contains(err.Error(), "is not a socket") {
 		t.Errorf("a regular file: got %v", err)
 	}
-	if err := notifySocketTarget(nil, file+".missing", nil); !errors.Is(err, fs.ErrNotExist) {
+	if err := notifySocketTarget(nil, notifyBind{sock: file, source: file + ".missing"}); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("a missing socket: got %v", err)
 	}
 	// Not fatal: droot may have inherited NOTIFY_SOCKET by mistake.
-	if err := bindNotifySocket(nil, nil, file+".missing", nil); err != nil {
+	if err := bindNotifySocket(nil, nil, notifyBind{sock: file + ".missing", source: file + ".missing"}); err != nil {
 		t.Errorf("a missing socket must only be reported, got %v", err)
 	}
 }
@@ -306,14 +306,14 @@ func TestBindNotifySocketWithin(t *testing.T) {
 			t.Error(err)
 		}
 	}()
-	within := mounter.OnMountOf(root.Fd())
+	b := notifyBind{sock: sock, source: sock, within: mounter.OnMountOf(root.Fd()), hostNS: true}
 
 	// --bind H:<parent of the socket>: only reported, nothing is created
 	// in H.
 	if err := mnt.BindMount(hostDir, filepath.Join(dir, "n"), mounter.BindOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := bindNotifySocket(root, mnt, sock, within); err != nil {
+	if err := bindNotifySocket(root, mnt, b); err != nil {
 		t.Fatalf("a socket covered by a bind of a host directory must only be reported, got %v", err)
 	}
 	if entries, _ := os.ReadDir(hostDir); len(entries) != 0 {
@@ -324,7 +324,7 @@ func TestBindNotifySocketWithin(t *testing.T) {
 	}
 
 	// On the root's own file system, the socket is bound.
-	if err := bindNotifySocket(root, mnt, sock, within); err != nil {
+	if err := bindNotifySocket(root, mnt, b); err != nil {
 		t.Fatal(err)
 	}
 	var st unix.Stat_t

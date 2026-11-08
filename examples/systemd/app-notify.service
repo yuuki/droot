@@ -10,9 +10,8 @@ After=network-online.target
 [Service]
 # Started once the application has sent READY=1.
 Type=notify
-# Rootless (with User=, or as a user service), the notifications come from
-# the application, a child of droot, the main process: allow them.
-#NotifyAccess=all
+# Rootless (with User=, or as a user service), droot stays the main process
+# and relays the notifications of the application, its child.
 #KillMode=mixed
 # If the application sends WATCHDOG=1 regularly: restart it when it stops.
 #WatchdogSec=30s

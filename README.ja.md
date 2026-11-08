@@ -401,7 +401,7 @@ $ droot run --root app --bind ~/app-data:/data
 
 rootless では、ハードリミットを引き上げること（`--ulimit`）はできず、バインドマウントできるのは自分のユーザーが読めるものだけです。ディストリビューションによっては、非特権ユーザー名前空間が制限されています。Ubuntu 24.04 以降では、`kernel.apparmor_restrict_unprivileged_userns` が 0 であるか、AppArmor プロファイルが droot を許可していない限り、ユーザー名前空間でケーパビリティが使えません。それ以外の環境では `user.max_user_namespaces` と `kernel.unprivileged_userns_clone` を確認してください。ロックは `$XDG_RUNTIME_DIR/droot` に作成されます。
 
-systemd のユニット（ユーザーサービスなど）では `KillMode=mixed` を設定してください。systemd が `SIGTERM` をユニットのすべてのプロセスではなく droot だけに送り、droot がそれを `COMMAND` に転送します（設定しないと `COMMAND` は `SIGTERM` を 2 回受け取ります）。ソケットアクティベーションのソケットは root の場合と同じように `COMMAND` に渡され、`LISTEN_PID` と `WATCHDOG_PID` は `COMMAND` の PID に置き換えられます。ただし、通知はユニットのメインプロセスである droot の子プロセスから送られることになるため、`Type=notify` や `WatchdogSec=` を使う場合は `NotifyAccess=all` を設定してください。
+systemd のユニット（ユーザーサービスなど）では `KillMode=mixed` を設定してください。systemd が `SIGTERM` をユニットのすべてのプロセスではなく droot だけに送り、droot がそれを `COMMAND` に転送します（設定しないと `COMMAND` は `SIGTERM` を 2 回受け取ります）。ソケットアクティベーションのソケットは root の場合と同じように `COMMAND` に渡され、`LISTEN_PID` と `WATCHDOG_PID` は `COMMAND` の PID に置き換えられます。ユニットのメインプロセスである droot は、`COMMAND` の通知（`Type=notify`、`WatchdogSec=`）を自分のソケットから中継します。このソケットはコンテナ内で systemd の `NOTIFY_SOCKET` の代わりになり（`$XDG_RUNTIME_DIR`、なければ `$TMPDIR` に作成するディレクトリに置かれます）、デフォルトの `NotifyAccess=main` のままで通知が受け付けられます。中継するのは `COMMAND` 自身の通知だけです。その子プロセスの通知（`sh -c 'systemd-notify --ready; ...'` など。この場合は通知するプログラムを `exec` してください）は中継せず、`MAINPID=` も取り除きます。droot がメインプロセスのままだからです。代わりに systemd のソケットそのものをコンテナに渡すには、`NotifyAccess=all` を設定したうえで `--bind $NOTIFY_SOCKET` で明示的にバインドします。抽象ソケットの `NOTIFY_SOCKET`（`@NAME`）も中継されないため、`NotifyAccess=all` が必要です。
 
 ## Docker デーモンを使わないエクスポート
 

@@ -534,9 +534,17 @@ In a systemd unit (e.g. a user service), set `KillMode=mixed`: systemd then
 sends `SIGTERM` to droot only, which passes it on to `COMMAND`, instead of to
 every process of the unit — `COMMAND` would get it twice. The sockets of
 socket activation reach `COMMAND` as they would as root, and `LISTEN_PID` and
-`WATCHDOG_PID` become its PID, but its notifications come from a child of
-droot, the main process of the unit: with `Type=notify` or `WatchdogSec=`,
-set `NotifyAccess=all`.
+`WATCHDOG_PID` become its PID. droot, the main process of the unit, relays
+the notifications of `COMMAND` (`Type=notify`, `WatchdogSec=`) from a socket
+of its own, which takes the place of systemd's `NOTIFY_SOCKET` in the
+container (in a directory it creates in `$XDG_RUNTIME_DIR`, or else in
+`$TMPDIR`), so that the default `NotifyAccess=main` accepts them. It relays
+only those of `COMMAND`: not those of its children (`sh -c
+'systemd-notify --ready; ...'`, whose `exec` must then be the program that
+notifies), and without `MAINPID=`, since droot remains the main process. To
+give the container systemd's socket instead, with `NotifyAccess=all`, bind it
+explicitly: `--bind $NOTIFY_SOCKET`. An abstract `NOTIFY_SOCKET` (`@NAME`) is
+not relayed either, and needs `NotifyAccess=all`.
 
 ## Exporting without a Docker daemon
 

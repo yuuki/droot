@@ -913,7 +913,7 @@ func TestBindMountWithin(t *testing.T) {
 	}
 	defer tmpfs.Close()
 	within := OnMountOf(m.root.Fd(), int(tmpfs.Fd()))
-	opts := BindOptions{ReadOnly: true, SkipSame: true, Within: within}
+	opts := BindOptions{ReadOnly: true, SkipSame: true, Within: within, WithinParent: true}
 
 	// A host directory bound over a parent: nothing is created or mounted
 	// in it, whether the mount point exists or not.
@@ -930,6 +930,18 @@ func TestBindMountWithin(t *testing.T) {
 	}
 	if err := os.Remove(filepath.Join(hostData, "existing")); err != nil {
 		t.Errorf("the host's file is busy: %v", err)
+	}
+	// Without WithinParent (in a private mount namespace), an existing
+	// mount point is mounted on, but none is created.
+	if err := os.WriteFile(filepath.Join(hostData, "existing"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	private := BindOptions{ReadOnly: true, SkipSame: true, Within: within}
+	if err := m.BindMount(sock, "/srv/new", private); !errors.Is(err, ErrOtherMount) {
+		t.Errorf("BindMount on /srv/new: want ErrOtherMount, got %v", err)
+	}
+	if err := m.BindMount(sock, "/srv/existing", private); err != nil {
+		t.Errorf("BindMount on /srv/existing: %v", err)
 	}
 
 	// On the root's file system and in the tmpfs, the mount point is
@@ -952,7 +964,7 @@ func TestBindMountWithin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"/tmp", "/srv", "/run/systemd/notify", "/tmp/systemd/notify", "/var/run"}
+	want := []string{"/tmp", "/srv", "/srv/existing", "/run/systemd/notify", "/tmp/systemd/notify", "/var/run"}
 	for i, w := range want {
 		want[i] = filepath.Join(root, w)
 	}
