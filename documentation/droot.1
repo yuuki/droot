@@ -86,7 +86,7 @@ The options must come before COMMAND: everything from COMMAND on is passed to it
 .PP
 Run by another user than root, droot runs rootless: it runs again as root of a new user namespace, where your user is root and your subordinate IDs (/etc/subuid and /etc/subgid, with the newuidmap and newgidmap commands) are the other users, and waits for COMMAND, passing signals on to it. The mounts are private (as with \-\-unshare), /proc and the device files are bind mounts of the host's. Extract archives with 'droot unshare' so that their files keep their owners.
 .PP
-Under systemd, COMMAND gets the notification socket (NOTIFY_SOCKET, for Type=notify), the sockets of socket activation (LISTEN_FDS, LISTEN_PID, LISTEN_FDNAMES) and the watchdog (WATCHDOG_USEC, WATCHDOG_PID) of droot, which \-\-env and \-\-env\-file override. A NOTIFY_SOCKET that is a path is bind mounted read\-only on the same path in the container. Rootless, the notifications come from a child of droot, the main process of the service: set NotifyAccess=all in the unit.
+Under systemd, COMMAND gets the notification socket (NOTIFY_SOCKET, for Type=notify), the sockets of socket activation (LISTEN_FDS, LISTEN_PID, LISTEN_FDNAMES) and the watchdog (WATCHDOG_USEC, WATCHDOG_PID) of droot, which \-\-env and \-\-env\-file override and \-\-no\-systemd leaves out. A NOTIFY_SOCKET that is a path is bind mounted read\-only on the same path in the container; its mount point is only created on the container's own file systems (ROOT_DIR's, a \-\-tmpfs). Rootless, droot stays the main process of the service and relays the notifications of COMMAND, but not those of its children, from a socket of its own bound there instead.
 .PP
 \-\-config FILE reads options from FILE, in a subset of TOML: lines KEY = VALUE, where KEY is the long name of an option and VALUE a string ("..." or '...'), true or false, or an array of strings for repeatable options; command, an array of strings, gives COMMAND. # starts a comment. The options given on the command line take precedence, and repeatable ones are added to the file's:
 .PP
@@ -155,6 +155,9 @@ make the root directory read\-only for COMMAND (implies \-\-unshare); use \-\-tm
 .TP
 \fB\-\-no\-mask\fR
 do not mask the sensitive files of /proc and /sys nor make /proc/sys, /sys and the like read\-only (dangerous)
+.TP
+\fB\-\-no\-systemd\fR
+do not pass systemd's notification socket, socket activation and watchdog variables (NOTIFY_SOCKET, LISTEN_*, WATCHDOG_*) on to COMMAND, nor bind the notification socket in the container; inherited descriptors are kept
 .TP
 \fB\-\-no\-new\-privileges\fR
 set no_new_privs: setuid programs and file capabilities cannot grant privileges to COMMAND (default: true; \-\-no\-new\-privileges=false lets programs such as sudo or su work)

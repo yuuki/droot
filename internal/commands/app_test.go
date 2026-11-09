@@ -246,7 +246,8 @@ func TestParseBindOption(t *testing.T) {
 			}
 			continue
 		}
-		if err != nil || got != tt.want {
+		// reflect.DeepEqual: BindOptions has a function, nil here.
+		if err != nil || !reflect.DeepEqual(got, tt.want) {
 			t.Errorf("parseBindOption(%q, %v) = %+v, %v; want %+v", tt.spec, tt.readonly, got, err, tt.want)
 		}
 	}

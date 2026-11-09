@@ -153,6 +153,68 @@ func TestOpenMountTarget(t *testing.T) {
 	}
 }
 
+func TestOpenMountTargetWithin(t *testing.T) {
+	root, rootDir, _ := newTree(t)
+	// /host stands for a directory bound from the host: within refuses it.
+	host := filepath.Join(rootDir, "host")
+	if err := os.MkdirAll(filepath.Join(host, "systemd"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(host, "systemd", "notify"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var hostSt unix.Stat_t
+	if err := unix.Stat(host, &hostSt); err != nil {
+		t.Fatal(err)
+	}
+	errHost := errors.New("in /host")
+	var calls int
+	within := func(fd int) error {
+		calls++
+		var st unix.Stat_t
+		if err := unix.Fstat(fd, &st); err != nil {
+			return err
+		}
+		if st.Dev == hostSt.Dev && st.Ino == hostSt.Ino {
+			return errHost
+		}
+		return nil
+	}
+
+	// A target that exists is opened, wherever it is: within is only
+	// called where something is created.
+	mt, err := root.OpenMountTargetWithin("/host/systemd/notify", false, nil, within)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mt.Close()
+	if calls != 0 {
+		t.Errorf("within was called %d times without creating anything", calls)
+	}
+	// Neither the target nor its parents are created in /host.
+	for _, path := range []string{"/host/notify", "/host/run/systemd/notify"} {
+		if _, err := root.OpenMountTargetWithin(path, false, nil, within); !errors.Is(err, errHost) {
+			t.Errorf("OpenMountTargetWithin(%q): want the error of within, got %v", path, err)
+		}
+	}
+	if entries, _ := os.ReadDir(host); len(entries) != 1 {
+		t.Errorf("something was created in /host: %v", entries)
+	}
+	// Elsewhere, the target and its parents are created.
+	calls = 0
+	mt, err = root.OpenMountTargetWithin("/run/systemd/notify", false, nil, within)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mt.Close()
+	if calls != 3 { // in /, /run and /run/systemd
+		t.Errorf("within was called %d times, want 3", calls)
+	}
+	if fi, err := os.Stat(filepath.Join(rootDir, "run", "systemd", "notify")); err != nil || !fi.Mode().IsRegular() {
+		t.Errorf("file target not created: %v", err)
+	}
+}
+
 func TestOpenMountTargetIgnoresUmask(t *testing.T) {
 	root, rootDir, _ := newTree(t)
 	old := unix.Umask(0o077) // e.g. UMask=0077 in a unit

@@ -18,7 +18,27 @@ Releases up to 0.7.7 are described on the
   image's environment and `--env-file`. A `NOTIFY_SOCKET` that is a path
   is bind mounted read-only on the same path in the container, unless a
   `--bind` or `--tmpfs` mounts on that path or the socket is already
-  there; one that cannot be bound only gets a warning.
+  there. Its mount point is only created on the container's own file
+  systems (`ROOT_DIR`'s, a `--tmpfs`), never in a host directory bound over
+  its directory ([#56](https://github.com/yuuki/droot/issues/56)). A
+  socket that cannot be bound only gets a warning.
+- `droot run --no-systemd` (`no-systemd = true` in `--config`) passes none
+  of these variables on to `COMMAND`, binds no notification socket and,
+  rootless, relays no notification, for containers that must have no
+  channel to the service manager, or a droot that inherited a
+  `NOTIFY_SOCKET` not meant for it
+  ([#57](https://github.com/yuuki/droot/issues/57)). What `--env` and
+  `--env-file` set is still passed, and the inherited descriptors are
+  kept.
+- Rootless, the supervising droot, the main process of the service, relays
+  the notifications of `COMMAND` from a socket of its own bound in the
+  container instead of systemd's, so that the default `NotifyAccess=main`
+  accepts them ([#58](https://github.com/yuuki/droot/issues/58)). It
+  relays those of `COMMAND` only: units that relied on `NotifyAccess=all`
+  for the notifications of its children (a shell script running
+  `systemd-notify`, `tini`) must `exec` the program that notifies, or bind
+  systemd's socket with `--robind $NOTIFY_SOCKET`. `MAINPID=` is left
+  out.
 - `examples/systemd/app-notify.service` (`Type=notify`) and
   `examples/systemd/app.socket`, described in the deployment guide.
 
@@ -27,9 +47,7 @@ Releases up to 0.7.7 are described on the
 - Rootless, the sockets of socket activation reach `COMMAND`: the
   supervising droot passed a pipe of its own as descriptor 3, which
   replaced the first socket. `LISTEN_PID` and `WATCHDOG_PID` are now the
-  PID of `COMMAND` instead of that of the supervising droot; its
-  notifications need `NotifyAccess=all`, since the supervising droot is the
-  main process of the service.
+  PID of `COMMAND` instead of that of the supervising droot.
 - The mount points `droot run` creates have mode 0755 (directories) and
   0644 (empty files for file bind mounts) whatever the umask: under a unit
   with `UMask=0077`, they were 0700 and 0600, and other users than root

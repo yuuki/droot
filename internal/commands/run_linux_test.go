@@ -5,15 +5,18 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
 	"golang.org/x/sys/unix"
 
+	"github.com/yuuki/droot/internal/cli"
 	"github.com/yuuki/droot/internal/identity"
 	"github.com/yuuki/droot/internal/imageconfig"
 	"github.com/yuuki/droot/internal/mounter"
@@ -225,14 +228,217 @@ func TestNotifySocketTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Refused before the container is looked at: no Root is needed.
-	if err := notifySocketTarget(nil, file); err == nil || !strings.Contains(err.Error(), "is not a socket") {
+	if err := notifySocketTarget(nil, notifyBind{sock: file, source: file}); err == nil || !strings.Contains(err.Error(), "is not a socket") {
 		t.Errorf("a regular file: got %v", err)
 	}
-	if err := notifySocketTarget(nil, file+".missing"); !errors.Is(err, fs.ErrNotExist) {
+	if err := notifySocketTarget(nil, notifyBind{sock: file, source: file + ".missing"}); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("a missing socket: got %v", err)
 	}
 	// Not fatal: droot may have inherited NOTIFY_SOCKET by mistake.
-	if err := bindNotifySocket(nil, nil, file+".missing"); err != nil {
+	if err := bindNotifySocket(nil, nil, notifyBind{sock: file + ".missing", source: file + ".missing"}); err != nil {
 		t.Errorf("a missing socket must only be reported, got %v", err)
+	}
+}
+
+// mountTestDir returns a scratch directory for a test that mounts things. It
+// is only removed if nothing is mounted below it any more: os.RemoveAll
+// would delete host files through a bind mount.
+func mountTestDir(t *testing.T) string {
+	t.Helper()
+	if os.Geteuid() != 0 {
+		t.Skip("requires root")
+	}
+	dir, err := os.MkdirTemp("", "droot-run-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dir, err = filepath.EvalSymlinks(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := unix.Mount(dir, dir, "", unix.MS_BIND, ""); err != nil {
+		_ = os.Remove(dir)
+		t.Skipf("mount not permitted here: %v", err)
+	}
+	_ = unix.Unmount(dir, unix.MNT_DETACH)
+	t.Cleanup(func() {
+		f, err := os.Open("/proc/self/mountinfo")
+		if err != nil {
+			t.Errorf("leaving %s: %v", dir, err)
+			return
+		}
+		defer f.Close()
+		mounts, err := mounter.ParseMountInfo(f)
+		if err != nil {
+			t.Errorf("leaving %s: %v", dir, err)
+			return
+		}
+		for _, m := range mounts {
+			if strings.HasPrefix(m.Mountpoint, dir+"/") {
+				t.Errorf("leaving %s: %s is still mounted", dir, m.Mountpoint)
+				return
+			}
+		}
+		_ = os.RemoveAll(dir)
+	})
+	return dir
+}
+
+// testRunner returns a runner of droot run with the arguments argv, for
+// root (ROOT_DIR).
+func testRunner(t *testing.T, root *osutil.Root, argv ...string) *runner {
+	t.Helper()
+	var r *runner
+	app := NewApp("test")
+	app.Stdout = io.Discard
+	app.Command("run").Action = func(_ context.Context, cmd *cli.Invocation) error {
+		r = &runner{cmd: cmd, root: root}
+		return nil
+	}
+	args := append([]string{"droot", "run", "-r", root.Path()}, argv...)
+	if err := app.Run(context.Background(), append(args, "--", "true")); err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+// TestBindNotifySocketWithin checks that the socket of NOTIFY_SOCKET is
+// only bound where droot may create or mount things on its own (#56).
+func TestBindNotifySocketWithin(t *testing.T) {
+	dir := mountTestDir(t)
+	sock := filepath.Join(dir, "n", "systemd", "notify")
+	hostDir := filepath.Join(dir, "h")
+	rootDir := filepath.Join(dir, "root")
+	for _, d := range []string{filepath.Dir(sock), filepath.Join(hostDir, "systemd"), rootDir} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	l, err := net.ListenUnixgram("unixgram", &net.UnixAddr{Name: sock, Net: "unixgram"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	t.Setenv("NOTIFY_SOCKET", sock)
+	env := []string{"NOTIFY_SOCKET=" + sock}
+	root, err := osutil.OpenRoot(rootDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	mnt := mounter.NewMounter(root)
+	defer func() {
+		if _, err := mnt.UmountAll(); err != nil {
+			t.Error(err)
+		}
+	}()
+	r := testRunner(t, root)
+	bound := func() bool {
+		var st unix.Stat_t
+		return unix.Stat(filepath.Join(rootDir, sock), &st) == nil && st.Mode&unix.S_IFMT == unix.S_IFSOCK
+	}
+
+	// --bind H:<grandparent of the socket>: only reported, nothing is
+	// created in H.
+	if err := mnt.BindMount(hostDir, filepath.Join(dir, "n"), mounter.BindOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.bindNotifySocket(mnt, env, nil); err != nil {
+		t.Fatalf("a socket covered by a bind of a host directory must only be reported, got %v", err)
+	}
+	if entries, _ := os.ReadDir(filepath.Join(hostDir, "systemd")); len(entries) != 0 {
+		t.Errorf("droot created %v in the host directory", entries)
+	}
+	// An existing file there is not mounted on in the host's mount
+	// namespace, where it would be busy; in a private one, it is.
+	if err := os.WriteFile(filepath.Join(hostDir, "systemd", "notify"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.bindNotifySocket(mnt, env, nil); err != nil || bound() {
+		t.Errorf("in the host's mount namespace: %v, socket bound: %v", err, bound())
+	}
+	r.privateNS = true
+	if err := r.bindNotifySocket(mnt, env, nil); err != nil || !bound() {
+		t.Errorf("in a private mount namespace: %v, socket bound: %v", err, bound())
+	}
+	r.privateNS = false
+	if _, err := mnt.UmountAll(); err != nil {
+		t.Fatal(err)
+	}
+
+	// On the root's own file system, the socket is bound.
+	if err := r.bindNotifySocket(mnt, env, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !bound() {
+		t.Error("the socket is not bound in the container")
+	}
+}
+
+// TestNoSystemd checks that --no-systemd leaves out the variables of
+// systemd and the bind of NOTIFY_SOCKET (#57).
+func TestNoSystemd(t *testing.T) {
+	rootDir := t.TempDir()
+	root, err := osutil.OpenRoot(rootDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	// Nothing must be mounted with --no-systemd; if something is, it is
+	// removed before rootDir.
+	mnt := mounter.NewMounter(root)
+	t.Cleanup(func() { _, _ = mnt.UmountAll() })
+	sock := filepath.Join(t.TempDir(), "notify")
+	l, err := net.ListenUnixgram("unixgram", &net.UnixAddr{Name: sock, Net: "unixgram"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	pid := strconv.Itoa(os.Getpid())
+	for k, v := range map[string]string{
+		"NOTIFY_SOCKET": sock, "LISTEN_PID": pid, "LISTEN_FDS": "1", "LISTEN_FDNAMES": "web",
+		"WATCHDOG_USEC": "30000000", "WATCHDOG_PID": pid,
+	} {
+		t.Setenv(k, v)
+	}
+
+	run := func(argv ...string) []string {
+		t.Helper()
+		var env []string
+		app := NewApp("test")
+		app.Stdout = io.Discard
+		app.Command("run").Action = func(_ context.Context, cmd *cli.Invocation) error {
+			extraEnv, err := commandLineEnv(cmd)
+			if err != nil {
+				return err
+			}
+			r := &runner{cmd: cmd, root: root}
+			if env, err = r.environment(extraEnv); err != nil {
+				return err
+			}
+			if cmd.Bool("no-systemd") {
+				return r.bindNotifySocket(mnt, env, nil)
+			}
+			return nil
+		}
+		if err := app.Run(context.Background(), append([]string{"droot", "run", "-r", rootDir}, append(argv, "--", "true")...)); err != nil {
+			t.Fatal(err)
+		}
+		return env
+	}
+
+	want := []string{"NOTIFY_SOCKET=" + sock, "LISTEN_PID=" + pid, "LISTEN_FDS=1", "LISTEN_FDNAMES=web", "WATCHDOG_USEC=30000000", "WATCHDOG_PID=" + pid}
+	if got := run(); !slices.Equal(got, want) {
+		t.Errorf("without --no-systemd: got %q, want %q", got, want)
+	}
+	if got := run("--no-systemd"); len(got) != 0 {
+		t.Errorf("--no-systemd: got %q, want no variable", got)
+	}
+	// What the command line asks for explicitly is kept, but the socket is
+	// not bound.
+	if got, want := run("--no-systemd", "--env", "NOTIFY_SOCKET"), []string{"NOTIFY_SOCKET=" + sock}; !slices.Equal(got, want) {
+		t.Errorf("--no-systemd --env NOTIFY_SOCKET: got %q, want %q", got, want)
+	}
+	if entries, _ := os.ReadDir(rootDir); len(entries) != 0 {
+		t.Errorf("--no-systemd: droot created %v in the container", entries)
 	}
 }

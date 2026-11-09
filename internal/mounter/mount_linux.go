@@ -110,6 +110,46 @@ func OnMountOf(fd int) osutil.DirCheck {
 	}
 }
 
+// OnContainerFS returns an osutil.DirCheck accepting only directories of the
+// container's own file systems: those on the mount of root, and those of a
+// file system that is mounted nowhere but at or below the path of root, in
+// the mount namespace of the calling thread (a tmpfs of --tmpfs, a file
+// system mounted on a directory of the container). It refuses a bind mount
+// of a host directory, even of a host tmpfs, and a mount of a previous run
+// that is one, so that droot creates nothing in a directory of the host on
+// its own.
+//
+// A file system mounted elsewhere by propagation (a mount below root whose
+// parent has peers elsewhere) is refused too. Without mount IDs (Linux
+// before 3.15), devices are compared: a bind mount of a directory of the
+// file system of root is then accepted, and any other mount refused.
+func OnContainerFS(root *osutil.Root) osutil.DirCheck {
+	onRoot := OnMountOf(root.Fd())
+	return func(dir int) error {
+		err := onRoot(dir)
+		if !errors.Is(err, ErrOtherMount) {
+			return err
+		}
+		id, err := mountID(dir)
+		if err != nil {
+			return ErrOtherMount // which mount it is cannot be told
+		}
+		mounts, err := readMountInfo()
+		if err != nil {
+			return err
+		}
+		i := slices.IndexFunc(mounts, func(m MountInfo) bool { return m.ID == id })
+		if i < 0 {
+			return ErrOtherMount
+		}
+		dev := mounts[i].Dev
+		if slices.ContainsFunc(mounts, func(m MountInfo) bool { return m.Dev == dev && !isUnder(root.Path(), m.Mountpoint) }) {
+			return ErrOtherMount
+		}
+		return nil
+	}
+}
+
 func mount(source, target, fstype string, flags uintptr, data string) error {
 	log.Debugf("mount source=%q target=%q type=%q flags=%#x", source, target, fstype, flags)
 	if err := unix.Mount(source, target, fstype, flags, data); err != nil {
@@ -571,7 +611,7 @@ func (m *Mounter) BindMount(hostPath, containerPath string, opts BindOptions) er
 		return fmt.Errorf("bind mount source: %w", err)
 	}
 
-	t, err := m.root.OpenMountTarget(containerPath, fi.IsDir(), NotKernelFS)
+	t, err := m.root.OpenMountTargetWithin(containerPath, fi.IsDir(), NotKernelFS, opts.Within)
 	if err != nil {
 		return err
 	}
@@ -584,6 +624,11 @@ func (m *Mounter) BindMount(hostPath, containerPath string, opts BindOptions) er
 		if !mounted {
 			log.Debugf("%s already is %s: not binding it", t.File.Name(), hostPath)
 			return nil
+		}
+	}
+	if opts.Within != nil && opts.WithinParent {
+		if err := opts.Within(t.ParentFd()); err != nil {
+			return &fs.PathError{Op: "mount", Path: t.File.Name(), Err: err}
 		}
 	}
 	flags := uintptr(unix.MS_BIND)

@@ -119,9 +119,17 @@ users, the reason why some distributions restrict them — nothing droot or
   in the container read-only: its processes can send notifications, which
   systemd attributes to the unit of their cgroup and, with the default
   `NotifyAccess=main`, only accepts from its main process, but cannot
-  `chmod` or `chown` the socket, which every service of the host uses. The
+  `chmod` or `chown` the socket, which every service of the host uses.
+  Rootless, the container gets a socket of the supervising droot instead,
+  which relays the notifications of `COMMAND` only: systemd's socket is not
+  reachable from the container, unless it is abstract (`@NAME`, reachable
+  through the network namespace droot shares), no directory for the relay
+  is writable (droot warns), or it is bound explicitly. The
   variables of socket activation are only passed on when `LISTEN_PID` is
-  the PID of droot. droot closes no descriptor it inherits: as with any
+  the PID of droot. `--no-systemd` passes none of these variables, binds
+  no socket and relays nothing, e.g. when droot inherits a `NOTIFY_SOCKET` that is not meant
+  for it (with `NotifyAccess=all`, the processes of the container could
+  otherwise send that unit `STOPPING=1`, `FDSTORE=1`, ...). droot closes no descriptor it inherits: as with any
   program, those its parent leaves open (socket activation or not) reach
   `COMMAND`.
 - `droot umount --root /` is refused.

@@ -75,6 +75,10 @@ type lookupOptions struct {
 	followLast bool     // resolve a symlink in the last component
 	noSymlinks bool     // fail on any symlink instead of following it
 	check      DirCheck // optional
+	// within, if not nil, is also called, after check, with the
+	// directories in which a missing component is created, and only
+	// with them.
+	within DirCheck
 }
 
 // resolved is the result of a lookup: the last component name inside the
@@ -213,13 +217,11 @@ func (w *walker) step(part string, last bool) (bool, error) {
 }
 
 // mkdir creates the missing directory part (0755) in the current directory,
-// after opt.check, and opens it. A directory created concurrently is opened
-// as it is.
+// after opt.check and opt.within, and opens it. A directory created
+// concurrently is opened as it is.
 func (w *walker) mkdir(part string) (int, error) {
-	if w.opt.check != nil {
-		if err := w.opt.check(w.cur()); err != nil {
-			return -1, err
-		}
+	if err := checkAll(w.cur(), w.opt.check, w.opt.within); err != nil {
+		return -1, err
 	}
 	mkErr := unix.Mkdirat(w.cur(), part, 0o755)
 	if mkErr != nil && !errors.Is(mkErr, unix.EEXIST) {
@@ -273,6 +275,20 @@ func (w *walker) enter(fd int) error {
 		}
 	}
 	w.stack = append(w.stack, fd)
+	return nil
+}
+
+// checkAll calls each check that is not nil with fd, stopping at the first
+// error.
+func checkAll(fd int, checks ...DirCheck) error {
+	for _, check := range checks {
+		if check == nil {
+			continue
+		}
+		if err := check(fd); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -402,7 +418,17 @@ func verifyTarget(fd int, dir bool) error {
 // regular file. A path resolving to the root itself is refused with
 // ErrIsRoot, and so is a path ending in "..". See DirCheck for check.
 func (r *Root) OpenMountTarget(path string, dir bool, check DirCheck) (*MountTarget, error) {
-	res, err := r.lookup(path, lookupOptions{mkdir: true, followLast: true, check: check})
+	return r.OpenMountTargetWithin(path, dir, check, nil)
+}
+
+// OpenMountTargetWithin is OpenMountTarget, except that the target and its
+// missing parent directories are only created in directories that within,
+// if not nil, accepts too: e.g. only on the root's own file system, not in
+// a directory bound from the host. Unlike check, within is not called with
+// the directories that are only traversed, so a target that exists is
+// opened wherever it is.
+func (r *Root) OpenMountTargetWithin(path string, dir bool, check, within DirCheck) (*MountTarget, error) {
+	res, err := r.lookup(path, lookupOptions{mkdir: true, followLast: true, check: check, within: within})
 	if err != nil {
 		return nil, err
 	}
@@ -421,7 +447,7 @@ func (r *Root) OpenMountTarget(path string, dir bool, check DirCheck) (*MountTar
 	fd, err := unix.Openat(res.dir, res.name, unix.O_PATH|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if errors.Is(err, unix.ENOENT) {
 		var op string
-		if fd, op, err = createMountTarget(res.dir, res.name, dir, check); err != nil {
+		if fd, op, err = createMountTarget(res.dir, res.name, dir, check, within); err != nil {
 			return fail(op, err)
 		}
 	}
@@ -441,14 +467,12 @@ func (r *Root) OpenMountTarget(path string, dir bool, check DirCheck) (*MountTar
 }
 
 // createMountTarget creates the missing mount target name in the directory
-// parent, after check: a directory (dir) or an empty regular file. A target
+// parent, after checks: a directory (dir) or an empty regular file. A target
 // created concurrently is kept as it is. It returns an O_PATH descriptor of
 // the target, or else the operation that failed and its error.
-func createMountTarget(parent int, name string, dir bool, check DirCheck) (fd int, op string, err error) {
-	if check != nil {
-		if err := check(parent); err != nil {
-			return -1, "mount", err
-		}
+func createMountTarget(parent int, name string, dir bool, checks ...DirCheck) (fd int, op string, err error) {
+	if err := checkAll(parent, checks...); err != nil {
+		return -1, "mount", err
 	}
 	if dir {
 		err = unix.Mkdirat(parent, name, 0o755)

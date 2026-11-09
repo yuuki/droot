@@ -67,7 +67,7 @@ func TestMapping(t *testing.T) {
 
 func TestRunNeedsInit(t *testing.T) {
 	// A test binary must not run itself again in a user namespace.
-	if err := Run(context.Background(), Mapping{}); err == nil || !strings.Contains(err.Error(), "userns.Init") {
+	if err := Run(context.Background(), Mapping{}, Options{}); err == nil || !strings.Contains(err.Error(), "userns.Init") {
 		t.Fatalf("got %v", err)
 	}
 }

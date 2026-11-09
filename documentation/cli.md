@@ -80,7 +80,7 @@ The options must come before COMMAND: everything from COMMAND on is passed to it
 
 Run by another user than root, droot runs rootless: it runs again as root of a new user namespace, where your user is root and your subordinate IDs (/etc/subuid and /etc/subgid, with the newuidmap and newgidmap commands) are the other users, and waits for COMMAND, passing signals on to it. The mounts are private (as with --unshare), /proc and the device files are bind mounts of the host's. Extract archives with 'droot unshare' so that their files keep their owners.
 
-Under systemd, COMMAND gets the notification socket (NOTIFY\_SOCKET, for Type=notify), the sockets of socket activation (LISTEN\_FDS, LISTEN\_PID, LISTEN\_FDNAMES) and the watchdog (WATCHDOG\_USEC, WATCHDOG\_PID) of droot, which --env and --env-file override. A NOTIFY\_SOCKET that is a path is bind mounted read-only on the same path in the container. Rootless, the notifications come from a child of droot, the main process of the service: set NotifyAccess=all in the unit.
+Under systemd, COMMAND gets the notification socket (NOTIFY\_SOCKET, for Type=notify), the sockets of socket activation (LISTEN\_FDS, LISTEN\_PID, LISTEN\_FDNAMES) and the watchdog (WATCHDOG\_USEC, WATCHDOG\_PID) of droot, which --env and --env-file override and --no-systemd leaves out. A NOTIFY\_SOCKET that is a path is bind mounted read-only on the same path in the container; its mount point is only created on the container's own file systems (ROOT\_DIR's, a --tmpfs). Rootless, droot stays the main process of the service and relays the notifications of COMMAND, but not those of its children, from a socket of its own bound there instead.
 
 --config FILE reads options from FILE, in a subset of TOML: lines KEY = VALUE, where KEY is the long name of an option and VALUE a string ("..." or '...'), true or false, or an array of strings for repeatable options; command, an array of strings, gives COMMAND. # starts a comment. The options given on the command line take precedence, and repeatable ones are added to the file's:
 
@@ -112,6 +112,7 @@ command = ["/app/bin/server", "--port=8080"]
 | `--hostname NAME` | run COMMAND in a private UTS namespace with the host name NAME |
 | `--read-only` | make the root directory read-only for COMMAND (implies --unshare); use --tmpfs or --bind for the paths it writes |
 | `--no-mask` | do not mask the sensitive files of /proc and /sys nor make /proc/sys, /sys and the like read-only (dangerous) |
+| `--no-systemd` | do not pass systemd's notification socket, socket activation and watchdog variables (NOTIFY\_SOCKET, LISTEN\_\*, WATCHDOG\_\*) on to COMMAND, nor bind the notification socket in the container; inherited descriptors are kept |
 | `--no-new-privileges` | set no\_new\_privs: setuid programs and file capabilities cannot grant privileges to COMMAND (default: true; --no-new-privileges=false lets programs such as sudo or su work) |
 | `--seccomp PROFILE` | seccomp profile: default (deny the system calls Docker's default profile denies, such as unshare, mount, keyctl, bpf; amd64, arm64, arm and 386) or unconfined (the default) |
 | `-e, --env KEY[=VALUE]` | set an environment variable, overriding /.drootenv and --env-file; a bare KEY takes its value from droot's own environment (repeatable) |

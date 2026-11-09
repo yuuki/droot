@@ -203,6 +203,10 @@ the units it would have without it:
   `LISTEN_PID` and `LISTEN_FDNAMES`
   ([`sd_listen_fds(3)`](https://www.freedesktop.org/software/systemd/man/latest/sd_listen_fds.html)).
 
+`--no-systemd` (`no-systemd = true` in the `--config` file) turns this off
+for a container that must have no channel to the service manager: droot
+then passes none of these variables and binds no socket.
+
 [`examples/systemd/app-notify.service`](../examples/systemd/app-notify.service)
 is `app.service` for an application that notifies systemd:
 
@@ -251,16 +255,26 @@ and `WATCHDOG_PID` are its PID.
 
 Rootless (a unit with `User=`, or a user service), droot stays the main
 process and supervises the application, its child. droot passes the
-sockets on to it and makes `LISTEN_PID` and `WATCHDOG_PID` its PID, but
-systemd only accepts notifications from other processes than the main one
-with `NotifyAccess=all`:
+sockets on to it and makes `LISTEN_PID` and `WATCHDOG_PID` its PID, and
+relays its notifications: the application gets a socket of droot in place
+of systemd's, and droot forwards what the application itself sends (not
+its children, and without `MAINPID=`), from the main process, which the
+default `NotifyAccess=main` accepts:
 
 ```ini
 [Service]
 Type=notify
-NotifyAccess=all
 KillMode=mixed
 ```
+
+An application whose notifications come from a child (a shell script
+running `systemd-notify --ready`, an init such as `tini`) should `exec` the
+program that notifies; or else bind systemd's socket in the container with
+`--robind $NOTIFY_SOCKET` and set `NotifyAccess=all`. droot creates its
+socket in `$XDG_RUNTIME_DIR` (a user service), `$RUNTIME_DIRECTORY` or
+`/tmp`: a hardened unit whose `/tmp` is read-only (`ProtectSystem=strict`
+without `PrivateTmp=`) needs `RuntimeDirectory=`, or else the
+notifications are not relayed (droot warns) and need `NotifyAccess=all`.
 
 ## Rolling back
 

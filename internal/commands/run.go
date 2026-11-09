@@ -53,10 +53,12 @@ func runCommand() *cli.Command {
 			"Under systemd, COMMAND gets the notification socket (NOTIFY_SOCKET, for\n" +
 			"Type=notify), the sockets of socket activation (LISTEN_FDS, LISTEN_PID,\n" +
 			"LISTEN_FDNAMES) and the watchdog (WATCHDOG_USEC, WATCHDOG_PID) of droot,\n" +
-			"which --env and --env-file override. A NOTIFY_SOCKET that is a path is bind\n" +
-			"mounted read-only on the same path in the container. Rootless, the\n" +
-			"notifications come from a child of droot, the main process of the service:\n" +
-			"set NotifyAccess=all in the unit.\n\n" +
+			"which --env and --env-file override and --no-systemd leaves out. A\n" +
+			"NOTIFY_SOCKET that is a path is bind mounted read-only on the same path in\n" +
+			"the container; its mount point is only created on the container's own file\n" +
+			"systems (ROOT_DIR's, a --tmpfs). Rootless, droot stays the main process of the\n" +
+			"service and relays the notifications of COMMAND, but not those of its\n" +
+			"children, from a socket of its own bound there instead.\n\n" +
 			"--config FILE reads options from FILE, in a subset of TOML: lines KEY = VALUE,\n" +
 			"where KEY is the long name of an option and VALUE a string (\"...\" or '...'),\n" +
 			"true or false, or an array of strings for repeatable options; command, an\n" +
@@ -107,6 +109,8 @@ func runCommand() *cli.Command {
 				Usage: "make the root directory read-only for COMMAND (implies --unshare); use --tmpfs or --bind for the paths it writes"},
 			{Name: "no-mask", Kind: cli.Bool,
 				Usage: "do not mask the sensitive files of /proc and /sys nor make /proc/sys, /sys and the like read-only (dangerous)"},
+			{Name: "no-systemd", Kind: cli.Bool,
+				Usage: "do not pass systemd's notification socket, socket activation and watchdog variables (NOTIFY_SOCKET, LISTEN_*, WATCHDOG_*) on to COMMAND, nor bind the notification socket in the container; inherited descriptors are kept"},
 			{Name: "no-new-privileges", Kind: cli.Bool,
 				Usage: "set no_new_privs: setuid programs and file capabilities cannot grant privileges to COMMAND (default: true; --no-new-privileges=false lets programs such as sudo or su work)"},
 			{Name: "seccomp", Kind: cli.String, Placeholder: "PROFILE",
@@ -262,7 +266,9 @@ func doRun(ctx context.Context, cmd *cli.Invocation) error {
 	// the child makes every check.
 	rootless := os.Geteuid() != 0
 	if rootless && cmd.IsSet("config") {
-		return runRootless(ctx)
+		// --no-systemd may be in the file: the second stage removes
+		// the relay it does not use.
+		return runRootless(ctx, true)
 	}
 	opts, err := parseRunOptions(cmd)
 	if err != nil {
@@ -292,7 +298,7 @@ func doRun(ctx context.Context, cmd *cli.Invocation) error {
 		return cmd.UsageError("a command to run is required")
 	}
 	if rootless {
-		return runRootless(ctx)
+		return runRootless(ctx, !cmd.Bool("no-systemd"))
 	}
 	return r.run(ctx, argv)
 }
@@ -613,8 +619,11 @@ func (r *runner) environment(extraEnv []string) ([]string, error) {
 	// The variables systemd sets for droot (NOTIFY_SOCKET, LISTEN_FDS,
 	// ...), which describe the notification socket, the sockets and the
 	// watchdog COMMAND inherits, between the image's and those of the
-	// command line.
-	sdEnv := systemd.Env(os.LookupEnv, os.Getpid())
+	// command line, unless --no-systemd.
+	var sdEnv []string
+	if !r.cmd.Bool("no-systemd") {
+		sdEnv = systemd.Env(os.LookupEnv, os.Getpid())
+	}
 	return environ.Merge(baseEnv, append(sdEnv, extraEnv...))
 }
 
@@ -700,12 +709,8 @@ func (r *runner) mount(ctx context.Context, mnt *mounter.Mounter, env []string) 
 			return err
 		}
 	}
-	if sock := notifySocketMount(env); sock != "" {
-		if slices.ContainsFunc(mounts, func(m userMount) bool { return m.target == sock }) {
-			log.Debugf("not binding %s=%s: --bind or --tmpfs mounts on it", systemd.NotifySocket, sock)
-		} else if err := bindNotifySocket(r.root, mnt, sock); err != nil {
-			return err
-		}
+	if err := r.bindNotifySocket(mnt, env, mounts); err != nil {
+		return err
 	}
 
 	linkVarLock(r.root)
@@ -720,6 +725,39 @@ func (r *runner) mount(ctx context.Context, mnt *mounter.Mounter, env []string) 
 		}
 	}
 	return nil
+}
+
+// bindNotifySocket bind mounts the socket of systemd's notifications of
+// COMMAND (env) in the container, if any (see notifySocketMount), unless
+// --no-systemd is given or one of mounts, those of the command line, mounts
+// on its path. Its mount point may only be created on the container's own
+// file systems (see mounter.OnContainerFS). Rootless, the relay of the
+// supervising droot takes the place of systemd's socket.
+func (r *runner) bindNotifySocket(mnt *mounter.Mounter, env []string, mounts []userMount) error {
+	// Bound or not, the relay must not stay reachable on the host, where
+	// the container may see it (a --bind of $XDG_RUNTIME_DIR or /tmp):
+	// once bound, it works without its path.
+	defer userns.DropNotifyRelay()
+	if r.cmd.Bool("no-systemd") {
+		return nil
+	}
+	sock := notifySocketMount(env)
+	if sock == "" {
+		return nil
+	}
+	if slices.ContainsFunc(mounts, func(m userMount) bool { return m.target == sock }) {
+		log.Debugf("not binding %s=%s: --bind or --tmpfs mounts on it", systemd.NotifySocket, sock)
+		return nil
+	}
+	b := notifyBind{sock: sock, source: sock, within: mounter.OnContainerFS(r.root), hostNS: !r.privateNS}
+	if relay := userns.NotifyRelay(); relay != "" {
+		// Rootless: the supervising droot, the main process of the
+		// service, relays the notifications of COMMAND.
+		b.source = relay
+	} else if userns.Supervised() {
+		b.unrelayed = true
+	}
+	return bindNotifySocket(r.root, mnt, b)
 }
 
 // userMounts returns the bind and tmpfs mounts of the command line, to be
@@ -764,13 +802,14 @@ func bindNetFiles(mnt *mounter.Mounter) error {
 
 // runRootless runs droot again as root of a new user namespace, mapping the
 // user to root and their subordinate IDs, if any, to the other users (see
-// package userns), and waits for it.
-func runRootless(ctx context.Context) error {
+// package userns), and waits for it, relaying the notifications of COMMAND
+// to systemd if relay is set.
+func runRootless(ctx context.Context, relay bool) error {
 	m, err := userns.CurrentMapping()
 	if err != nil {
 		return err
 	}
-	return userns.Run(ctx, m)
+	return userns.Run(ctx, m, userns.Options{RelayNotifications: relay})
 }
 
 // checkMapped checks, in a user namespace, that the user and the groups of
@@ -916,42 +955,100 @@ func notifySocketMount(env []string) string {
 	return filepath.Clean(sock)
 }
 
-// bindNotifySocket bind mounts the socket of systemd's notifications on the
-// same path in the container, unless it is already there (in a bind mount of
-// its directory). The mount is read-only: COMMAND can send notifications
+// notifyBind is the bind mount of the socket of systemd's notifications in
+// the container.
+type notifyBind struct {
+	// sock is NOTIFY_SOCKET, the path of the mount in the container.
+	sock string
+	// source is what is bound there: sock, or rootless, the socket of the
+	// relay of the supervising droot (see userns.NotifyRelay).
+	source string
+	// within accepts the directories where the mount point may be
+	// created (see mounter.BindOptions.Within).
+	within osutil.DirCheck
+	// hostNS is set when the mount is made in the host's mount namespace.
+	hostNS bool
+	// unrelayed is set when, rootless, the supervising droot could not
+	// relay the notifications: COMMAND reaches systemd's socket.
+	unrelayed bool
+}
+
+// bindNotifySocket bind mounts the socket of systemd's notifications, or the
+// relay that takes its place, on the path of NOTIFY_SOCKET in the container,
+// unless systemd's socket is already there (in a bind mount of its
+// directory). The mount is read-only: COMMAND can send notifications
 // (connect(2) and sendmsg(2) need no write access to the mount) but cannot
 // chmod or chown the host's socket. A mount left by a previous run is
 // replaced, in case systemd created the socket again since.
+//
+// The user did not ask for this mount, so droot creates its mount point only
+// in directories that within accepts: those of the container's own file
+// systems (ROOT_DIR's, a --tmpfs), not those bound from the host, where it
+// would be left behind. In the host's mount namespace, droot does not mount on an existing
+// file of those either: it would be busy until 'droot umount'.
 //
 // A socket that cannot be bound is only reported: droot may have inherited
 // a NOTIFY_SOCKET that was not meant for it (from a process of a
 // Type=notify service), and COMMAND may not send notifications at all. A
 // failure of the mount itself is an error.
-func bindNotifySocket(root *osutil.Root, mnt *mounter.Mounter, sock string) error {
-	if err := notifySocketTarget(root, sock); err != nil {
-		log.Warnf("%v: COMMAND cannot send notifications to systemd", err)
+func bindNotifySocket(root *osutil.Root, mnt *mounter.Mounter, b notifyBind) error {
+	if err := notifySocketTarget(root, b); err != nil {
+		warnNotifySocket(b.sock, err)
 		return nil
 	}
-	opts := mounter.BindOptions{ReadOnly: true, Replace: true, SkipSame: true}
-	if err := mnt.BindMount(sock, sock, opts); err != nil {
-		return fmt.Errorf("bind mount the socket of %s, %s: %w", systemd.NotifySocket, sock, err)
+	opts := mounter.BindOptions{ReadOnly: true, Replace: true, SkipSame: true, Within: b.within, WithinParent: b.hostNS}
+	if err := mnt.BindMount(b.source, b.sock, opts); err != nil {
+		if errors.Is(err, mounter.ErrOtherMount) {
+			warnNotifySocket(b.sock, err)
+			return nil
+		}
+		return fmt.Errorf("bind mount the socket of %s, %s: %w", systemd.NotifySocket, b.source, err)
 	}
-	log.Debugf("%s=%s is reachable in the container", systemd.NotifySocket, sock)
+	switch {
+	case b.source != b.sock:
+		log.Debugf("%s=%s is the relay %s of the supervising droot in the container", systemd.NotifySocket, b.sock, b.source)
+	case b.unrelayed:
+		log.Warnf("the supervising droot does not relay the notifications of COMMAND (see its debug messages): "+
+			"COMMAND sends them to %s=%s itself, and they need NotifyAccess=all", systemd.NotifySocket, b.sock)
+	default:
+		log.Debugf("%s=%s is reachable in the container", systemd.NotifySocket, b.sock)
+	}
 	return nil
 }
 
-// notifySocketTarget checks that sock is a socket, and creates its mount
-// point in the container if needed.
-func notifySocketTarget(root *osutil.Root, sock string) error {
-	fi, err := os.Stat(sock)
+// warnNotifySocket reports that the socket sock of systemd's notifications
+// cannot be bound in the container, because of err.
+func warnNotifySocket(sock string, err error) {
+	if errors.Is(err, mounter.ErrOtherMount) {
+		log.Debugf("%s: %v", systemd.NotifySocket, err)
+		hint := ""
+		if userns.Supervised() {
+			hint = ", but then needs NotifyAccess=all"
+		}
+		err = fmt.Errorf("%s: not binding %s in the container: its path there is not on a file system of the container "+
+			"(ROOT_DIR's, a --tmpfs) but, e.g., in a --bind of a host directory, where droot makes no mount on its own; "+
+			"--robind %s binds systemd's socket there%s",
+			systemd.NotifySocket, sock, sock, hint)
+	}
+	log.Warnf("%v: COMMAND cannot send notifications to systemd", err)
+}
+
+// notifySocketTarget checks that the source of b is a socket, and creates
+// its mount point in the container if needed, in directories b.within
+// accepts.
+func notifySocketTarget(root *osutil.Root, b notifyBind) error {
+	fi, err := os.Stat(b.source)
 	if err != nil {
 		return fmt.Errorf("%s: %w", systemd.NotifySocket, err)
 	}
 	if fi.Mode().Type() != fs.ModeSocket {
-		return fmt.Errorf("%s: %s is not a socket", systemd.NotifySocket, sock)
+		return fmt.Errorf("%s: %s is not a socket", systemd.NotifySocket, b.source)
 	}
-	t, err := root.OpenMountTarget(sock, false, mounter.NotKernelFS)
+	t, err := root.OpenMountTargetWithin(b.sock, false, mounter.NotKernelFS, b.within)
 	if err != nil {
+		if errors.Is(err, mounter.ErrOtherMount) {
+			return err
+		}
 		return fmt.Errorf("%s: %w", systemd.NotifySocket, err)
 	}
 	return t.Close()

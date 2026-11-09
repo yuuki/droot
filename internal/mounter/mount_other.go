@@ -19,6 +19,9 @@ func NotKernelFS(int) error { return unsupported() }
 // OnMountOf is only supported on Linux.
 func OnMountOf(int) osutil.DirCheck { return func(int) error { return unsupported() } }
 
+// OnContainerFS is only supported on Linux.
+func OnContainerFS(*osutil.Root) osutil.DirCheck { return func(int) error { return unsupported() } }
+
 func unsupported() error {
 	return fmt.Errorf("mounting is not supported on %s/%s: droot run and droot umount require Linux", runtime.GOOS, runtime.GOARCH)
 }

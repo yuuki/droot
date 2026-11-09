@@ -9,7 +9,9 @@ import (
 	"os/exec"
 	"os/signal"
 	"os/user"
+	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -18,6 +20,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/yuuki/droot/internal/log"
+	"github.com/yuuki/droot/internal/osutil"
 	"github.com/yuuki/droot/internal/systemd"
 )
 
@@ -33,6 +36,10 @@ func Init() {
 	if pid := os.Getenv(envParent); pid != "" {
 		_ = os.Unsetenv(envParent)
 		parent, _ = strconv.Atoi(pid)
+		if relay := os.Getenv(envNotifyRelay); relay != "" && ownRelay(relay) {
+			notifyRelay = relay
+		}
+		_ = os.Unsetenv(envNotifyRelay)
 		// The supervising droot passed its sockets on (see start),
 		// and its watchdog is for COMMAND, which this droot becomes.
 		systemd.Adopt(parent)
@@ -46,6 +53,10 @@ func Init() {
 // parent is the PID of the supervising droot, in the second stage.
 var parent int
 
+// notifyRelay is the socket of the relay of the supervising droot, in the
+// second stage.
+var notifyRelay string
+
 // initialized is set by Init: Run runs the program again, which must handle
 // the stages.
 var initialized bool
@@ -53,6 +64,44 @@ var initialized bool
 // Supervised reports whether droot is the second stage of a rootless droot,
 // which supervises it.
 func Supervised() bool { return parent != 0 }
+
+// NotifyRelay returns, in the second stage, the socket of the relay by which
+// the supervising droot relays the notifications of COMMAND to systemd, to
+// bind in the container instead of systemd's NOTIFY_SOCKET; "" without
+// relay (see Options.RelayNotifications).
+func NotifyRelay() string { return notifyRelay }
+
+// ownRelay reports whether path is the socket of a relay of the supervising
+// droot: a socket named like one, not a symlink, owned by the user, root of
+// the user namespace, where this droot must be root. The variable naming it
+// comes from the environment, which must not make droot bind another
+// socket in a container.
+func ownRelay(path string) bool {
+	if !osutil.InUserNamespace() || os.Geteuid() != 0 || !systemd.IsRelayPath(path) {
+		log.Debugf("ignoring %s=%s", envNotifyRelay, path)
+		return false
+	}
+	var st unix.Stat_t
+	if err := unix.Lstat(path, &st); err != nil || st.Mode&unix.S_IFMT != unix.S_IFSOCK || st.Uid != 0 {
+		log.Debugf("ignoring %s=%s: not a socket of the user (%v)", envNotifyRelay, path, err)
+		return false
+	}
+	return true
+}
+
+// DropNotifyRelay removes the socket of the relay and its directory, once
+// the second stage has bound it in the container, or decided not to: a
+// bind mount keeps working without the path it was made from, and nothing
+// else must reach the relay. The supervising droot keeps relaying.
+func DropNotifyRelay() {
+	if notifyRelay == "" {
+		return
+	}
+	if err := systemd.RemoveRelayPath(notifyRelay); err != nil {
+		log.Debugf("cannot remove the socket of the notification relay: %v", err)
+	}
+	notifyRelay = ""
+}
 
 // KeepParentDeathSignal arranges for droot, and the command it executes, to
 // be killed when the supervising droot dies, if there is one. It must be
@@ -147,7 +196,7 @@ func readSubIDs(file, name string, id int) ([]Range, error) {
 // to it, and its exit status is returned as an *ExitError (or droot is
 // killed by the same signal). It does not return before the child exits.
 // If ctx is done before the child is started, it is not.
-func Run(ctx context.Context, m Mapping) error {
+func Run(ctx context.Context, m Mapping, o Options) error {
 	if !initialized {
 		// E.g. a test binary, which would run itself again.
 		return errors.New("rootless mode is not available in this program (userns.Init was not called)")
@@ -161,8 +210,15 @@ func Run(ctx context.Context, m Mapping) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	var relay *systemd.Relay
+	if o.RelayNotifications {
+		relay = newNotifyRelay()
+	}
+	// Close is idempotent: on success, the relay is closed as soon as the
+	// child has exited.
+	defer closeRelay(relay)
 	tty := terminal()
-	cmd, release, err := start(m, tty < 0)
+	cmd, release, err := start(m, tty < 0, relay)
 	if err != nil {
 		return err
 	}
@@ -171,9 +227,20 @@ func Run(ctx context.Context, m Mapping) error {
 		_ = cmd.Wait()
 		return err
 	}
+	if relay != nil {
+		// The child becomes COMMAND without changing its PID.
+		relay.Start(cmd.Process.Pid)
+	}
 	done := make(chan struct{})
 	go forward(sigs, done, cmd.Process, tty)
 	release()
+	if relay != nil {
+		// What COMMAND sent before it exited (STOPPING=1, ...), before
+		// droot exits too. COMMAND is left a zombie meanwhile, so that
+		// no other process can take its PID, which the relay trusts.
+		waitExited(cmd.Process.Pid)
+		closeRelay(relay)
+	}
 	err = cmd.Wait()
 	close(done)
 	var ee *exec.ExitError
@@ -191,15 +258,74 @@ func Run(ctx context.Context, m Mapping) error {
 	return &ExitError{Code: ws.ExitStatus()}
 }
 
+// newNotifyRelay creates the relay of the notifications of COMMAND to
+// systemd's NOTIFY_SOCKET, if it is the path of a socket, in a directory of
+// XDG_RUNTIME_DIR, RUNTIME_DIRECTORY or else TMPDIR (/tmp). It returns nil without such a socket
+// (the child reports a missing one), or if the relay cannot be created:
+// the child then binds systemd's socket itself.
+//
+// With --config, which the supervising droot does not read, the relay is
+// created even with --no-systemd; the second stage removes its socket
+// whether it binds it or not (see DropNotifyRelay).
+func newNotifyRelay() *systemd.Relay {
+	target := systemd.NotifySocketPath(os.Getenv(systemd.NotifySocket))
+	if target == "" {
+		return nil
+	}
+	if fi, err := os.Stat(target); err != nil || fi.Mode().Type() != os.ModeSocket { //nolint:gosec // G703: the socket systemd gave droot
+		return nil
+	}
+	// The runtime directories of the user, of the service
+	// (RuntimeDirectory=, in a unit whose /tmp may be read-only), then
+	// TMPDIR or /tmp.
+	var dirs []string
+	if d := os.Getenv("XDG_RUNTIME_DIR"); filepath.IsAbs(d) {
+		dirs = append(dirs, d)
+	}
+	for d := range strings.SplitSeq(os.Getenv("RUNTIME_DIRECTORY"), ":") {
+		if filepath.IsAbs(d) {
+			dirs = append(dirs, d)
+		}
+	}
+	dirs = append(dirs, os.TempDir())
+	relay, err := systemd.NewRelay(target, dirs)
+	if err != nil {
+		// The second stage warns if COMMAND gets systemd's socket.
+		log.Debugf("cannot relay the notifications of COMMAND to systemd: %v", err)
+		return nil
+	}
+	log.Debugf("relaying the notifications of COMMAND to %s through %s", target, relay.Path())
+	return relay
+}
+
+// waitExited waits until the child pid has exited, without reaping it.
+func waitExited(pid int) {
+	var info unix.Siginfo
+	for {
+		err := unix.Waitid(unix.P_PID, pid, &info, unix.WEXITED|unix.WNOWAIT, nil)
+		if !errors.Is(err, unix.EINTR) {
+			return
+		}
+	}
+}
+
+func closeRelay(relay *systemd.Relay) {
+	if relay != nil {
+		_ = relay.Close()
+	}
+}
+
 // start starts the first stage in a new user namespace and writes its ID
 // maps. release lets it go on. With ownGroup, the child is put in a process
 // group of its own, so that the signals sent to the process group of droot
 // (by timeout(1), kill -- -PGID, ...) reach it only once, passed on by droot.
+// relay, if not nil, is the relay of the notifications of COMMAND, whose
+// socket the child binds in the container.
 //
 // The sockets of socket activation keep their descriptors (3, 4, ...) in
 // the child, and so do the other descriptors droot inherited; the pipe it
 // waits on keeps its own number (see firstStageCommand).
-func start(m Mapping, ownGroup bool) (*exec.Cmd, func(), error) {
+func start(m Mapping, ownGroup bool, relay *systemd.Relay) (*exec.Cmd, func(), error) {
 	sockets, err := listenFiles()
 	if err != nil {
 		return nil, nil, err
@@ -211,6 +337,9 @@ func start(m Mapping, ownGroup bool) (*exec.Cmd, func(), error) {
 		return nil, nil, err
 	}
 	cmd, err := firstStageCommand(r, sockets, ownGroup)
+	if err == nil && relay != nil {
+		cmd.Env = append(cmd.Env, envNotifyRelay+"="+relay.Path())
+	}
 	if err == nil {
 		err = cmd.Start()
 		if err != nil {
@@ -256,7 +385,9 @@ func firstStageCommand(r *os.File, sockets []*os.File, ownGroup bool) (*exec.Cmd
 	cmd.Args[0] = os.Args[0]
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	cmd.ExtraFiles = sockets
-	cmd.Env = append(os.Environ(), envSync+"="+strconv.FormatUint(uint64(fd), 10), envParent+"="+strconv.Itoa(os.Getpid()))
+	// Only the variables of this droot: not inherited ones.
+	cmd.Env = slices.DeleteFunc(os.Environ(), func(kv string) bool { return strings.HasPrefix(kv, envPrefix) })
+	cmd.Env = append(cmd.Env, envSync+"="+strconv.FormatUint(uint64(fd), 10), envParent+"="+strconv.Itoa(os.Getpid()))
 	cmd.SysProcAttr = &syscall.SysProcAttr{Cloneflags: syscall.CLONE_NEWUSER, Pdeathsig: syscall.SIGKILL, Setpgid: ownGroup}
 	return cmd, nil
 }
