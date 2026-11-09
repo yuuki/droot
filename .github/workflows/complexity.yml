@@ -24,7 +24,7 @@ jobs:
       contents: write # to store the reports in the octocov branch using octocov
       actions: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
 
@@ -35,7 +35,7 @@ jobs:
       - name: Measure complexity (cccc)
         id: cccc
         continue-on-error: true
-        uses: moznion/cccc-action@1d5313811f8451953e46a268c61791a01e40b7df # v1.1.2
+        uses: moznion/cccc-action@v1.1.2
         with:
           version: v1.8.6
           path: cmd internal
@@ -84,7 +84,7 @@ jobs:
       # Passes the Custom Metrics to octocov, which comments on the pull
       # request and stores the report (see .octocov.complexity.yml).
       - name: Run octocov
-        uses: k1LoW/octocov-action@a167dc0dee441b7ffc45e1b862ab55ec0d87f278 # v1.5.2
+        uses: k1LoW/octocov-action@v1.5.2
         with:
           config: .octocov.complexity.yml
         env:

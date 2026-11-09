@@ -25,7 +25,8 @@ $ make fuzz               # run every fuzz target for FUZZTIME (default 30s; ali
 $ make bench              # benchmarks, BENCH_COUNT (6) times, into bench.txt for benchstat
 $ make docs               # regenerate documentation/cli.md and droot.1 (a test checks them)
 $ make lint               # golangci-lint (configuration in .golangci.yml) and go mod tidy -diff
-$ make lint-actions       # actionlint and zizmor on the GitHub Actions workflows
+$ make lint-actions       # actionlint and zizmor on the GitHub Actions workflows, and their lockfile
+$ make lock-actions       # update .github/workflows/actions.lock after changing a uses: line
 $ make fmt                # gofmt + goimports
 $ make vet                # go vet for Linux and macOS
 $ make vuln               # govulncheck: known vulnerabilities reachable from droot
@@ -37,13 +38,15 @@ $ make release-prep VERSION=x.y.z   # move the Unreleased changes to a new versi
 
 `make lint`, `make fmt`, `make lint-actions`, `make vuln` and
 `make snapshot` run pinned versions of golangci-lint, actionlint,
-govulncheck and GoReleaser with `go run`. These tools may require a newer Go
+gh-actions-lock, govulncheck and GoReleaser with `go run`. These tools may require a newer Go
 than droot itself (GoReleaser v2.20.0 needs Go 1.27.3): keep the default
 `GOTOOLCHAIN=auto` so that the go command downloads it, or install the tools
 separately when `GOTOOLCHAIN=local` is enforced (e.g. a distribution's Go).
 golangci-lint is built with at least the Go of `go.mod`, which it needs to
 lint the module. `make lint-actions` runs the pinned zizmor with `uvx` (or
-`pipx`), offline unless `GH_TOKEN` is set. `make snapshot` also makes the
+`pipx`), offline unless `GH_TOKEN` is set; likewise, gh-actions-lock checks
+only offline that `.github/workflows/actions.lock` covers every action
+without `GH_TOKEN`, and verifies each pin against GitHub with it. `make snapshot` also makes the
 SBOMs when [syft](https://github.com/anchore/syft) is installed.
 
 AI coding agents: see [AGENTS.md](../AGENTS.md) for the rules, the
@@ -86,7 +89,9 @@ releases are noticed between pushes:
   shellcheck of the `run` steps) and [zizmor](https://docs.zizmor.sh), a
   security linter for GitHub Actions workflows (template injection,
   excessive permissions, unpinned actions, cache poisoning, ...), with the
-  online audits;
+  online audits, and `gh actions-lock --verify`, which fails when
+  `.github/workflows/actions.lock` misses an action or a pin no longer
+  verifies upstream;
 - `release snapshot`: the release assets built exactly like a release, kept
   for 7 days as the `snapshot` artifact of the run, and a preview of the
   release notes in the run summary.
@@ -123,10 +128,15 @@ adding a dependency.
 
 Dependabot (`.github/dependabot.yml`) proposes monthly, grouped updates of Go
 modules and GitHub Actions, once they have been released for a week. The
-workflows pin every action to a full commit SHA, with its version in a
-comment; Dependabot updates both. The versions of golangci-lint,
-govulncheck, actionlint, GoReleaser, syft, zizmor and cccc are pinned in the
-`Makefile` and the workflows and are updated by hand.
+workflows name each action by its release tag, and
+[`.github/workflows/actions.lock`](https://docs.github.com/en/actions/concepts/security/workflow-dependency-lockfiles)
+pins the commit of every action they use, transitive ones included;
+Dependabot updates both. After changing a `uses:` line by hand, run
+`make lock-actions` (it needs a GitHub token: `GH_TOKEN` or `gh auth login`)
+and commit the lockfile with the workflow; never edit the lockfile by hand.
+The versions of golangci-lint, govulncheck, actionlint, gh-actions-lock,
+GoReleaser, syft, zizmor and cccc are pinned in the `Makefile` and the
+workflows and are updated by hand.
 
 ## Releasing
 
