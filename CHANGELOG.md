@@ -80,6 +80,11 @@ Releases up to 0.7.7 are described on the
 - CodeQL analysis (`.github/workflows/security.yml`), a weekly run of CI
   (longer fuzzing, new advisories), timeouts on every CI job, `AGENTS.md`
   for coding agents and `CONTRIBUTING.md`.
+- GitHub Actions: the actions the workflows use, transitive ones included,
+  are pinned in the workflow dependency lockfile
+  `.github/workflows/actions.lock`, and the workflows name them by release
+  tag; `make lint-actions` checks the lockfile (`gh actions-lock --verify` in
+  CI) and `make lock-actions` updates it after a `uses:` line changed.
 
 ### Documentation
 

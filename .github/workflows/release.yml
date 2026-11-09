@@ -21,7 +21,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -58,17 +58,17 @@ jobs:
       id-token: write # get the Sigstore certificate that signs the attestation
       attestations: write # store the attestation
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@v7.0.0
         with:
           go-version: stable
           # Build from scratch: a cache written by another workflow must not
           # be able to alter the release binaries.
           cache: false
-      - uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+      - uses: anchore/sbom-action/download-syft@v0.24.3
         with:
           syft-version: v1.56.0
       - name: Release notes
@@ -77,7 +77,7 @@ jobs:
         # Outside the work tree: GoReleaser refuses to release a dirty tree,
         # and the binaries record whether it was modified.
         run: script/release-notes.sh "$TAG" >"$RUNNER_TEMP/release-notes.md"
-      - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+      - uses: goreleaser/goreleaser-action@v7.3.0
         with:
           version: v2.20.0
           args: release --clean --release-notes ${{ runner.temp }}/release-notes.md
@@ -89,6 +89,6 @@ jobs:
           cp dist/checksums.txt "$RUNNER_TEMP/subjects.txt"
           (cd dist && sha256sum checksums.txt) >>"$RUNNER_TEMP/subjects.txt"
           cat "$RUNNER_TEMP/subjects.txt"
-      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+      - uses: actions/attest@v4.2.2
         with:
           subject-checksums: ${{ runner.temp }}/subjects.txt
