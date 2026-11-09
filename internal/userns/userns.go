@@ -28,8 +28,10 @@ import (
 	"strings"
 )
 
-// Environment variables of the stages.
+// Environment variables of the stages, which start with envPrefix.
 const (
+	envPrefix = "_DROOT_USERNS_"
+
 	// envSync names the descriptor on which the first stage waits.
 	envSync = "_DROOT_USERNS_SYNC"
 	// envParent is the PID of the supervising droot, which the child

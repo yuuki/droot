@@ -303,7 +303,7 @@ In order, droot:
 | `--hostname NAME` | Run `COMMAND` in a private UTS namespace whose host name is `NAME` (also the default of `HOSTNAME`). The host's name is not changed. |
 | `--read-only` | Make `ROOT_DIR` read-only for `COMMAND` (bind mounts and tmpfs keep their own mode: add `--tmpfs /tmp`, `--bind`, ... for what it writes). Implies `--unshare`, so that the read-only mount disappears with `COMMAND`. |
 | `--no-mask` | Leave `/proc` and `/sys` as they are: do not mask their sensitive files nor make `/proc/sys`, `/sys` and the like read-only (dangerous). Masks made by a previous run stay until `droot umount`. |
-| `--no-systemd` | Do not pass systemd's variables (`NOTIFY_SOCKET`, `LISTEN_*`, `WATCHDOG_*`) on to `COMMAND`, nor bind the notification socket in the container (see [Notifications and socket activation](#notifications-and-socket-activation)): for a container that must have no channel to the service manager, or a droot that inherited a `NOTIFY_SOCKET` not meant for it. The inherited descriptors are kept. |
+| `--no-systemd` | Do not pass systemd's variables (`NOTIFY_SOCKET`, `LISTEN_*`, `WATCHDOG_*`) on to `COMMAND`, nor bind the notification socket in the container, nor relay notifications rootless (see [Notifications and socket activation](#notifications-and-socket-activation)): for a container that must have no channel to the service manager, or a droot that inherited a `NOTIFY_SOCKET` not meant for it. What `--env` and `--env-file` set is still passed, and the inherited descriptors are kept. A socket bound by a previous run stays until `droot umount`. |
 | `--no-new-privileges` | Set the `no_new_privs` flag: setuid programs (`su`, `sudo`, ...) and file capabilities cannot grant privileges to `COMMAND`. On by default; `--no-new-privileges=false` turns it off for applications that need `sudo` or `su`. |
 | `--seccomp PROFILE` | `default` installs a seccomp filter that denies, like Docker's default profile, the system calls an application has no business making: creating namespaces (`unshare`, `setns`, `clone` with namespace flags), mounting, loading modules or kernels, keyrings, `bpf`, perf events, `userfaultfd`, io_uring, setting clocks, swapping, rebooting, ... They fail with `EPERM` (`clone3` with `ENOSYS`, so that the C library uses `clone`). Supported on amd64, arm64, arm and 386; programs of another architecture (e.g. 32-bit programs on a 64-bit kernel) cannot make any system call. `unconfined`, the default, installs none. |
 
@@ -372,10 +372,14 @@ the service, for its two protocols, `Type=notify` and socket activation:
   (`READY=1`, `STATUS=...`, `WATCHDOG=1`, ...). A path, such as
   `/run/systemd/notify`, is bind mounted read-only on the same path in the
   container: `COMMAND` can send notifications, but not change the host's
-  socket. The mount point is created if missing, but only on `ROOT_DIR`'s
-  own file system or in a `--tmpfs`: never in a host directory that a
-  `--bind` mounts over its directory (with `--bind /var/lib/app/run:/run`,
-  `--bind /run/systemd/notify` binds the socket explicitly). An abstract
+  socket. The mount point is created if missing, but only on the
+  container's own file systems: `ROOT_DIR`'s, a `--tmpfs`, or another file
+  system mounted nowhere but under `ROOT_DIR`; never in a host directory
+  that a `--bind` mounts over its directory (with
+  `--bind /var/lib/app/run:/run`, `--robind /run/systemd/notify` binds the
+  socket explicitly, read-only; its mount point is then created in
+  `/var/lib/app/run`, and stays busy there until `droot umount` without
+  `--unshare`). An abstract
   socket (`@NAME`) needs no mount: droot shares the host's network
   namespace. If droot cannot bind the socket (it does not exist, or the
   mount point cannot be created there), it warns and runs `COMMAND` all
@@ -394,8 +398,11 @@ mount the socket over a `--bind` or `--tmpfs` on its path. `--no-systemd`
 (`no-systemd = true` in `--config`) leaves them all out and binds nothing,
 e.g. when droot is started by a process of a `Type=notify` service that
 leaves its own `NOTIFY_SOCKET` set: an empty `--env NOTIFY_SOCKET=` would
-not do, since libsystemd takes an empty variable for an error. The
-descriptors droot inherits reach `COMMAND` all the same. droot replaces itself
+not do, since libsystemd takes an empty variable for an error. What
+`--env` and `--env-file` set is still passed (a bare `--env NOTIFY_SOCKET`
+too, but the socket is not bound), and so are the descriptors droot
+inherits. A socket bound by a previous run without `--unshare` stays until
+`droot umount`. droot replaces itself
 with `COMMAND`, which keeps its PID: for systemd, `COMMAND` is the main
 process, and the default `NotifyAccess=main` accepts its notifications.
 
@@ -537,14 +544,18 @@ socket activation reach `COMMAND` as they would as root, and `LISTEN_PID` and
 `WATCHDOG_PID` become its PID. droot, the main process of the unit, relays
 the notifications of `COMMAND` (`Type=notify`, `WatchdogSec=`) from a socket
 of its own, which takes the place of systemd's `NOTIFY_SOCKET` in the
-container (in a directory it creates in `$XDG_RUNTIME_DIR`, or else in
-`$TMPDIR`), so that the default `NotifyAccess=main` accepts them. It relays
-only those of `COMMAND`: not those of its children (`sh -c
-'systemd-notify --ready; ...'`, whose `exec` must then be the program that
-notifies), and without `MAINPID=`, since droot remains the main process. To
-give the container systemd's socket instead, with `NotifyAccess=all`, bind it
-explicitly: `--bind $NOTIFY_SOCKET`. An abstract `NOTIFY_SOCKET` (`@NAME`) is
-not relayed either, and needs `NotifyAccess=all`.
+container, so that the default `NotifyAccess=main` accepts them. It creates
+the socket in a new directory of `$XDG_RUNTIME_DIR`, `$RUNTIME_DIRECTORY`
+(`RuntimeDirectory=`) or else `$TMPDIR` (`/tmp`), and removes it from there
+once it is bound. It relays only those of `COMMAND`: not those of its
+children, even with `NotifyAccess=all` (`sh -c 'systemd-notify --ready;
+...'`, whose `exec` must then be the program that notifies; a `tini` or
+`dumb-init` entrypoint), and without `MAINPID=`, since droot remains the
+main process. To give the container systemd's socket instead, with
+`NotifyAccess=all`, bind it explicitly: `--robind $NOTIFY_SOCKET`. An
+abstract `NOTIFY_SOCKET` (`@NAME`) is not relayed, and neither are the
+notifications when none of these directories is writable (droot warns):
+they then need `NotifyAccess=all`.
 
 ## Exporting without a Docker daemon
 

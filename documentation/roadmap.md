@@ -35,8 +35,15 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
 - **[compat]** Rootless, the supervising droot relays the notifications of
   `COMMAND` only: those of its children are dropped, even with
   `NotifyAccess=all` (droot cannot send them with their own credentials),
-  unless systemd's socket is bound explicitly (`--bind $NOTIFY_SOCKET`). An
-  abstract `NOTIFY_SOCKET` is not relayed: it needs `NotifyAccess=all`.
+  unless systemd's socket is bound explicitly (`--robind $NOTIFY_SOCKET`).
+  An abstract `NOTIFY_SOCKET` is not relayed, nor are the notifications
+  when no directory for the relay is writable: they need
+  `NotifyAccess=all`. If the supervising droot is killed before the second
+  stage has bound the relay, its directory is left behind.
+- **[compat]** An explicit `--bind` on the path of `NOTIFY_SOCKET` only
+  takes precedence when it names the same path: through a symlink of the
+  image (`--bind X:/var/run/systemd/notify` with `/var/run -> /run`),
+  the socket replaces it.
 
 ### `droot export`
 

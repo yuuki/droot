@@ -48,9 +48,9 @@ type BindOptions struct {
 	// no longer remove or replace it.
 	SkipSame bool
 	// Within, if not nil, must accept the directories in which the mount
-	// point or its missing parents are created: e.g. OnMountOf, so that a
-	// mount droot makes on its own creates nothing in a directory bound
-	// from the host.
+	// point or its missing parents are created: e.g. OnContainerFS, so
+	// that a mount droot makes on its own creates nothing in a directory
+	// bound from the host.
 	Within osutil.DirCheck
 	// WithinParent also requires Within to accept the directory of a mount
 	// point that exists, unless SkipSame applies (nothing is mounted): in

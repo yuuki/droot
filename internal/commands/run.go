@@ -55,10 +55,10 @@ func runCommand() *cli.Command {
 			"LISTEN_FDNAMES) and the watchdog (WATCHDOG_USEC, WATCHDOG_PID) of droot,\n" +
 			"which --env and --env-file override and --no-systemd leaves out. A\n" +
 			"NOTIFY_SOCKET that is a path is bind mounted read-only on the same path in\n" +
-			"the container; its mount point is only created on ROOT_DIR's own file system\n" +
-			"or in a --tmpfs. Rootless, droot stays the main process of the service and\n" +
-			"relays the notifications of COMMAND, but not those of its children, from a\n" +
-			"socket of its own bound there instead.\n\n" +
+			"the container; its mount point is only created on the container's own file\n" +
+			"systems (ROOT_DIR's, a --tmpfs). Rootless, droot stays the main process of the\n" +
+			"service and relays the notifications of COMMAND, but not those of its\n" +
+			"children, from a socket of its own bound there instead.\n\n" +
 			"--config FILE reads options from FILE, in a subset of TOML: lines KEY = VALUE,\n" +
 			"where KEY is the long name of an option and VALUE a string (\"...\" or '...'),\n" +
 			"true or false, or an array of strings for repeatable options; command, an\n" +
@@ -266,7 +266,9 @@ func doRun(ctx context.Context, cmd *cli.Invocation) error {
 	// the child makes every check.
 	rootless := os.Geteuid() != 0
 	if rootless && cmd.IsSet("config") {
-		return runRootless(ctx)
+		// --no-systemd may be in the file: the second stage removes
+		// the relay it does not use.
+		return runRootless(ctx, true)
 	}
 	opts, err := parseRunOptions(cmd)
 	if err != nil {
@@ -296,7 +298,7 @@ func doRun(ctx context.Context, cmd *cli.Invocation) error {
 		return cmd.UsageError("a command to run is required")
 	}
 	if rootless {
-		return runRootless(ctx)
+		return runRootless(ctx, !cmd.Bool("no-systemd"))
 	}
 	return r.run(ctx, argv)
 }
@@ -693,15 +695,7 @@ func (r *runner) mount(ctx context.Context, mnt *mounter.Mounter, env []string) 
 			return err
 		}
 	}
-	// The mounts of --tmpfs, where droot creates the mount point of the
-	// notification socket if needed, as on the root's own file system.
-	var tmpfs []*os.File
-	defer func() {
-		for _, f := range tmpfs {
-			_ = f.Close()
-		}
-	}()
-	mounts := r.userMounts(mnt, &tmpfs)
+	mounts := r.userMounts(mnt)
 	for _, m := range mounts {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -715,7 +709,7 @@ func (r *runner) mount(ctx context.Context, mnt *mounter.Mounter, env []string) 
 			return err
 		}
 	}
-	if err := r.bindNotifySocket(mnt, env, mounts, tmpfs); err != nil {
+	if err := r.bindNotifySocket(mnt, env, mounts); err != nil {
 		return err
 	}
 
@@ -736,10 +730,14 @@ func (r *runner) mount(ctx context.Context, mnt *mounter.Mounter, env []string) 
 // bindNotifySocket bind mounts the socket of systemd's notifications of
 // COMMAND (env) in the container, if any (see notifySocketMount), unless
 // --no-systemd is given or one of mounts, those of the command line, mounts
-// on its path. Its mount point may be created on the root's own file system
-// and in tmpfs, the mounts of --tmpfs. Rootless, the relay of the
+// on its path. Its mount point may only be created on the container's own
+// file systems (see mounter.OnContainerFS). Rootless, the relay of the
 // supervising droot takes the place of systemd's socket.
-func (r *runner) bindNotifySocket(mnt *mounter.Mounter, env []string, mounts []userMount, tmpfs []*os.File) error {
+func (r *runner) bindNotifySocket(mnt *mounter.Mounter, env []string, mounts []userMount) error {
+	// Bound or not, the relay must not stay reachable on the host, where
+	// the container may see it (a --bind of $XDG_RUNTIME_DIR or /tmp):
+	// once bound, it works without its path.
+	defer userns.DropNotifyRelay()
 	if r.cmd.Bool("no-systemd") {
 		return nil
 	}
@@ -751,24 +749,21 @@ func (r *runner) bindNotifySocket(mnt *mounter.Mounter, env []string, mounts []u
 		log.Debugf("not binding %s=%s: --bind or --tmpfs mounts on it", systemd.NotifySocket, sock)
 		return nil
 	}
-	fds := []int{r.root.Fd()}
-	for _, f := range tmpfs {
-		fds = append(fds, int(f.Fd()))
-	}
-	b := notifyBind{sock: sock, source: sock, within: mounter.OnMountOf(fds...), hostNS: !r.privateNS}
+	b := notifyBind{sock: sock, source: sock, within: mounter.OnContainerFS(r.root), hostNS: !r.privateNS}
 	if relay := userns.NotifyRelay(); relay != "" {
 		// Rootless: the supervising droot, the main process of the
 		// service, relays the notifications of COMMAND.
 		b.source = relay
+	} else if userns.Supervised() {
+		b.unrelayed = true
 	}
 	return bindNotifySocket(r.root, mnt, b)
 }
 
 // userMounts returns the bind and tmpfs mounts of the command line, to be
 // made with mnt, parents before children (like Docker), so that
-// `--tmpfs /data --bind H:/data/x` binds H inside the tmpfs. The mounts of
-// --tmpfs add a descriptor of theirs to tmpfs.
-func (r *runner) userMounts(mnt *mounter.Mounter, tmpfs *[]*os.File) []userMount {
+// `--tmpfs /data --bind H:/data/x` binds H inside the tmpfs.
+func (r *runner) userMounts(mnt *mounter.Mounter) []userMount {
 	var mounts []userMount
 	for _, b := range r.opts.binds {
 		mounts = append(mounts, userMount{target: b.container, mount: func() error {
@@ -780,11 +775,9 @@ func (r *runner) userMounts(mnt *mounter.Mounter, tmpfs *[]*os.File) []userMount
 	}
 	for _, t := range r.opts.tmpfs {
 		mounts = append(mounts, userMount{target: t.path, mount: func() error {
-			f, err := mnt.MountFS("tmpfs", t.path, t.opts, nil)
-			if err != nil {
+			if err := mnt.MountFS("tmpfs", t.path, t.opts, nil); err != nil {
 				return fmt.Errorf("mount a tmpfs on %s: %w", t.path, err)
 			}
-			*tmpfs = append(*tmpfs, f)
 			return nil
 		}})
 	}
@@ -810,13 +803,13 @@ func bindNetFiles(mnt *mounter.Mounter) error {
 // runRootless runs droot again as root of a new user namespace, mapping the
 // user to root and their subordinate IDs, if any, to the other users (see
 // package userns), and waits for it, relaying the notifications of COMMAND
-// to systemd.
-func runRootless(ctx context.Context) error {
+// to systemd if relay is set.
+func runRootless(ctx context.Context, relay bool) error {
 	m, err := userns.CurrentMapping()
 	if err != nil {
 		return err
 	}
-	return userns.Run(ctx, m, userns.Options{RelayNotifications: true})
+	return userns.Run(ctx, m, userns.Options{RelayNotifications: relay})
 }
 
 // checkMapped checks, in a user namespace, that the user and the groups of
@@ -975,6 +968,9 @@ type notifyBind struct {
 	within osutil.DirCheck
 	// hostNS is set when the mount is made in the host's mount namespace.
 	hostNS bool
+	// unrelayed is set when, rootless, the supervising droot could not
+	// relay the notifications: COMMAND reaches systemd's socket.
+	unrelayed bool
 }
 
 // bindNotifySocket bind mounts the socket of systemd's notifications, or the
@@ -986,9 +982,9 @@ type notifyBind struct {
 // replaced, in case systemd created the socket again since.
 //
 // The user did not ask for this mount, so droot creates its mount point only
-// in directories that within accepts: those of the root's own file system
-// and of --tmpfs, not those bound from the host, where it would be left
-// behind. In the host's mount namespace, droot does not mount on an existing
+// in directories that within accepts: those of the container's own file
+// systems (ROOT_DIR's, a --tmpfs), not those bound from the host, where it
+// would be left behind. In the host's mount namespace, droot does not mount on an existing
 // file of those either: it would be busy until 'droot umount'.
 //
 // A socket that cannot be bound is only reported: droot may have inherited
@@ -1008,9 +1004,13 @@ func bindNotifySocket(root *osutil.Root, mnt *mounter.Mounter, b notifyBind) err
 		}
 		return fmt.Errorf("bind mount the socket of %s, %s: %w", systemd.NotifySocket, b.source, err)
 	}
-	if b.source != b.sock {
+	switch {
+	case b.source != b.sock:
 		log.Debugf("%s=%s is the relay %s of the supervising droot in the container", systemd.NotifySocket, b.sock, b.source)
-	} else {
+	case b.unrelayed:
+		log.Warnf("the supervising droot does not relay the notifications of COMMAND (see its debug messages): "+
+			"COMMAND sends them to %s=%s itself, and they need NotifyAccess=all", systemd.NotifySocket, b.sock)
+	default:
 		log.Debugf("%s=%s is reachable in the container", systemd.NotifySocket, b.sock)
 	}
 	return nil
@@ -1021,9 +1021,14 @@ func bindNotifySocket(root *osutil.Root, mnt *mounter.Mounter, b notifyBind) err
 func warnNotifySocket(sock string, err error) {
 	if errors.Is(err, mounter.ErrOtherMount) {
 		log.Debugf("%s: %v", systemd.NotifySocket, err)
-		err = fmt.Errorf("%s: not binding %s in the container: its path there is on a mount other than ROOT_DIR's own file system "+
-			"and --tmpfs (a --bind of a host directory?), where droot makes no mount on its own; --bind %s binds it",
-			systemd.NotifySocket, sock, sock)
+		hint := ""
+		if userns.Supervised() {
+			hint = ", but then needs NotifyAccess=all"
+		}
+		err = fmt.Errorf("%s: not binding %s in the container: its path there is not on a file system of the container "+
+			"(ROOT_DIR's, a --tmpfs) but, e.g., in a --bind of a host directory, where droot makes no mount on its own; "+
+			"--robind %s binds systemd's socket there%s",
+			systemd.NotifySocket, sock, sock, hint)
 	}
 	log.Warnf("%v: COMMAND cannot send notifications to systemd", err)
 }
@@ -1104,25 +1109,20 @@ func setupDev(root *osutil.Root, mnt *mounter.Mounter, shm, userns bool) error {
 			log.Warnf("cannot create %s: %v", l.path, err)
 		}
 	}
-	pts, err := mnt.MountFS("devpts", "/dev/pts", devpts, onRoot)
+	err := mnt.MountFS("devpts", "/dev/pts", devpts, onRoot)
 	if err != nil && userns && !osutil.GIDMapped(ttyGID) {
 		// Without the group tty, as in rootless mode without
 		// subordinate IDs.
 		opts := devpts
 		opts.Data = slices.DeleteFunc(slices.Clone(devpts.Data), func(o string) bool { return strings.HasPrefix(o, "gid=") })
-		pts, err = mnt.MountFS("devpts", "/dev/pts", opts, onRoot)
+		err = mnt.MountFS("devpts", "/dev/pts", opts, onRoot)
 	}
 	if err != nil {
 		log.Warnf("cannot mount devpts on /dev/pts (pseudo-terminals will not work): %v", err)
-	} else {
-		_ = pts.Close()
 	}
 	if shm {
-		f, err := mnt.MountFS("tmpfs", "/dev/shm", shmfs, onRoot)
-		if err != nil {
+		if err := mnt.MountFS("tmpfs", "/dev/shm", shmfs, onRoot); err != nil {
 			log.Warnf("cannot mount a tmpfs on /dev/shm: %v", err)
-		} else {
-			_ = f.Close()
 		}
 	}
 	return nil

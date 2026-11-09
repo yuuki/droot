@@ -177,16 +177,59 @@ func TestRelayNotStarted(t *testing.T) {
 	}
 }
 
+func TestRelayPath(t *testing.T) {
+	dir := t.TempDir()
+	listenManager(t, filepath.Join(dir, "manager"))
+	if _, err := NewRelay(filepath.Join(dir, "manager"), []string{"relative"}); err == nil {
+		t.Error("a relative directory must be refused")
+	}
+	r, err := NewRelay(filepath.Join(dir, "manager"), []string{dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	for path, want := range map[string]bool{
+		r.Path():                        true,
+		"/tmp/droot-notify-1/notify":    true,
+		"droot-notify-1/notify":         false,
+		"/tmp/droot-notify-1/other":     false,
+		"/tmp/other/notify":             false,
+		"/tmp/droot-notify-1/../notify": false,
+		"/etc/passwd":                   false,
+	} {
+		if got := IsRelayPath(path); got != want {
+			t.Errorf("IsRelayPath(%q) = %v, want %v", path, got, want)
+		}
+	}
+	if err := RemoveRelayPath("/etc/passwd"); err == nil {
+		t.Error("RemoveRelayPath must refuse another path")
+	}
+	// The relay keeps its socket open: removing its path does not stop it.
+	if err := RemoveRelayPath(r.Path()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Dir(r.Path())); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("the directory of the relay is left: %v", err)
+	}
+	if err := RemoveRelayPath(r.Path()); err != nil {
+		t.Errorf("removing it again: %v", err)
+	}
+}
+
 func TestWithoutMainPID(t *testing.T) {
 	for _, tt := range []struct {
 		msg, want string
 		left      bool
 	}{
 		{"READY=1", "READY=1", false},
+		{"READY=1\nSTATUS=x\r\n", "READY=1\nSTATUS=x\r\n", false},
 		{"READY=1\nMAINPID=42", "READY=1", true},
-		{"MAINPID=42\nREADY=1\n", "READY=1\n", true},
+		{"MAINPID=42\nREADY=1\n", "READY=1", true},
 		{"MAINPIDFD=1\nMAINPIDFDID=7\nSTATUS=x", "STATUS=x", true},
 		{"STATUS=MAINPID=42", "STATUS=MAINPID=42", false},
+		// systemd also splits lines at "\r".
+		{"READY=1\rMAINPID=42", "READY=1", true},
+		{"\r\rMAINPIDFD=1\rSTATUS=x\r\n", "STATUS=x", true},
 	} {
 		got, left := withoutMainPID([]byte(tt.msg))
 		if string(got) != tt.want || left != tt.left {

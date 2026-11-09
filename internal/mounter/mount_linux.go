@@ -84,40 +84,70 @@ func isMountRoot(parent, fd int) (bool, error) {
 var ErrOtherMount = errors.New("is on another mount than the container root")
 
 // OnMountOf returns an osutil.DirCheck accepting only directories on the
-// same mount as one of the descriptors fds, e.g. to make sure a directory of
-// the container is not a bind mount of a host directory.
-func OnMountOf(fds ...int) osutil.DirCheck {
+// same mount as the descriptor fd, e.g. to make sure a directory of the
+// container is not a bind mount of a host directory.
+func OnMountOf(fd int) osutil.DirCheck {
 	return func(dir int) error {
-		for _, fd := range fds {
-			same, err := onSameMount(fd, dir)
-			if err != nil {
-				return err
+		id, err1 := mountID(fd)
+		did, err2 := mountID(dir)
+		if err1 == nil && err2 == nil {
+			if id != did {
+				return ErrOtherMount
 			}
-			if same {
-				return nil
-			}
+			return nil
 		}
-		return ErrOtherMount
+		var st, dst unix.Stat_t
+		if err := unix.Fstat(fd, &st); err != nil {
+			return err
+		}
+		if err := unix.Fstat(dir, &dst); err != nil {
+			return err
+		}
+		if st.Dev != dst.Dev {
+			return ErrOtherMount
+		}
+		return nil
 	}
 }
 
-// onSameMount reports whether the descriptors a and b are on the same mount.
-func onSameMount(a, b int) (bool, error) {
-	id, err1 := mountID(a)
-	bid, err2 := mountID(b)
-	if err1 == nil && err2 == nil {
-		return id == bid, nil
+// OnContainerFS returns an osutil.DirCheck accepting only directories of the
+// container's own file systems: those on the mount of root, and those of a
+// file system that is mounted nowhere but at or below the path of root, in
+// the mount namespace of the calling thread (a tmpfs of --tmpfs, a file
+// system mounted on a directory of the container). It refuses a bind mount
+// of a host directory, even of a host tmpfs, and a mount of a previous run
+// that is one, so that droot creates nothing in a directory of the host on
+// its own.
+//
+// A file system mounted elsewhere by propagation (a mount below root whose
+// parent has peers elsewhere) is refused too. Without mount IDs (Linux
+// before 3.15), devices are compared: a bind mount of a directory of the
+// file system of root is then accepted, and any other mount refused.
+func OnContainerFS(root *osutil.Root) osutil.DirCheck {
+	onRoot := OnMountOf(root.Fd())
+	return func(dir int) error {
+		err := onRoot(dir)
+		if !errors.Is(err, ErrOtherMount) {
+			return err
+		}
+		id, err := mountID(dir)
+		if err != nil {
+			return ErrOtherMount // which mount it is cannot be told
+		}
+		mounts, err := readMountInfo()
+		if err != nil {
+			return err
+		}
+		i := slices.IndexFunc(mounts, func(m MountInfo) bool { return m.ID == id })
+		if i < 0 {
+			return ErrOtherMount
+		}
+		dev := mounts[i].Dev
+		if slices.ContainsFunc(mounts, func(m MountInfo) bool { return m.Dev == dev && !isUnder(root.Path(), m.Mountpoint) }) {
+			return ErrOtherMount
+		}
+		return nil
 	}
-	// Kernels without mnt_id in fdinfo: compare devices. This misses bind
-	// mounts within the same file system.
-	var st, bst unix.Stat_t
-	if err := unix.Fstat(a, &st); err != nil {
-		return false, err
-	}
-	if err := unix.Fstat(b, &bst); err != nil {
-		return false, err
-	}
-	return st.Dev == bst.Dev, nil
 }
 
 func mount(source, target, fstype string, flags uintptr, data string) error {
@@ -665,9 +695,8 @@ func (m *Mounter) BindDevice(path string, check osutil.DirCheck) error {
 // MountFS mounts a new file system of type fstype (e.g. tmpfs or devpts) on
 // the directory containerPath, created if needed. An existing mount is
 // reused. check, if not nil, is applied to the directories traversed, in
-// addition to the refusal of kernel file systems. It returns an O_PATH
-// descriptor of the mount (e.g. for OnMountOf), which the caller closes.
-func (m *Mounter) MountFS(fstype, containerPath string, opts FSOptions, check osutil.DirCheck) (*os.File, error) {
+// addition to the refusal of kernel file systems.
+func (m *Mounter) MountFS(fstype, containerPath string, opts FSOptions, check osutil.DirCheck) error {
 	both := func(fd int) error {
 		if check != nil {
 			if err := check(fd); err != nil {
@@ -678,7 +707,7 @@ func (m *Mounter) MountFS(fstype, containerPath string, opts FSOptions, check os
 	}
 	t, err := m.root.OpenMountTarget(containerPath, true, both)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer t.Close()
 	var flags uintptr
@@ -697,7 +726,11 @@ func (m *Mounter) MountFS(fstype, containerPath string, opts FSOptions, check os
 	if opts.NoAtime {
 		flags |= unix.MS_NOATIME
 	}
-	return m.mountOn(t, fstype, fstype, flags, strings.Join(opts.Data, ","), false)
+	mnt, err := m.mountOn(t, fstype, fstype, flags, strings.Join(opts.Data, ","), false)
+	if err != nil {
+		return err
+	}
+	return mnt.Close()
 }
 
 // remountReadonlyRecursive makes the mount open as mnt and every mount below

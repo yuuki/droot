@@ -472,7 +472,7 @@ elif sys.argv[1] == "notify-server":
               if level == socket.SOL_SOCKET and kind == socket.SCM_CREDENTIALS][0]
     lines = msg.decode().split("\n")
     claimed = [l.split()[1:] for l in lines if l.startswith("STATUS=pid ")]
-    by = {str(sender): "the probe"} if not claimed else {claimed[0][0]: "the probe", claimed[0][1]: "the parent of the probe"}
+    by = {claimed[0][0]: "the probe", claimed[0][1]: "the parent of the probe"} if claimed else {}
     print(" ".join(l for l in lines if not l.startswith("STATUS=")) + ", sent by " +
           by.get(str(sender), "PID %d" % sender), flush=True)
 elif sys.argv[1] == "connect":
@@ -624,6 +624,20 @@ else
       "$(ls -A "$WORK/sd-hostdir")" ""
   done
   "$DROOT" umount --root "$WORK/sd"
+  # An existing file there: not mounted on in the host's mount namespace,
+  # where it would be busy; in a private one, the socket is mounted on it.
+  touch "$WORK/sd-hostdir/notify.sock"
+  NOTIFY_SOCKET="$sock" "$DROOT" run --root "$WORK/sd" --robind /usr --bind "$WORK/sd-hostdir:$SD_DIR" -- true 2>"$WORK/sd.err" ||
+    fail "droot run with a file of a host directory on the path of NOTIFY_SOCKET: $(cat "$WORK/sd.err")"
+  rm "$WORK/sd-hostdir/notify.sock" || fail "droot mounted on a file of a host directory: the host cannot remove it"
+  echo "ok - no --unshare: no mount on an existing file of a host directory bound over the directory of NOTIFY_SOCKET"
+  "$DROOT" umount --root "$WORK/sd"
+  touch "$WORK/sd-hostdir/notify.sock"
+  NOTIFY_SOCKET="$sock" "$DROOT" run --root "$WORK/sd" --unshare --robind /usr --bind "$WORK/sd-hostdir:$SD_DIR" -- \
+    "$SD_PYTHON" /sd.py probe >/dev/null || fail "droot run --unshare with a file of a host directory on the path of NOTIFY_SOCKET"
+  assert_notified "--unshare: the socket is mounted on an existing file of a host directory" "$WORK/sd-notify.out"
+  rm "$WORK/sd-hostdir/notify.sock"
+  notify_server "$sock" "$WORK/sd-notify.out"
   # In a --tmpfs, it is created, also with --read-only.
   NOTIFY_SOCKET="$sock" "$DROOT" run --root "$WORK/sd" --read-only --robind /usr --tmpfs "$SD_DIR" -- "$SD_PYTHON" /sd.py probe >/dev/null ||
     fail "droot run with a --tmpfs on the directory of NOTIFY_SOCKET"
@@ -734,6 +748,22 @@ else
     "${AS_USER[@]}" NOTIFY_SOCKET="$sock" "$RL_DROOT" run --root "$WORK/rl-sd" --robind /usr --robind "$SD_DIR" --user 0 -- \
       "$SD_PYTHON" /sd.py probe >/dev/null || fail "rootless: droot run with a --bind of the directory of NOTIFY_SOCKET"
     assert_notified "rootless: notifications relayed through a --bind of the directory of the socket" "$WORK/sd-notify.out" "the parent of the probe"
+    # Once bound, the relay has no path on the host: a container that sees
+    # XDG_RUNTIME_DIR does not see it there.
+    notify_server "$sock" "$WORK/sd-notify.out"
+    assert_eq "rootless: the relay is not reachable through XDG_RUNTIME_DIR" \
+      "$("${AS_USER[@]}" NOTIFY_SOCKET="$sock" "$RL_DROOT" run --root "$WORK/rl-sd" --robind /usr --bind "$WORK/xdg-nobody:/xdg" --user 0 -- \
+        sh -c 'find /xdg -name "droot-notify-*"; exec "$0" /sd.py probe >/dev/null' "$SD_PYTHON")" ""
+    assert_notified "rootless: notifications relayed without a path of the relay on the host" "$WORK/sd-notify.out" "the parent of the probe"
+    # --no-systemd: no variable, and no relay, also when the supervising
+    # droot does not read the options (--config).
+    assert_eq "rootless --no-systemd: none of the variables of systemd reach COMMAND" \
+      "$("${AS_USER[@]}" NOTIFY_SOCKET="$sock" WATCHDOG_USEC=30000000 "$RL_DROOT" run --no-systemd "${rl_sd_run[@]:1}" 2>&1)" "none"
+    printf 'root = "%s"\nrobind = ["/usr"]\nbind = ["%s:/xdg"]\nuser = "0"\nno-systemd = true\n' "$WORK/rl-sd" "$WORK/xdg-nobody" >"$WORK/rl-no-systemd.toml"
+    chmod 644 "$WORK/rl-no-systemd.toml"
+    assert_eq "rootless, no-systemd = true: no relay in XDG_RUNTIME_DIR, no warning" \
+      "$("${AS_USER[@]}" NOTIFY_SOCKET="$sock" "$RL_DROOT" run --config "$WORK/rl-no-systemd.toml" -- \
+        sh -c 'find /xdg -name "droot-notify-*"; echo "$NOTIFY_SOCKET"' 2>&1)" ""
     # No mount point can be created (in a read-only tmpfs): reported, not
     # fatal.
     if ! "${AS_USER[@]}" NOTIFY_SOCKET="$sock" "$RL_DROOT" run --root "$WORK/rl-sd" --robind /usr --tmpfs /tmp:ro --user 0 -- \

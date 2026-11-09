@@ -634,11 +634,9 @@ func TestRollback(t *testing.T) {
 	if err := m.ProtectKernelFS(); err != nil {
 		t.Fatal(err)
 	}
-	tmp, err := m.MountFS("tmpfs", "/tmp", FSOptions{}, nil)
-	if err != nil {
+	if err := m.MountFS("tmpfs", "/tmp", FSOptions{}, nil); err != nil {
 		t.Fatal(err)
 	}
-	_ = tmp.Close()
 	if err := m.BindMount(host, "/data/inner", BindOptions{ReadOnly: true}); err != nil {
 		t.Fatal(err)
 	}
@@ -894,8 +892,10 @@ func TestBindMountWithin(t *testing.T) {
 	hostRun := filepath.Join(dir, "run")
 	sock := filepath.Join(hostRun, "notify")
 	hostData := filepath.Join(dir, "data")
+	hostOther := filepath.Join(dir, "other")
+	hostTmpfs := filepath.Join(dir, "hosttmp")
 	root := filepath.Join(dir, "root")
-	for _, d := range []string{hostRun, hostData, root} {
+	for _, d := range []string{hostRun, hostData, hostOther, hostTmpfs, root} {
 		if err := os.Mkdir(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -906,13 +906,13 @@ func TestBindMountWithin(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(hostData, "existing"), nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	m := newTestMounter(t, root)
-	tmpfs, err := m.MountFS("tmpfs", "/tmp", FSOptions{}, nil)
-	if err != nil {
+	// A tmpfs of the host, outside the container.
+	if err := unix.Mount("tmpfs", hostTmpfs, "tmpfs", 0, ""); err != nil {
 		t.Fatal(err)
 	}
-	defer tmpfs.Close()
-	within := OnMountOf(m.root.Fd(), int(tmpfs.Fd()))
+	t.Cleanup(func() { _ = unix.Unmount(hostTmpfs, unix.MNT_DETACH) })
+	m := newTestMounter(t, root)
+	within := OnContainerFS(m.root)
 	opts := BindOptions{ReadOnly: true, SkipSame: true, Within: within, WithinParent: true}
 
 	// A host directory bound over a parent: nothing is created or mounted
@@ -944,8 +944,33 @@ func TestBindMountWithin(t *testing.T) {
 		t.Errorf("BindMount on /srv/existing: %v", err)
 	}
 
-	// On the root's file system and in the tmpfs, the mount point is
-	// created.
+	// Neither in a bind of a tmpfs of the host, nor in a bind that a
+	// tmpfs mount reuses (e.g. left by a previous run).
+	if err := m.BindMount(hostTmpfs, "/htmp", BindOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.BindMount(hostOther, "/opt", BindOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.MountFS("tmpfs", "/opt", FSOptions{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{"/htmp/notify", "/opt/notify"} {
+		if err := m.BindMount(sock, target, opts); !errors.Is(err, ErrOtherMount) {
+			t.Errorf("BindMount on %s: want ErrOtherMount, got %v", target, err)
+		}
+	}
+	for _, d := range []string{hostTmpfs, hostOther} {
+		if entries, _ := os.ReadDir(d); len(entries) != 0 {
+			t.Errorf("something was created in %s: %v", d, entries)
+		}
+	}
+
+	// On the root's own file system and in a tmpfs of the container, the
+	// mount point is created.
+	if err := m.MountFS("tmpfs", "/tmp", FSOptions{}, nil); err != nil {
+		t.Fatal(err)
+	}
 	for _, target := range []string{"/run/systemd/notify", "/tmp/systemd/notify"} {
 		if err := m.BindMount(sock, target, opts); err != nil {
 			t.Errorf("BindMount on %s: %v", target, err)
@@ -964,7 +989,8 @@ func TestBindMountWithin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"/tmp", "/srv", "/srv/existing", "/run/systemd/notify", "/tmp/systemd/notify", "/var/run"}
+	// The tmpfs of /opt reused the bind mount there.
+	want := []string{"/srv", "/srv/existing", "/htmp", "/opt", "/tmp", "/run/systemd/notify", "/tmp/systemd/notify", "/var/run"}
 	for i, w := range want {
 		want[i] = filepath.Join(root, w)
 	}

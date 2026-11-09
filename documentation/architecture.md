@@ -39,7 +39,7 @@ library, and its packages carry no compatibility promise.
 | `internal/mounter` | Mounting `/proc`, `/sys` and bind mounts, parsing `/proc/self/mountinfo`, unmounting. |
 | `internal/osutil` | File system and process helpers: secure path resolution, file copy, devices, capabilities, credentials, exec. |
 | `internal/seccomp` | The seccomp filter of `droot run --seccomp default`, a classic BPF program. |
-| `internal/systemd` | The variables of systemd's notifications and socket activation that `droot run` passes on to `COMMAND`. |
+| `internal/systemd` | The variables of systemd's notifications and socket activation that `droot run` passes on to `COMMAND`, and the relay of the notifications of a rootless `COMMAND`. |
 | `internal/userns` | Rootless mode: the ID mappings, the start of droot in a user namespace, and its supervision. |
 | `internal/log` | A tiny leveled logger writing to STDERR. |
 
@@ -195,19 +195,28 @@ setuid bits are preserved.
    remounted with `MS_RDONLY` *plus* the nosuid/nodev/noexec/atime flags of
    the source, which a plain remount would clear. Last, a `NOTIFY_SOCKET`
    that is a path (systemd's `/run/systemd/notify`) is bind mounted
-   read-only on the same path (not with `--no-systemd`), replacing the mount of a previous run unless
-   it is the same socket. Nothing is mounted when a `--bind` or `--tmpfs`
-   mounts on the path, or when the path already is the socket (a `--bind`
-   of its directory: a mount there would make the host's socket busy).
-   The user did not ask for this mount, so its mount point is only created
-   in directories on `ROOT_DIR`'s own mount or on a mount of `--tmpfs`
-   (`Root.OpenMountTargetWithin`, `BindOptions.Within`): never in a host
-   directory that a `--bind` mounts over a parent of the path, where it
-   would be left behind. In the host's mount namespace, an existing mount
-   point in such a directory is refused too (`BindOptions.WithinParent`):
-   the mount would make the host's file busy. A socket that cannot be bound
-   (missing, or no mount point can be created) only gets a warning: droot
-   may have inherited a `NOTIFY_SOCKET` meant for another process.
+   read-only on the same path (not with `--no-systemd`; rootless, the
+   socket of the relay of the supervising droot is bound there instead,
+   see [Rootless](#rootless)), replacing the mount of a previous
+   run unless it is the same socket. Nothing is mounted when a `--bind` or
+   `--tmpfs` mounts on the path, or when the path already is what would be
+   bound (a `--bind` of the directory of systemd's socket: a mount there
+   would make the host's socket busy; rootless, the relay is mounted over
+   it). The user did not ask for this mount, so its mount point is only
+   created in directories of the container's own file systems
+   (`Root.OpenMountTargetWithin`, `BindOptions.Within`,
+   `mounter.OnContainerFS`): on `ROOT_DIR`'s own mount, or on a file system
+   that `mountinfo` shows mounted nowhere but under `ROOT_DIR` (a
+   `--tmpfs`, even reused from a previous run). A bind mount of a host
+   directory, even of a host tmpfs, or one that a `--tmpfs` reuses, is
+   refused, so the mount point is never left behind in a host directory.
+   In the host's mount namespace, an existing mount point in such a
+   directory is refused too (`BindOptions.WithinParent`): the mount would
+   make the host's file busy. Without mount IDs in `fdinfo` (Linux before
+   3.15), mounts are told apart by device, which misses a bind mount of a
+   directory of `ROOT_DIR`'s own file system. A socket that cannot be
+   bound (missing, or no mount point can be created) only gets a warning:
+   droot may have inherited a `NOTIFY_SOCKET` meant for another process.
 5. Create `/var/lock -> ../run/lock` if missing, and populate `/dev`: the
    device nodes `/dev/null` (1:3), `/dev/zero` (1:5), `/dev/full` (1:7),
    `/dev/random` (1:8), `/dev/urandom` (1:9) and `/dev/tty` (5:0), owned by
@@ -301,18 +310,29 @@ through the `userns` package first:
    the signals the terminal sends to its foreground group are not passed
    on while droot is in the foreground. Under systemd, the parent stays
    the main process of the service, so it relays the notifications of
-   `COMMAND`, its child (`systemd.Relay`): before starting the child, it
-   binds a datagram socket with `SO_PASSCRED` in a new 0700 directory of
-   `$XDG_RUNTIME_DIR` (or `$TMPDIR`), which the second stage bind mounts
-   on the path of `NOTIFY_SOCKET` in the container instead of systemd's
-   socket (named by `_DROOT_USERNS_NOTIFY_RELAY`). The parent forwards to
-   systemd's socket, from itself, each datagram whose `SCM_CREDENTIALS`
-   name `COMMAND` (those of its children are dropped, as
+   `COMMAND`, its child (`systemd.Relay`), unless `--no-systemd` is given
+   on the command line: before starting the child, it binds a datagram
+   socket with `SO_PASSCRED` in a new 0700 directory of `$XDG_RUNTIME_DIR`,
+   `$RUNTIME_DIRECTORY` or `$TMPDIR` (`/tmp`), named to the second stage by
+   `_DROOT_USERNS_NOTIFY_RELAY` (the parent drops the `_DROOT_USERNS_*`
+   variables it inherited; the second stage only takes a socket of the
+   user, named like a relay, in a user namespace). The second stage bind
+   mounts it read-only on the path of `NOTIFY_SOCKET` in the container
+   instead of systemd's socket, then removes the socket and its directory
+   from the host, bound or not (`--no-systemd` in `--config`, `--env
+   NOTIFY_SOCKET=...`): a bind mount keeps working without its path. The
+   parent forwards to systemd's socket, from itself, each datagram whose
+   `SCM_CREDENTIALS` name `COMMAND` (those of its children are dropped, as
    `NotifyAccess=main` would), with the descriptors it carries
    (`SCM_RIGHTS`: `FDSTORE=1`, `BARRIER=1`), which it then closes, and
-   without its `MAINPID=`, `MAINPIDFD=` and `MAINPIDFDID=` lines. Once
-   `COMMAND` has exited, it relays what is still queued, then removes the
-   socket.
+   without its `MAINPID=`, `MAINPIDFD=` and `MAINPIDFDID=` lines (split at
+   `\n` and `\r`, like systemd). A send waits 2 seconds at most for room
+   in systemd's queue. Once `COMMAND` has exited, the parent leaves it a
+   zombie (`waitid(WNOWAIT)`), so that its PID cannot be reused, relays
+   what is still queued for 5 seconds at most, then reaps it. Without a
+   writable directory for the relay, the second stage binds systemd's
+   socket, with a warning: the notifications then need
+   `NotifyAccess=all`.
 
 Run rootless, droot re-executes itself before reading anything: `--config`
 and `--env-file` may be pipes, which only the second stage must read.

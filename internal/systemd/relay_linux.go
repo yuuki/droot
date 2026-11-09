@@ -9,7 +9,9 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+	"time"
 
 	"golang.org/x/sys/unix"
 
@@ -23,6 +25,14 @@ const maxNotifyMessage = 4096
 // maxNotifyFDs is the largest number of descriptors a message can carry
 // (SCM_MAX_FD).
 const maxNotifyFDs = 253
+
+// sendTimeout bounds the time a notification waits for room in the queue
+// of the service manager's socket: a manager that does not read it must
+// not keep droot from exiting.
+const sendTimeout = 2 * time.Second
+
+// drainTimeout bounds the time Close relays what is still queued.
+const drainTimeout = 5 * time.Second
 
 // mainPIDKeys are the keys of a notification that make another process the
 // main process of the service.
@@ -44,7 +54,8 @@ var mainPIDKeys = [][]byte{[]byte("MAINPID="), []byte("MAINPIDFD="), []byte("MAI
 // (FDSTORE=1, BARRIER=1) are passed on, then closed. MAINPID=, MAINPIDFD=
 // and MAINPIDFDID= are left out: systemd, which is not the parent of
 // COMMAND, would lose its exit status, and the supervising droot would be
-// left behind as a stray process of the unit.
+// left behind as a stray process of the unit. Like systemd, the relay takes
+// both "\n" and "\r" for line separators.
 type Relay struct {
 	target string // the notification socket of the service manager
 	dir    string // the private directory of the socket
@@ -53,11 +64,13 @@ type Relay struct {
 	out    int    // the socket that sends to target
 	stop   [2]int // a pipe: closing its write end stops the relay
 	pid    int    // the PID of COMMAND
-	// warned is set once a notification of another process was dropped.
-	warned  bool
-	started bool
-	done    chan struct{}
-	once    sync.Once
+	// warned is set once a notification of another process was dropped,
+	// sendWarned once a notification could not be sent.
+	warned     bool
+	sendWarned bool
+	started    bool
+	done       chan struct{}
+	once       sync.Once
 }
 
 // NewRelay creates the socket of a relay of the notifications to target,
@@ -78,15 +91,48 @@ func NewRelay(target string, dirs []string) (*Relay, error) {
 	return nil, errors.Join(errs...)
 }
 
+// relayDirPrefix and relaySocketName name the directory of the socket of a
+// relay and the socket in it.
+const (
+	relayDirPrefix  = "droot-notify-"
+	relaySocketName = "notify"
+)
+
+// IsRelayPath reports whether path can be the socket of a relay (see
+// Relay.Path): the second stage takes it from its environment, and removes
+// it (RemoveRelayPath).
+func IsRelayPath(path string) bool {
+	return filepath.IsAbs(path) && filepath.Clean(path) == path && filepath.Base(path) == relaySocketName &&
+		strings.HasPrefix(filepath.Base(filepath.Dir(path)), relayDirPrefix)
+}
+
+// RemoveRelayPath removes path, the socket of a relay, and its directory,
+// without stopping the relay.
+func RemoveRelayPath(path string) error {
+	if !IsRelayPath(path) {
+		return fmt.Errorf("%s is not the socket of a notification relay", path)
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	if err := os.Remove(filepath.Dir(path)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
 // newRelayIn creates a relay whose socket is in a new directory in base.
 func newRelayIn(target, base string) (r *Relay, err error) {
+	if !filepath.IsAbs(base) {
+		return nil, fmt.Errorf("%q is not an absolute path", base)
+	}
 	// Mode 0700, and a name nobody else can guess: only the user reaches
 	// the socket on the host, the container through its bind mount.
-	dir, err := os.MkdirTemp(base, "droot-notify-")
+	dir, err := os.MkdirTemp(base, relayDirPrefix)
 	if err != nil {
 		return nil, err
 	}
-	r = &Relay{target: target, dir: dir, path: filepath.Join(dir, "notify"), in: -1, out: -1, stop: [2]int{-1, -1}, done: make(chan struct{})}
+	r = &Relay{target: target, dir: dir, path: filepath.Join(dir, relaySocketName), in: -1, out: -1, stop: [2]int{-1, -1}, done: make(chan struct{})}
 	defer func() {
 		if err != nil {
 			r.release()
@@ -114,6 +160,10 @@ func newRelayIn(target, base string) (r *Relay, err error) {
 	if r.out, err = unix.Socket(unix.AF_UNIX, unix.SOCK_DGRAM|unix.SOCK_CLOEXEC, 0); err != nil {
 		return nil, fmt.Errorf("create the socket of the notification relay: %w", err)
 	}
+	tv := unix.NsecToTimeval(sendTimeout.Nanoseconds())
+	if err := unix.SetsockoptTimeval(r.out, unix.SOL_SOCKET, unix.SO_SNDTIMEO, &tv); err != nil {
+		return nil, fmt.Errorf("setsockopt(SO_SNDTIMEO): %w", err)
+	}
 	if err := unix.Pipe2(r.stop[:], unix.O_CLOEXEC); err != nil {
 		return nil, err
 	}
@@ -134,8 +184,8 @@ func (r *Relay) Start(pid int) {
 }
 
 // Close stops the relay, once it has relayed the notifications sent so far
-// (COMMAND may send STOPPING=1 right before it exits), and removes its
-// socket.
+// (COMMAND may send STOPPING=1 right before it exits), for drainTimeout at
+// most, and removes its socket.
 func (r *Relay) Close() error {
 	r.once.Do(func() {
 		if r.started {
@@ -171,15 +221,27 @@ func (r *Relay) serve() {
 			log.Warnf("the notifications of COMMAND are no longer relayed to systemd: poll: %v", err)
 			return
 		}
+		// Close first: the queue may never be empty.
 		switch {
+		case fds[1].Revents != 0:
+			r.drain()
+			return
 		case fds[0].Revents&unix.POLLIN != 0:
 			r.relay()
 		case fds[0].Revents != 0:
 			log.Warnf("the notifications of COMMAND are no longer relayed to systemd: error on the socket of the relay")
 			return
-		case fds[1].Revents != 0:
-			for r.relay() {
-			}
+		}
+	}
+}
+
+// drain relays the notifications still queued, for drainTimeout at most:
+// the processes left in the container may keep sending.
+func (r *Relay) drain() {
+	deadline := time.Now().Add(drainTimeout)
+	for r.relay() {
+		if time.Now().After(deadline) {
+			log.Warnf("stopped relaying the notifications still queued after %v", drainTimeout)
 			return
 		}
 	}
@@ -228,7 +290,8 @@ func (r *Relay) dropFrom(pid int) {
 		return
 	}
 	r.warned = true
-	log.Warnf("dropping the notifications of PID %d, which is not COMMAND (PID %d): rootless, droot only relays those of COMMAND to systemd", pid, r.pid)
+	log.Warnf("dropping the notifications of PID %d, which is not COMMAND (PID %d): rootless, droot only relays those of COMMAND to systemd "+
+		"(to give the container systemd's socket instead, bind it with --robind %s and set NotifyAccess=all)", pid, r.pid, r.target)
 }
 
 // forward sends msg, a notification of COMMAND, and the descriptors fds it
@@ -247,7 +310,15 @@ func (r *Relay) forward(msg []byte, fds []int) {
 		oob = unix.UnixRights(fds...)
 	}
 	if err := unix.Sendmsg(r.out, msg, oob, &unix.SockaddrUnix{Name: r.target}, 0); err != nil {
-		log.Warnf("cannot relay a notification of COMMAND to %s: %v", r.target, err)
+		if errors.Is(err, unix.EAGAIN) {
+			err = fmt.Errorf("its queue stayed full for %v", sendTimeout)
+		}
+		if r.sendWarned {
+			log.Debugf("cannot relay a notification of COMMAND to %s: %v", r.target, err)
+			return
+		}
+		r.sendWarned = true
+		log.Warnf("cannot relay a notification of COMMAND to %s: %v (further failures are only debug messages)", r.target, err)
 	}
 }
 
@@ -278,10 +349,12 @@ func parseControl(oob []byte) (cred *unix.Ucred, fds []int) {
 }
 
 // withoutMainPID returns the notification msg without its lines setting
-// the main process (mainPIDKeys), and whether it had any.
+// the main process (mainPIDKeys), and whether it had any. Lines end with
+// "\n" or "\r", as systemd splits them; when lines are left out, the others
+// are joined with "\n".
 func withoutMainPID(msg []byte) ([]byte, bool) {
-	lines := bytes.Split(msg, []byte("\n"))
-	kept := lines[:0]
+	lines := bytes.FieldsFunc(msg, func(r rune) bool { return r == '\n' || r == '\r' })
+	kept := make([][]byte, 0, len(lines))
 	for _, l := range lines {
 		if !hasAnyPrefix(l, mainPIDKeys) {
 			kept = append(kept, l)

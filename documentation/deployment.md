@@ -268,9 +268,13 @@ KillMode=mixed
 ```
 
 An application whose notifications come from a child (a shell script
-running `systemd-notify --ready`) should `exec` the program that notifies;
-or else bind systemd's socket in the container with `--bind $NOTIFY_SOCKET`
-and set `NotifyAccess=all`.
+running `systemd-notify --ready`, an init such as `tini`) should `exec` the
+program that notifies; or else bind systemd's socket in the container with
+`--robind $NOTIFY_SOCKET` and set `NotifyAccess=all`. droot creates its
+socket in `$XDG_RUNTIME_DIR` (a user service), `$RUNTIME_DIRECTORY` or
+`/tmp`: a hardened unit whose `/tmp` is read-only (`ProtectSystem=strict`
+without `PrivateTmp=`) needs `RuntimeDirectory=`, or else the
+notifications are not relayed (droot warns) and need `NotifyAccess=all`.
 
 ## Rolling back
 
