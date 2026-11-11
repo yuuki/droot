@@ -16,11 +16,13 @@ ZIZMOR_VERSION          := 1.32.0
 GH_ACTIONS_LOCK_VERSION := v0.4.1
 
 # golangci-lint refuses a module whose go line is newer than the Go it was
-# built with, and `go run tool@version` builds a tool with the Go of the
-# tool's own go.mod: build it with the Go of this module, or a newer one if
-# the tool needs it (+auto).
+# built with, and govulncheck cannot type-check the standard library of a
+# newer Go (the toolchain line), but `go run tool@version` builds a tool with
+# the Go of the tool's own go.mod: build them with the Go of this module, or a
+# newer one if the tool needs it (+auto).
 GO_TOOLCHAIN  = $(shell go env GOVERSION)
 GOLANGCI_LINT = GOTOOLCHAIN=$(GO_TOOLCHAIN)+auto go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
+GOVULNCHECK   = GOTOOLCHAIN=$(GO_TOOLCHAIN)+auto go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
 # uvx, or pipx (preinstalled on GitHub-hosted runners), runs the pinned zizmor.
 ZIZMOR        = $(if $(shell command -v uvx 2>/dev/null),uvx zizmor@$(ZIZMOR_VERSION),pipx run zizmor==$(ZIZMOR_VERSION))
 # gh-actions-lock (the `gh actions-lock` extension) runs through `go run` too.
@@ -125,7 +127,7 @@ tidy: ## Tidy go.mod and go.sum
 
 .PHONY: vuln
 vuln: ## Report known vulnerabilities reachable from droot (govulncheck)
-	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
+	$(GOVULNCHECK) ./...
 
 .PHONY: test-scripts
 test-scripts: ## Test the release scripts

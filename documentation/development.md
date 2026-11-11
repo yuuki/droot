@@ -2,8 +2,10 @@
 
 ## Prerequisites
 
-- Go 1.26 or later (the `go` line of `go.mod`; with the default
-  `GOTOOLCHAIN=auto`, older Go installations download it automatically).
+- Go 1.26 or later (the `go` line of `go.mod`). With the default
+  `GOTOOLCHAIN=auto`, the go command builds with the Go of the `toolchain`
+  line (a Go release with the latest security fixes) and downloads it when the
+  installed Go is older; `GOTOOLCHAIN=local` builds with the installed Go.
   CI tests the minimum and the latest Go release; releases are built with the
   latest stable Go.
 - Linux to run `droot run`/`droot umount` and the tests that mount file
