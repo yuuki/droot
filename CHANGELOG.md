@@ -67,6 +67,14 @@ Releases up to 0.7.7 are described on the
   forever. droot now stops reading a second after the helper exits or is
   killed.
 
+### Security
+
+- `go.mod` names Go 1.27.4 in a `toolchain` line, so that `go install` and
+  builds from source use the Go security release of 2026-11-10 (cgo
+  build-time code execution in `cmd/go`, CVE-2026-97033 to CVE-2026-97043;
+  a `net/http` server panic, CVE-2026-97054) when the installed Go is older.
+  Go 1.26 remains the minimum with `GOTOOLCHAIN=local`.
+
 ### Development
 
 - `make check`, the checks to run before a pull request (lint,
