@@ -74,6 +74,7 @@ Releases up to 0.7.7 are described on the
   build-time code execution in `cmd/go`, CVE-2026-97033 to CVE-2026-97043;
   a `net/http` server panic, CVE-2026-97054) when the installed Go is older.
   Go 1.26 remains the minimum with `GOTOOLCHAIN=local`.
+- `golang.org/x/sys` v0.50.0.
 
 ### Development
 
