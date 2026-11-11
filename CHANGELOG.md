@@ -7,103 +7,7 @@ Releases up to 0.7.7 are described on the
 
 ## [Unreleased]
 
-### Added
-
-- `droot run` works with `Type=notify` and socket activation under systemd
-  ([#52](https://github.com/yuuki/droot/issues/52)): the variables systemd
-  sets for droot are passed on to `COMMAND` without `--env`
-  (`NOTIFY_SOCKET`; `LISTEN_FDS`, `LISTEN_PID`, `LISTEN_FDNAMES` and
-  `LISTEN_PIDFDID` when `LISTEN_PID` is droot's PID; `WATCHDOG_USEC` and
-  `WATCHDOG_PID` when `WATCHDOG_PID` is droot's PID or unset), between the
-  image's environment and `--env-file`. A `NOTIFY_SOCKET` that is a path
-  is bind mounted read-only on the same path in the container, unless a
-  `--bind` or `--tmpfs` mounts on that path or the socket is already
-  there. Its mount point is only created on the container's own file
-  systems (`ROOT_DIR`'s, a `--tmpfs`), never in a host directory bound over
-  its directory ([#56](https://github.com/yuuki/droot/issues/56)). A
-  socket that cannot be bound only gets a warning.
-- `droot run --no-systemd` (`no-systemd = true` in `--config`) passes none
-  of these variables on to `COMMAND`, binds no notification socket and,
-  rootless, relays no notification, for containers that must have no
-  channel to the service manager, or a droot that inherited a
-  `NOTIFY_SOCKET` not meant for it
-  ([#57](https://github.com/yuuki/droot/issues/57)). What `--env` and
-  `--env-file` set is still passed, and the inherited descriptors are
-  kept.
-- Rootless, the supervising droot, the main process of the service, relays
-  the notifications of `COMMAND` from a socket of its own bound in the
-  container instead of systemd's, so that the default `NotifyAccess=main`
-  accepts them ([#58](https://github.com/yuuki/droot/issues/58)). It
-  relays those of `COMMAND` only: units that relied on `NotifyAccess=all`
-  for the notifications of its children (a shell script running
-  `systemd-notify`, `tini`) must `exec` the program that notifies, or bind
-  systemd's socket with `--robind $NOTIFY_SOCKET`. `MAINPID=` is left
-  out.
-- `examples/systemd/app-notify.service` (`Type=notify`) and
-  `examples/systemd/app.socket`, described in the deployment guide.
-
-### Fixed
-
-- Rootless, the sockets of socket activation reach `COMMAND`: the
-  supervising droot passed a pipe of its own as descriptor 3, which
-  replaced the first socket. `LISTEN_PID` and `WATCHDOG_PID` are now the
-  PID of `COMMAND` instead of that of the supervising droot.
-- The mount points `droot run` creates have mode 0755 (directories) and
-  0644 (empty files for file bind mounts) whatever the umask: under a unit
-  with `UMask=0077`, they were 0700 and 0600, and other users than root
-  could not reach what was mounted below them.
-- Rootless, the other descriptors droot inherited reach `COMMAND` too, at
-  their numbers: the pipe of the supervising droot took descriptor 3 (or the
-  one after the sockets of socket activation), so the listening socket of
-  server-starter or dewy (`SERVER_STARTER_PORT=8080=3`) was lost. The pipe
-  now keeps a number of its own.
-- `droot export` of an image without a daemon failed with "not a directory"
-  on the paths below a symlink that a later entry of the layer hard-linked
-  to itself (a hard link to a symlink is a symlink).
-- The 30-second timeout of a Docker credential helper (`credsStore`,
-  `credHelpers`) held only if the helper was a single process: when it is a
-  script whose child hangs (e.g. on a locked keychain) or outlives it,
-  `droot export` waited for that child to close its output, possibly
-  forever. droot now stops reading a second after the helper exits or is
-  killed.
-
-### Security
-
-- `go.mod` names Go 1.27.4 in a `toolchain` line, so that `go install` and
-  builds from source use the Go security release of 2026-11-10 (cgo
-  build-time code execution in `cmd/go`, CVE-2026-97033 to CVE-2026-97043;
-  a `net/http` server panic, CVE-2026-97054) when the installed Go is older.
-  Go 1.26 remains the minimum with `GOTOOLCHAIN=local`.
-- `golang.org/x/sys` v0.50.0.
-
-### Development
-
-- `make check`, the checks to run before a pull request (lint,
-  `go mod tidy -diff`, actionlint and zizmor with `make lint-actions`, vet,
-  the release scripts' test and the unit tests), `make bench` with
-  benchmarks of the archive rewriting, the flattening of layers and the
-  path resolution, and the aliases `test-race`, `test-fuzz` and
-  `test-integration`.
-- Fuzz targets for the image's `/etc/passwd` and `/etc/group`, the
-  `WWW-Authenticate` header of registries and image references.
-- CodeQL analysis (`.github/workflows/security.yml`), a weekly run of CI
-  (longer fuzzing, new advisories), timeouts on every CI job, `AGENTS.md`
-  for coding agents and `CONTRIBUTING.md`.
-- GitHub Actions: the actions the workflows use, transitive ones included,
-  are pinned in the workflow dependency lockfile
-  `.github/workflows/actions.lock`, and the workflows name them by release
-  tag; `make lint-actions` checks the lockfile (`gh actions-lock --verify` in
-  CI) and `make lock-actions` updates it after a `uses:` line changed.
-
-### Documentation
-
-- Deploying with [dewy](https://github.com/linyows/dewy): the artifact
-  carries the droot archive, extracted by the hook
-  `examples/dewy/droot-extract-release`, and `droot run --unshare --env
-  SERVER_STARTER_PORT` runs the application on the listening socket of dewy
-  (`examples/dewy/app.service`, `documentation/deployment.md`).
-
-## [0.8.0] - 2026-11-06
+## [0.8.0] - 2026-11-11
 
 Maintenance release after several years: modern Go and Docker, far fewer
 dependencies, many bug and security fixes.
@@ -297,6 +201,10 @@ dependencies, many bug and security fixes.
   symbolic link.
 - The test suite did not compile (`kylelemons/godebug` missing from `go.mod`)
   and CI used an end-of-life Go version.
+- The mount points `droot run` creates have mode 0755 (directories) and
+  0644 (empty files for file bind mounts) whatever the umask: under a unit
+  with `UMask=0077`, they were 0700 and 0600, and other users than root
+  could not reach what was mounted below them.
 
 ### Added
 
@@ -326,8 +234,11 @@ dependencies, many bug and security fixes.
   from `/etc/subuid` and `/etc/subgid` as the other users, with
   `newuidmap`/`newgidmap`), in a private mount namespace, binding the host's
   `/proc` and device files, and supervises `COMMAND` (signals, exit status).
-  `droot unshare` runs a command in such a namespace, to extract archives
-  with their owners.
+  The descriptors droot inherited, the sockets of socket activation
+  included, reach `COMMAND` at their numbers (such as the listening socket
+  of server-starter or dewy), and `LISTEN_PID` and `WATCHDOG_PID` are the
+  PID of `COMMAND`. `droot unshare` runs a command in such a namespace, to
+  extract archives with their owners.
 - `droot run --workdir`/`-w`.
 - `droot run --config FILE` reads the options from a file (a subset of TOML,
   parsed without a new dependency), so that systemd units stay short; see
@@ -401,6 +312,59 @@ dependencies, many bug and security fixes.
   workflows, release snapshots), Dependabot, issue and pull request
   templates, and a release workflow that runs CI on the tagged commit, builds
   a draft release with GoReleaser and takes its notes from this changelog.
+- `droot run` works with `Type=notify` and socket activation under systemd
+  ([#52](https://github.com/yuuki/droot/issues/52)): the variables systemd
+  sets for droot are passed on to `COMMAND` without `--env`
+  (`NOTIFY_SOCKET`; `LISTEN_FDS`, `LISTEN_PID`, `LISTEN_FDNAMES` and
+  `LISTEN_PIDFDID` when `LISTEN_PID` is droot's PID; `WATCHDOG_USEC` and
+  `WATCHDOG_PID` when `WATCHDOG_PID` is droot's PID or unset), between the
+  image's environment and `--env-file`. A `NOTIFY_SOCKET` that is a path
+  is bind mounted read-only on the same path in the container, unless a
+  `--bind` or `--tmpfs` mounts on that path or the socket is already
+  there. Its mount point is only created on the container's own file
+  systems (`ROOT_DIR`'s, a `--tmpfs`), never in a host directory bound over
+  its directory ([#56](https://github.com/yuuki/droot/issues/56)). A
+  socket that cannot be bound only gets a warning.
+- `droot run --no-systemd` (`no-systemd = true` in `--config`) passes none
+  of these variables on to `COMMAND`, binds no notification socket and,
+  rootless, relays no notification, for containers that must have no
+  channel to the service manager, or a droot that inherited a
+  `NOTIFY_SOCKET` not meant for it
+  ([#57](https://github.com/yuuki/droot/issues/57)). What `--env` and
+  `--env-file` set is still passed, and the inherited descriptors are
+  kept.
+- Rootless, the supervising droot, the main process of the service, relays
+  the notifications of `COMMAND` from a socket of its own bound in the
+  container instead of systemd's, so that the default `NotifyAccess=main`
+  accepts them ([#58](https://github.com/yuuki/droot/issues/58)). It
+  relays those of `COMMAND` only: units that relied on `NotifyAccess=all`
+  for the notifications of its children (a shell script running
+  `systemd-notify`, `tini`) must `exec` the program that notifies, or bind
+  systemd's socket with `--robind $NOTIFY_SOCKET`. `MAINPID=` is left
+  out.
+- `examples/systemd/app-notify.service` (`Type=notify`) and
+  `examples/systemd/app.socket`, described in the deployment guide.
+- `make check`, the checks to run before a pull request (lint,
+  `go mod tidy -diff`, actionlint and zizmor with `make lint-actions`, vet,
+  the release scripts' test and the unit tests), `make bench` with
+  benchmarks of the archive rewriting, the flattening of layers and the
+  path resolution, and the aliases `test-race`, `test-fuzz` and
+  `test-integration`.
+- Fuzz targets for the image's `/etc/passwd` and `/etc/group`, the
+  `WWW-Authenticate` header of registries and image references.
+- CodeQL analysis (`.github/workflows/security.yml`), a weekly run of CI
+  (longer fuzzing, new advisories), timeouts on every CI job, `AGENTS.md`
+  for coding agents and `CONTRIBUTING.md`.
+- GitHub Actions: the actions the workflows use, transitive ones included,
+  are pinned in the workflow dependency lockfile
+  `.github/workflows/actions.lock`, and the workflows name them by release
+  tag; `make lint-actions` checks the lockfile (`gh actions-lock --verify` in
+  CI) and `make lock-actions` updates it after a `uses:` line changed.
+- Deploying with [dewy](https://github.com/linyows/dewy): the artifact
+  carries the droot archive, extracted by the hook
+  `examples/dewy/droot-extract-release`, and `droot run --unshare --env
+  SERVER_STARTER_PORT` runs the application on the listening socket of dewy
+  (`examples/dewy/app.service`, `documentation/deployment.md`).
 
 ### Removed
 
@@ -412,6 +376,15 @@ dependencies, many bug and security fixes.
   `golang.org/x/sys`.
 - The goxc/ghr/gobump release scripts and the Dockerfile used to build in a
   container (cross compilation needs no cgo any more).
+
+### Security
+
+- `go.mod` names Go 1.27.4 in a `toolchain` line, so that `go install` and
+  builds from source use the Go security release of 2026-11-10 (cgo
+  build-time code execution in `cmd/go`, CVE-2026-97033 to CVE-2026-97043;
+  a `net/http` server panic, CVE-2026-97054) when the installed Go is older.
+  Go 1.26 remains the minimum with `GOTOOLCHAIN=local`.
+- `golang.org/x/sys` v0.50.0.
 
 [Unreleased]: https://github.com/yuuki/droot/compare/v0.8.0...HEAD
 [0.8.0]: https://github.com/yuuki/droot/releases/tag/v0.8.0
