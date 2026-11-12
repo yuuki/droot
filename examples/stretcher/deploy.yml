@@ -38,8 +38,9 @@ sync_strategy: mv
 commands:
   pre:
     # Deploy each version once, even if its release was deleted since: this
-    # stops an event delivered again (consul watch may pass the recent
-    # events to stretcher when it starts) before anything changes.
+    # stops an event delivered again before anything changes. consul watch
+    # passes the recent events of its agent to stretcher whenever it starts,
+    # and stretcher deploys the last one.
     - test ! -e /var/containers/app/deployed/@VERSION@
     - mkdir -p /var/containers/app/releases /var/containers/app/deployed
   post:

@@ -14,7 +14,8 @@ Releases up to 0.7.7 are described on the
   commands of the manifest, generated from the template
   `examples/stretcher/deploy.yml`, deploy each version once, switch
   `current`, restart the service, check its health and delete the old
-  releases after `droot umount`. The default `rsync -a --delete` of
+  releases after `droot umount`; `examples/stretcher/stretcher-app.service`
+  runs stretcher at each Consul event. The default `rsync -a --delete` of
   stretcher must never update a root that `droot run` uses: it deletes the
   files of `/dev` and the mount points droot creates there, and files of the
   host through the bind mounts of a run without `--unshare`

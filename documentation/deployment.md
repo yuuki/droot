@@ -484,17 +484,34 @@ release `current` points to (`root = "/var/containers/app/current"`) in a
 private mount namespace (`unshare = true`). Make `/var/containers/app`
 accessible to root only, and create in it the directory stretcher extracts
 the archives into, on the file system of the releases. Then run stretcher as
-root with that directory as `TMPDIR`, e.g. under `consul watch`, in a unit
-of its own with `Environment=TMPDIR=/var/containers/app/.tmp`:
+root, with that directory as `TMPDIR`, at each event: `consul watch` runs it
+in the unit
+[`examples/stretcher/stretcher-app.service`](../examples/stretcher/stretcher-app.service):
+
+```ini
+[Service]
+Type=exec
+Environment=TMPDIR=/var/containers/app/.tmp
+EnvironmentFile=/etc/stretcher/app.env
+ExecStart=/usr/bin/consul watch -type event -name deploy-app /usr/local/bin/stretcher
+Restart=on-failure
+```
 
 ```console
-# install -d -m 700 /var/containers/app /var/containers/app/.tmp
-# TMPDIR=/var/containers/app/.tmp consul watch -type event -name deploy-app /usr/local/bin/stretcher
+# install -d -m 700 /var/containers/app /var/containers/app/.tmp /etc/stretcher
+# install -m 600 /dev/null /etc/stretcher/app.env   # then add CONSUL_HTTP_TOKEN=..., and AWS_REGION=... for S3
+# cp stretcher-app.service /etc/systemd/system/
+# systemctl daemon-reload
+# systemctl enable --now stretcher-app
 ```
 
 The releases contain the setuid programs of the image (`su`, `passwd`,
 ...): in a directory that other users can reach, the users of the host could
 run them. droot runs as root and needs no access for other users.
+
+`consul watch` runs stretcher when it starts too, with the recent events of
+its agent: stretcher deploys the last one, or, if there is none, logs
+"No Consul events found" and does nothing.
 
 For each event, stretcher:
 
@@ -523,10 +540,11 @@ Notes:
   archive and the extracted files. A stretcher killed during a deployment
   leaves them there: empty the directory when no deployment runs.
 - Each version is deployed once. The `pre` commands stop a manifest
-  delivered again, e.g. an event that `consul watch` may pass to stretcher
-  again when it starts: the deployment fails, and the `failure` commands
-  run, but nothing changes. Without them, stretcher would deploy again a
-  release that was rolled back and deleted since. `mv` also refuses a
+  delivered again, such as the last event, which `consul watch` passes to
+  stretcher again whenever it starts: the deployment fails, and the
+  `failure` commands run, but nothing changes. Without them, a restart of
+  `stretcher-app.service` would deploy again a release that was rolled back
+  and deleted since, and switch `current` to it. `mv` also refuses a
   release directory that exists ("file exists"). To deploy a version again,
   delete `deployed/VERSION`, and its release directory if `current` does not
   point to it: `droot umount --root releases/VERSION` first.
@@ -562,9 +580,14 @@ Notes:
   or send the event, which gives the URL of the manifest (`s3://`,
   `https://`, but also `http://` or `file://`), controls the servers:
   - serve the manifests from S3 or over HTTPS, with restricted write access;
-  - with Consul, enable ACLs with a default policy of `deny`, and allow only
-    the deployers to write the event `deploy-app`; encrypt the gossip of the
-    agents, and use TLS;
+  - with Consul, enable ACLs with a default policy of `deny`; give the
+    deployers a token whose policy allows only to send the event
+    (`event "deploy-app" { policy = "write" }`, and
+    `agent_prefix "" { policy = "read" }`, which `consul event` needs), and
+    the servers one that may only read it
+    (`event "deploy-app" { policy = "read" }`, as `CONSUL_HTTP_TOKEN` in
+    `/etc/stretcher/app.env`); encrypt the gossip of the agents, and use
+    TLS;
   - Serf has no ACLs: every member of the cluster can send the event, and
     whoever knows the encryption key (`-encrypt`) can join the cluster. Use
     it only where all of them are trusted.
