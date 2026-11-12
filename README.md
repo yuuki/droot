@@ -208,11 +208,12 @@ systemd unit and the details.
 [stretcher](https://github.com/fujiwara/stretcher) deploys on each server the
 release that a manifest describes, when a Consul or Serf event gives it the
 manifest's URL: it downloads the archive, verifies its checksum, extracts it
-as root with `tar` (owners and setuid bits kept) and runs the commands of the
-manifest. Have it extract each release into a new directory
-(`sync_strategy: mv`) and switch `current` in its `post` commands, as the
-template [`examples/stretcher/deploy.yml`](examples/stretcher/deploy.yml)
-does:
+with `tar` (as root, the owners and setuid bits are kept) and runs the
+commands of the manifest. Have it extract each release into a new directory
+(`sync_strategy: mv`, with `TMPDIR` on the same file system) and switch
+`current` in its `post` commands. An excerpt of the template
+[`examples/stretcher/deploy.yml`](examples/stretcher/deploy.yml), which also
+deploys each version only once, checks the new release and deletes old ones:
 
 ```yaml
 src: s3://example-releases/app/app-1.2.3.tar.gz
@@ -225,10 +226,10 @@ commands:
     - systemctl restart app
 ```
 
-Never let stretcher update a root that `droot run` uses with its default
-`rsync -a --delete`: rsync deletes what droot creates in the root (the device
-nodes of `/dev`, the mount points) and, through the bind mounts of a run
-without `--unshare`, files of the host. See
+Never let the default `rsync -a --delete` of stretcher update a root that
+`droot run` uses: rsync deletes what droot creates in the root (the files of
+`/dev`, the mount points) and, through the bind mounts of a run without
+`--unshare`, files of the host. See
 [Deploying with stretcher](documentation/deployment.md#deploying-with-stretcher)
 for the setup of the servers and the details.
 

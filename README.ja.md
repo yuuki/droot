@@ -173,7 +173,7 @@ $ gh release create v1.2.3 app_linux_amd64.tar.gz app_linux_amd64.tar.gz.sha256
 <a id="integration-with-stretcher"></a>
 ### stretcher との連携
 
-[stretcher](https://github.com/fujiwara/stretcher) は、Consul や Serf のイベントで manifest の URL を受け取り、その manifest が示すリリースを各サーバーにデプロイします。アーカイブをダウンロードしてチェックサムを検証し、root で `tar` を使って展開し（所有者と setuid ビットは保たれます）、manifest のコマンドを実行します。テンプレート [`examples/stretcher/deploy.yml`](examples/stretcher/deploy.yml) のように、リリースごとに新しいディレクトリに展開させ（`sync_strategy: mv`）、`post` コマンドで `current` を切り替えてください。
+[stretcher](https://github.com/fujiwara/stretcher) は、Consul や Serf のイベントでマニフェストの URL を受け取り、そのマニフェストが示すリリースを各サーバーにデプロイします。アーカイブをダウンロードしてチェックサムを検証し、`tar` で展開して（root で実行すれば、所有者と setuid ビットは保たれます）、マニフェストのコマンドを実行します。リリースごとに新しいディレクトリに展開させ（`sync_strategy: mv`。`TMPDIR` は同じファイルシステムに置きます）、`post` コマンドで `current` を切り替えてください。次はテンプレート [`examples/stretcher/deploy.yml`](examples/stretcher/deploy.yml) の抜粋です。テンプレートは、各バージョンを一度だけデプロイし、新しいリリースを確認してから古いリリースを削除します。
 
 ```yaml
 src: s3://example-releases/app/app-1.2.3.tar.gz
@@ -186,7 +186,7 @@ commands:
     - systemctl restart app
 ```
 
-`droot run` が使っている root を、stretcher の既定の `rsync -a --delete` で更新してはいけません。rsync は、droot が root の中に作ったもの（`/dev` のデバイスファイルやマウントポイント）を削除します。`--unshare` なしで実行した場合は、バインドマウントを通じてホストのファイルも削除します。サーバーの準備と詳細は [stretcher によるデプロイ](documentation/deployment.md#deploying-with-stretcher)（英語）を参照してください。
+`droot run` が使っているルートディレクトリを、stretcher の既定の `rsync -a --delete` で更新してはいけません。rsync は、droot がルートディレクトリの中に作ったもの（`/dev` のファイルやマウントポイント）を削除します。`--unshare` なしで実行した場合は、バインドマウントを通じてホストのファイルも削除します。サーバーの準備と詳細は [stretcher によるデプロイ](documentation/deployment.md#deploying-with-stretcher)（英語）を参照してください。
 
 <a id="commands"></a>
 ## コマンド
