@@ -7,6 +7,17 @@ Releases up to 0.7.7 are described on the
 
 ## [Unreleased]
 
+### Documentation
+
+- Deploying with [stretcher](https://github.com/fujiwara/stretcher): stretcher
+  extracts each release into a new directory (`sync_strategy: mv`) and the
+  commands of the manifest, generated from the template
+  `examples/stretcher/deploy.yml`, switch `current`, restart the service and
+  delete the old releases. Its default `rsync -a --delete` must never update
+  a root that `droot run` uses: it deletes the device nodes and the mount
+  points droot creates there, and files of the host through the bind mounts
+  of a run without `--unshare` (`documentation/deployment.md`).
+
 ## [0.8.0] - 2026-11-11
 
 Maintenance release after several years: modern Go and Docker, far fewer

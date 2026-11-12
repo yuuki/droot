@@ -203,6 +203,35 @@ application takes the listening socket of dewy from `SERVER_STARTER_PORT`. See
 [Deploying with dewy](documentation/deployment.md#deploying-with-dewy) for a
 systemd unit and the details.
 
+### Integration with stretcher
+
+[stretcher](https://github.com/fujiwara/stretcher) deploys on each server the
+release that a manifest describes, when a Consul or Serf event gives it the
+manifest's URL: it downloads the archive, verifies its checksum, extracts it
+as root with `tar` (owners and setuid bits kept) and runs the commands of the
+manifest. Have it extract each release into a new directory
+(`sync_strategy: mv`) and switch `current` in its `post` commands, as the
+template [`examples/stretcher/deploy.yml`](examples/stretcher/deploy.yml)
+does:
+
+```yaml
+src: s3://example-releases/app/app-1.2.3.tar.gz
+checksum: "3f0c…"   # from app-1.2.3.tar.gz.sha256
+dest: /var/containers/app/releases/1.2.3
+sync_strategy: mv
+commands:
+  post:
+    - ln -sfn releases/1.2.3 /var/containers/app/current.new && mv -T /var/containers/app/current.new /var/containers/app/current
+    - systemctl restart app
+```
+
+Never let stretcher update a root that `droot run` uses with its default
+`rsync -a --delete`: rsync deletes what droot creates in the root (the device
+nodes of `/dev`, the mount points) and, through the bind mounts of a run
+without `--unshare`, files of the host. See
+[Deploying with stretcher](documentation/deployment.md#deploying-with-stretcher)
+for the setup of the servers and the details.
+
 ## Commands
 
 Run `droot COMMAND --help` for the full list of options.
@@ -628,7 +657,8 @@ $ DOCKER_HOST=ssh://deploy@build.example.com droot export -o app.tar app
 
 - [Deploying an application](documentation/deployment.md): from `docker build`
   to a systemd service, with [example units](examples/systemd), or with
-  [dewy](documentation/deployment.md#deploying-with-dewy)
+  [dewy](documentation/deployment.md#deploying-with-dewy) or
+  [stretcher](documentation/deployment.md#deploying-with-stretcher)
 - [Command line reference](documentation/cli.md)
 - [How droot works](documentation/architecture.md)
 - [Security considerations](documentation/security.md)

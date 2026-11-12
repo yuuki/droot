@@ -102,7 +102,9 @@ extracted, and later run, as root.
 uses the release `current` pointed to when it started.
 
 To let the servers pull the releases instead, see
-[Deploying with dewy](#deploying-with-dewy).
+[Deploying with dewy](#deploying-with-dewy); to have them deploy the release
+that a Consul or Serf event announces, see
+[Deploying with stretcher](#deploying-with-stretcher).
 
 > [!WARNING]
 > Never delete a root directory that still has mounts below it: deleting it
@@ -405,3 +407,125 @@ Notes:
   socket on as well. The hook, run by dewy, then extracts the files as that
   user, who is root in the user namespace of droot: run the application with
   `--user 0`.
+
+## Deploying with stretcher
+
+[stretcher](https://github.com/fujiwara/stretcher) is an agent that deploys,
+on each server, the release a manifest describes. A Consul or Serf event
+gives it the URL of the manifest, or its standard input does (over `ssh`,
+for instance). It downloads the archive (Amazon S3, Google Cloud Storage,
+HTTP(S) or a local file), verifies its checksum, extracts it with `tar` into
+a temporary directory, moves the files to the `dest` of the manifest, and
+runs the commands of the manifest before and after. Run as root, its `tar`
+keeps the owners, modes, setuid bits and links of the image, like `tar -xp`
+in [4. Deploy](#4-deploy).
+
+By default, stretcher synchronizes `dest` with `rsync -a --delete`, which
+does not suit a root directory of droot: never let it update a root that
+`droot run` uses. rsync deletes what droot creates in the root and the
+archive does not contain: the device nodes of `/dev`, and the mount points
+of `/dev/pts`, `/dev/shm` and of the `--bind`, `--tmpfs` and
+`--bind-net-files` mounts. With `--unshare`, a running application loses
+them (its `/dev/null`, its bind mounts) while stretcher reports a success.
+Without `--unshare`, rsync deletes files of the host through the bind mounts
+left in the root (those before `/proc` in alphabetical order), then fails
+on `/proc`. Instead, have stretcher extract
+each release into a new directory and switch a `current` symlink, as capze
+does.
+
+### Publishing a release
+
+Export the image as in [2. Export](#2-export), generate the manifest of the
+release from the template
+[`examples/stretcher/deploy.yml`](../examples/stretcher/deploy.yml), upload
+both, and send the event:
+
+```console
+$ droot export --compress gzip --checksum --reproducible --drop-docker-files \
+    -o app-1.2.3.tar.gz registry.example.com/app:1.2.3
+$ sed -e 's/@VERSION@/1.2.3/g' -e "s/@SHA256@/$(cut -d' ' -f1 app-1.2.3.tar.gz.sha256)/" \
+    deploy.yml >deploy-1.2.3.yml
+$ aws s3 cp app-1.2.3.tar.gz s3://example-releases/app/
+$ aws s3 cp deploy-1.2.3.yml s3://example-releases/app/
+$ consul event -name deploy-app s3://example-releases/app/deploy-1.2.3.yml
+```
+
+The manifest of the release, without the comments of the template:
+
+```yaml
+src: s3://example-releases/app/app-1.2.3.tar.gz
+checksum: "3f0c…"
+dest: /var/containers/app/releases/1.2.3
+sync_strategy: mv
+
+commands:
+  pre:
+    - mkdir -p /var/containers/app/releases
+  post:
+    - ln -sfn releases/1.2.3 /var/containers/app/current.new && mv -T /var/containers/app/current.new /var/containers/app/current
+    - systemctl restart app
+    - cd /var/containers/app/releases && ls -1t | tail -n +6 | while read -r r; do /usr/local/bin/droot umount --root "$r" && rm -rf -- "$r"; done
+```
+
+### Running stretcher
+
+On each server, set up the service as in [5. Run with systemd](#5-run-with-systemd):
+`/etc/droot/app.toml` runs the release `current` points to
+(`root = "/var/containers/app/current"`) in a private mount namespace
+(`unshare = true`). Create the directory stretcher extracts the archives
+into, on the file system of the releases, and run stretcher as root with it
+as `TMPDIR`, e.g. under `consul watch` (in a unit of its own, with
+`Environment=TMPDIR=/var/containers/app/.tmp`):
+
+```console
+# install -d -m 700 /var/containers/app/.tmp
+# TMPDIR=/var/containers/app/.tmp consul watch -type event -name deploy-app /usr/local/bin/stretcher
+```
+
+For each event, stretcher:
+
+1. downloads the manifest, then the archive into `$TMPDIR`, and verifies its
+   checksum;
+2. runs the `pre` commands, which create `releases/`;
+3. extracts the archive with `tar` into a new directory of `$TMPDIR`, as
+   root, and renames it to `releases/1.2.3` (`sync_strategy: mv`);
+4. runs the `post` commands: points `current` to the release (`mv -T`
+   replaces the symlink atomically), restarts the service, and deletes the
+   releases beyond the 5 most recently modified, after removing with
+   `droot umount` the mounts that a run without `--unshare` may have left in
+   them;
+5. runs the `success` commands, or, after the first step that failed, the
+   `failure` commands, with its log on their standard input.
+
+Notes:
+
+- `$TMPDIR` must be on the file system of the releases: `sync_strategy: mv`
+  renames the extracted directory, which fails across file systems
+  ("invalid cross-device link"). By default, it is `/tmp`, often a tmpfs,
+  which would also hold the whole image in memory. It needs room for the
+  archive and the extracted files.
+- `mv` refuses a release directory that exists ("file exists"): each
+  version is deployed once. A manifest delivered again (an event replayed)
+  fails and changes nothing. To deploy a version again, delete its directory
+  first, if `current` does not point to it, or give the release another
+  name.
+- Prefer `mv` to `rsync`, also with a new directory as `dest`: rsync works
+  too, but turns the hard links of the image into copies (`rsync -a`
+  without `-H`).
+- The owners, modes and setuid bits are those of the image only if
+  stretcher runs as root. GNU `tar` recognizes gzip archives, and zstd ones
+  (`droot export --compress zstd`) if the `zstd` command is installed.
+- If the restart fails, stretcher stops: `current` points to the new
+  release, and no release is deleted. To roll back, point `current` to the
+  previous release with the same `ln -sfn` and `mv -T`, and restart the
+  service; deploying the manifest of the previous release again fails, its
+  directory existing.
+- With `--unshare`, the mounts of a release disappear with the service, so
+  that deleting old releases is safe. The `droot umount` before `rm -rf`
+  also covers releases that were run without it.
+- The commands of a manifest run as root on every server, and the checksum
+  that protects the archive comes from the manifest itself: whoever can
+  write a manifest, or send the event, controls the servers. Serve the
+  manifests from S3 or over HTTPS, with restricted write access, and
+  restrict `consul event` with the ACLs of Consul. See
+  [Security considerations](security.md).
