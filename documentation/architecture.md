@@ -29,7 +29,7 @@ library, and its packages carry no compatibility promise.
 |---|---|
 | `cmd/droot` | `main`: signal handling, version stamping. |
 | `internal/cli` | A small command line parser: flags, help, suggestions for typos, shell completion scripts. |
-| `internal/commands` | The commands: `export`, `run`, `umount`, `status`, `unshare`. |
+| `internal/commands` | The commands: `export`, `run`, `unit`, `umount`, `status`, `unshare`. |
 | `internal/conffile` | The configuration files of `droot run --config`, a subset of TOML. |
 | `internal/docker` | A minimal Docker Engine API client written with the standard library, and the export logic. |
 | `internal/image` | Images read without daemon: a registry client, `docker save` archives, OCI layouts, and the flattening of layers. |
@@ -38,8 +38,8 @@ library, and its packages carry no compatibility promise.
 | `internal/identity` | Resolving `--user`/`--group` to uid, gid and supplementary groups. |
 | `internal/mounter` | Mounting `/proc`, `/sys` and bind mounts, parsing `/proc/self/mountinfo`, unmounting. |
 | `internal/osutil` | File system and process helpers: secure path resolution, file copy, devices, capabilities, credentials, exec. |
-| `internal/seccomp` | The seccomp filter of `droot run --seccomp default`, a classic BPF program. |
-| `internal/systemd` | The variables of systemd's notifications and socket activation that `droot run` passes on to `COMMAND`, and the relay of the notifications of a rootless `COMMAND`. |
+| `internal/seccomp` | The seccomp filter of `droot run --seccomp default`, a classic BPF program, and the names of the system calls it denies (for `droot unit`). |
+| `internal/systemd` | The variables of systemd's notifications and socket activation that `droot run` passes on to `COMMAND`, the relay of the notifications of a rootless `COMMAND`, and the quoting of the values that `droot unit` writes to unit files. |
 | `internal/userns` | Rootless mode: the ID mappings, the start of droot in a user namespace, and its supervision. |
 | `internal/log` | A tiny leveled logger writing to STDERR. |
 
@@ -338,6 +338,76 @@ through the `userns` package first:
 
 Run rootless, droot re-executes itself before reading anything: `--config`
 and `--env-file` may be pipes, which only the second stage must read.
+
+## `droot unit`
+
+`droot unit` makes the same decisions as `droot run`, with the same code, but
+writes them as the settings of a systemd service instead of carrying them
+out: systemd changes the root, mounts and drops privileges.
+
+1. Parse the options as `droot run` does (`parseRunOptions`, the same
+   `--config` files), and refuse those a unit cannot express
+   (`--copy-files`, `--env-file`, `--hostname`, mounts on `/dev`). `--root`
+   is resolved like for `droot run`: systemd refuses a symlink in
+   `RootDirectory=` (status 226/NAMESPACE), so the settings name the release
+   itself, and must be written again for another one.
+2. Read `/.droot/config.json` and `/.drootenv` through `osutil.Root`, merge
+   the environment, and resolve the user with `identity.ResolveAs` as
+   systemd runs a service: as root unless told otherwise.
+3. Find the command in the root (`Root.Stat`, the PATH of the environment,
+   the working directory for a relative path) and check that the user can
+   execute it. `ExecStart=` names the executable by its absolute path; `@`
+   keeps `argv[0]` as given when it differs. A path with `..` is resolved
+   through the symlinks of the root, as the kernel would, not lexically.
+4. Write the settings, every value quoted by `internal/systemd`
+   ([security](security.md#droot-unit)):
+
+| droot run | systemd |
+|---|---|
+| `--root` (resolved) | `RootDirectory=`, `MountAPIVFS=yes` |
+| The device files of `/dev`, a devpts instance, a tmpfs on `/dev/shm` | `PrivateDevices=yes`, `InaccessiblePaths=` of the host's `/dev/pts` and `/dev/hugepages`, `TemporaryFileSystem=/dev/shm` |
+| `COMMAND`, `ENTRYPOINT`, `CMD` | `ExecStart=` (after an empty `ExecStart=`, for a drop-in) |
+| `--workdir`, `WORKDIR` | `WorkingDirectory=` |
+| `--user`, `--group`, `USER` | `User=` (empty for root), `Group=`, `SupplementaryGroups=`, numeric |
+| `ENV`, `/.drootenv`, `--env`, `PATH`, `HOME`, `USER`, `LOGNAME` | `Environment=` |
+| `STOPSIGNAL` | `KillSignal=` |
+| `--bind`, `--robind`, `--bind-net-files` | `BindPaths=`, `BindReadOnlyPaths=` (`norbind` unless `rbind`) |
+| `--tmpfs` | `TemporaryFileSystem=` (droot's options, mode 1777 and size 50% explicitly) |
+| `--read-only` | `ReadOnlyPaths=+/` |
+| The masked and read-only parts of `/proc` and `/sys` | `ProtectKernelTunables=`, `ProtectControlGroups=`, `InaccessiblePaths=` |
+| The capabilities kept | `CapabilityBoundingSet=` (after an empty one) |
+| `no_new_privs` | `NoNewPrivileges=` |
+| `--seccomp default` | `SystemCallFilter=~...`, `SystemCallErrorNumber=EPERM`, `RestrictNamespaces=`, `SystemCallArchitectures=native` |
+| `--ulimit` | `Limit*=` |
+| `--unshare-ipc` | `PrivateIPC=` |
+| `--no-systemd` | `NotifyAccess=none`, `UnsetEnvironment=` of systemd's variables |
+
+Design notes:
+
+- **A drop-in.** The settings are only those droot derives, in a
+  `[Service]` section: the unit of the user keeps `Type=`, `Restart=`, the
+  limits and the dependencies, and the drop-in can be replaced at each
+  deployment. The settings systemd merges across files are reset first
+  (`ExecStart=`, `User=`, `SupplementaryGroups=`, `CapabilityBoundingSet=`),
+  so that the unit of the user cannot widen them.
+- **Root without `User=`.** With `User=0`, `NoNewPrivileges=yes` and the
+  sandboxing of these settings, systemd 255 removes `CAP_SETUID` from the
+  effective and permitted sets, which breaks servers that start as root and
+  switch users. With an empty `User=`, the service runs as root with the
+  capabilities of the bounding set.
+- **`/dev`.** systemd's private `/dev` binds the host's `/dev/pts`,
+  `/dev/shm` and `/dev/hugepages`. systemd cannot mount a devpts instance
+  for a service: `/dev/pts` is hidden instead, and the service has no
+  pseudo-terminals.
+- **The host's databases.** systemd refuses to start a service whose `User=`,
+  `Group=` or supplementary groups the host does not know, even as numeric
+  IDs. droot warns about the user and the group, and leaves the missing
+  supplementary groups out.
+
+These behaviours of systemd were checked with systemd 255 running services
+in exported root directories (booted as PID 1 in pid and mount namespaces,
+with private `/run`, `/tmp` and `/var/tmp` and every unit that initializes
+the machine masked: `sysinit.target` would clean the host's `/tmp`).
 
 ## `droot umount`
 

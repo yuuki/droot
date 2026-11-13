@@ -4,6 +4,7 @@ package osutil
 
 import (
 	"errors"
+	"io/fs"
 	"os"
 )
 
@@ -59,6 +60,9 @@ func (*Root) OpenMountTargetWithin(string, bool, DirCheck, DirCheck) (*MountTarg
 
 // OpenNoFollow is only supported on Linux.
 func (*Root) OpenNoFollow(string) (*os.File, error) { return nil, unsupported("OpenNoFollow") }
+
+// Stat is only supported on Linux.
+func (*Root) Stat(string) (fs.FileInfo, error) { return nil, unsupported("Stat") }
 
 // OpenFile is only supported on Linux.
 func (*Root) OpenFile(string) (*os.File, error) { return nil, unsupported("OpenFile") }

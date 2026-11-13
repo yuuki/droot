@@ -49,6 +49,11 @@ cleanup() {
   $DOCKER rm -f "$REGISTRY_CONTAINER" >/dev/null 2>&1 || true
   $DOCKER rmi -f "$IMAGE" "$SCRATCH_IMAGE" "$LAYERS_IMAGE" ${REGISTRY_IMAGE:+"$REGISTRY_IMAGE"} >/dev/null 2>&1 || true
   if [[ -n ${SD_DIR:-} ]]; then rm -rf -- "$SD_DIR"; fi
+  if [[ -n ${UNIT:-} ]]; then
+    systemctl stop "$UNIT" >/dev/null 2>&1 || true
+    rm -rf -- "/run/systemd/system/$UNIT" "/run/systemd/system/$UNIT.d"
+    systemctl daemon-reload || true
+  fi
   if [[ -n "${KEEP_WORKDIR:-}" ]]; then
     echo "work directory kept: $WORK"
   elif [[ $(mounts_under "$WORK") -eq 0 ]]; then
@@ -655,6 +660,51 @@ else
       "$(mounts_under "$WORK/sd$notify") $(cat "$WORK/sd.err")" "0 "
   done
   "$DROOT" umount --root "$WORK/sd"
+fi
+
+echo "# droot unit"
+# The settings of droot unit, run by the systemd of the machine as a
+# transient unit of /run/systemd/system. The image's user does not exist on
+# the host: the service runs as root.
+if [[ ! -d /run/systemd/system ]]; then
+  echo "skip - droot unit: systemd is not the init system"
+else
+  mkdir "$WORK/unit-root"
+  tar -xpf "$WORK/app.tar" -C "$WORK/unit-root"
+  ln -s unit-root "$WORK/unit-current"
+  UNIT=droot-e2e-$$.service
+  # The unit of the user, with settings that the drop-in must override.
+  printf '[Service]\nType=oneshot\nUser=nobody\nCapabilityBoundingSet=~CAP_SYS_MODULE\nEnvironment=APP_ENV=production JAVA_OPTS=from-unit\nStandardOutput=file:%s\n' \
+    "$WORK/unit.out" >"/run/systemd/system/$UNIT"
+  mkdir "/run/systemd/system/$UNIT.d"
+  run_unit() { # NAME DROOT-UNIT-ARGS...: generates the drop-in, runs the unit
+    local name=$1
+    shift
+    rm -f "$WORK/unit.out"
+    env -u APP_ENV "$DROOT" unit -q --root "$WORK/unit-current" --user 0 --cap-drop ALL --seccomp default --tmpfs /tmp \
+      -o "/run/systemd/system/$UNIT.d/droot.conf" "$@" || fail "$name: droot unit"
+    systemctl daemon-reload
+    systemctl start "$UNIT" || fail "$name: $(systemctl status --no-pager "$UNIT" 2>&1 | tail -5)"
+  }
+  run_unit "droot unit"
+  assert_eq "droot unit: systemd runs the ENTRYPOINT and CMD of the image" "$(cat "$WORK/unit.out")" "myapp-ok from-entrypoint from-cmd"
+  # Every value reaches COMMAND as it is, through the quoting of the unit.
+  run_unit "droot unit with special characters" --env 'GREETING=say "hi" 50% $HOME \n' -- \
+    /bin/sh -c 'printf "%s|%s|%s|%s\n" "$GREETING" "$1" "$(pwd)" "$(id -u)"' sh 'a b;$c'
+  assert_eq "droot unit: the environment and the arguments reach COMMAND unchanged" \
+    "$(cat "$WORK/unit.out")" 'say "hi" 50% $HOME \n|a b;$c|/usr/local/myapp|0'
+  run_unit "droot unit --read-only" --read-only -- /bin/sh -c 'touch /x 2>/dev/null && echo writable || echo read-only; touch /tmp/x && echo tmp-ok'
+  assert_eq "droot unit --read-only: the root is read-only, the --tmpfs is not" "$(cat "$WORK/unit.out")" "$(printf 'read-only\ntmp-ok')"
+  # The drop-in resets the bounding set (systemd ORs the lines), keeps the
+  # host's pseudo-terminals out, and leaves a bare --env KEY to the unit;
+  # its other variables replace the unit's.
+  run_unit "droot unit protections" --env APP_ENV -- /bin/sh -c \
+    'grep CapBnd /proc/self/status | cut -f2; ls -A /dev/pts 2>/dev/null | wc -l; (exec 3<>/dev/ptmx) 2>/dev/null && echo ptmx || echo no-ptmx; echo "$APP_ENV|$JAVA_OPTS"'
+  assert_eq "droot unit: capabilities, /dev/pts and the environment of the unit" "$(cat "$WORK/unit.out")" \
+    "$(printf '0000000000000000\n0\nno-ptmx\nproduction|-Dfoo=bar -Dx=y')"
+  [[ $(grep -c '^RootDirectory='"$WORK"'/unit-root$' "/run/systemd/system/$UNIT.d/droot.conf") == 1 ]] ||
+    fail "droot unit: RootDirectory= must be the release, not its symlink"
+  echo "ok - droot unit: RootDirectory= is the release, not its symlink"
 fi
 
 echo "# rootless"

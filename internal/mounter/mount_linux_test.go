@@ -553,7 +553,7 @@ func TestProtectKernelFS(t *testing.T) {
 
 	// Masked files: their content is /dev/null's.
 	masked := 0
-	for _, p := range maskedPaths {
+	for _, p := range MaskedPaths {
 		fi, err := os.Stat(p)
 		if err != nil || fi.IsDir() || !strings.HasPrefix(p, "/proc/") {
 			continue // not on this kernel

@@ -66,6 +66,17 @@ type FSOptions struct {
 	Data []string
 }
 
+// MaskedPaths are hidden from the container, like Docker does: files are
+// covered with a read-only bind mount of /dev/null, directories with an
+// empty read-only tmpfs. Paths missing on this kernel are skipped.
+var MaskedPaths = []string{
+	"/proc/acpi", "/proc/asound", "/proc/interrupts", "/proc/kcore", "/proc/keys",
+	"/proc/latency_stats", "/proc/sched_debug", "/proc/scsi", "/proc/timer_list",
+	"/proc/timer_stats", "/sys/devices/virtual/powercap", "/sys/firmware",
+	// Mounted below the host's /sys, unlike in Docker's fresh sysfs.
+	"/sys/kernel/debug", "/sys/kernel/security", "/sys/kernel/tracing",
+}
+
 // tmpfsData are the tmpfs options accepted by ParseTmpfsOptions: KEY=VALUE
 // for the keys ending in "=", flags otherwise.
 var tmpfsData = []string{"size=", "nr_blocks=", "nr_inodes=", "mode=", "uid=", "gid=", "huge=", "mpol=", "inode32", "inode64", "noswap"}

@@ -1,0 +1,28 @@
+# A service that systemd runs by itself, without droot run: the settings that
+# run the release (RootDirectory=, ExecStart=, User=, the mounts and the
+# protections) are written by `droot unit` in the drop-in
+# /etc/systemd/system/app.service.d/droot.conf, from examples/droot/app.toml:
+#   droot unit --config /etc/droot/app.toml -o /etc/systemd/system/app.service.d/droot.conf
+# Generate the drop-in again at each deployment. See
+# documentation/deployment.md.
+[Unit]
+Description=app (release exported by droot, run by systemd)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=exec
+# env = ["APP_ENV"] in app.toml takes its value from the environment of
+# droot unit. Without it there, the drop-in leaves APP_ENV out, the image's
+# value too, and this gives it.
+Environment=APP_ENV=production
+Restart=on-failure
+RestartSec=5s
+
+MemoryMax=1G
+CPUQuota=200%
+TasksMax=512
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

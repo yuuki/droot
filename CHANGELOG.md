@@ -20,6 +20,13 @@ Releases up to 0.7.7 are described on the
   files of `/dev` and the mount points droot creates there, and files of the
   host through the bind mounts of a run without `--unshare`
   (`documentation/deployment.md`).
+- `droot unit` prints the settings of a systemd service that runs an
+  extracted image with systemd alone (`RootDirectory=`), as `droot run` with
+  the same options, or the same `--config` file, would: the image's
+  `ENTRYPOINT`, `CMD`, `USER`, `WORKDIR`, `ENV` and `STOPSIGNAL`
+  (`KillSignal=`), the mounts, the capabilities, `no_new_privs` and the
+  seccomp filter. Every value is checked and quoted so that the image cannot
+  add a setting to the unit (#66).
 
 ### Fixed
 
