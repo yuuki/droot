@@ -7,36 +7,52 @@ Releases up to 0.7.7 are described on the
 
 ## [Unreleased]
 
+### Added
+
+- Deploying with [stretcher](https://github.com/fujiwara/stretcher): stretcher
+  extracts each release into a new directory (`sync_strategy: mv`), and the
+  commands of the manifest, generated from the template
+  `examples/stretcher/deploy.yml`, deploy each version once, switch
+  `current`, restart the service, check its health and delete the old
+  releases after `droot umount`; `examples/stretcher/stretcher-app.service`
+  runs stretcher at each Consul event. The default `rsync -a --delete` of
+  stretcher must never update a root that `droot run` uses: it deletes the
+  files of `/dev` and the mount points droot creates there, and files of the
+  host through the bind mounts of a run without `--unshare`
+  (`documentation/deployment.md`).
+
 ### Fixed
 
 - `examples/dewy/droot-extract-release` creates the root directory of a
   release with mode 0755 whatever the umask: with a umask such as 077, it had
   mode 0700, and the users of the container other than root (`--user app`)
-  could not reach its files.
+  could not reach its files. The README and `documentation/deployment.md`
+  create the root directories with `mkdir -m 755` for the same reason.
 
 ### Security
 
-- The deployment examples extracted the images into directories that every
-  user of the host can traverse, where any of them could run the setuid and
-  setgid programs of an image (`su`, `passwd`, `mount`, ...) outside the
-  container, as root or with a group such as `shadow`. The READMEs,
-  `documentation/deployment.md` and the help of `droot unshare` now extract
-  each archive into a new directory with mode 0755, which becomes `/` in the
-  container, inside a directory that only root can enter (`install -d -m
-  700`, or `mktemp -d` for a temporary extraction). The root directory of
-  the quick start moved to `/var/containers/demo`, so that
-  `/var/containers/app` is only the directory of the releases of capze and
-  dewy. `documentation/security.md` explains why, and that without
-  `--unshare`, the users of the host with the UID of the application can
-  still reach the root directory through `/proc/PID/root`.
-- On servers set up with the earlier examples, restrict the directory that
-  holds the root directories: `chmod 700 /var/containers`, owned by root (or
-  `/var/containers/app`, owned by its user, for a rootless dewy). Never
-  restrict a root directory itself: it is `/` in the container and needs
-  mode 0755. Delete the extraction directories that failed deployments left
-  in `/tmp` (`/tmp/app`, `/tmp/app-X.Y.Z`), once
-  `droot status --root DIR` shows no mounts below them. Rootless, keep your
-  root directories in a directory with mode 0700 of your own.
+- The deployment instructions (`README.md`, `documentation/deployment.md`)
+  extracted images into directories that every user of the host could
+  reach, so that they could run the setuid-root programs of an image (`su`,
+  `passwd`, ...) as root, outside droot. The root directories are now kept
+  in `/var/containers`, created with mode 0700, and archives are extracted
+  in a directory created by `mktemp -d` before capze moves them into place;
+  `documentation/security.md` explains why. The capze instructions also
+  create the directory of the releases, without which capze fails.
+- `documentation/security.md` also says that the setgid programs of an image
+  are exposed in the same way (a group such as `shadow`), and that without
+  `--unshare`, the users of the host with the UID of a process of the
+  container can still reach its root directory through `/proc/PID/root` and
+  run its setuid programs as root. Rootless, the setuid-root programs of an
+  image become setuid programs of the user: the README, the help of
+  `droot unshare` and the rootless dewy note now keep the root directories
+  in a directory with mode 0700 of that user.
+- On servers set up with the earlier instructions, run
+  `chmod 700 /var/containers` (owned by root), never on a root directory
+  itself, which is `/` in the container and needs mode 0755, and delete the
+  extraction directories that failed deployments left in `/tmp`
+  (`/tmp/app`, `/tmp/app-X.Y.Z`) once `droot status --root DIR` shows no
+  mounts below them.
 
 ## [0.8.0] - 2026-11-11
 

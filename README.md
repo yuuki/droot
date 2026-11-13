@@ -139,21 +139,18 @@ setuid bits are preserved):
 $ aws s3 cp s3://drootexamples/app.tar.gz . && aws s3 cp s3://drootexamples/app.tar.gz.sha256 .
 $ sha256sum -c app.tar.gz.sha256
 $ sudo install -d -m 700 /var/containers
-$ sudo install -d -m 755 /var/containers/demo
-$ sudo tar -xpzf app.tar.gz -C /var/containers/demo
-$ sudo droot run --cp --user appuser --group appgroup --bind /var/log/app --root /var/containers/demo -- command
+$ sudo mkdir -m 755 /var/containers/app
+$ sudo tar -xpzf app.tar.gz -C /var/containers/app
+$ sudo droot run --cp --user appuser --group appgroup --bind /var/log/app --root /var/containers/app -- command
 ```
 
-Only root may enter `/var/containers` (mode 0700): the extracted files
-include the setuid and setgid programs of the image (`su`, `passwd`,
-`mount`, ...), which any user of the host could otherwise run, outside the
-container, as root or with a group such as `shadow`. droot runs as root and
-needs no access for other users. The archive has no entry for `/`: the
-directory it is extracted into becomes `/` in the container with its own
-mode, which must be 0755 so that the users of the container can reach their
-files. Without `--unshare`, a user of the host with the UID of `command` can
-still reach these programs while it runs: see
-[Security considerations](documentation/security.md).
+Only root can access `/var/containers`: the setuid and setgid programs of
+the image, extracted with their owner, would otherwise let the users of the
+host run them as root or with a group such as `shadow` (see
+[Security considerations](documentation/security.md)). Without `--unshare`,
+a user of the host with the UID of `command` can still reach them while it
+runs. `/var/containers/app` itself has mode 0755 (`-m 755`, whatever the
+umask), which the users of the container need.
 
 `droot run` leaves its mounts in place after the command exits (unless
 `--unshare` is given). Remove them before deleting or replacing the directory,
@@ -161,7 +158,7 @@ for instance to deploy a new version — deleting it with mounts below would
 delete files of the host through the bind mounts:
 
 ```console
-$ sudo droot umount --root /var/containers/demo
+$ sudo droot umount --root /var/containers/app
 ```
 
 To deploy new versions, extract each one into a new directory and switch
@@ -173,17 +170,15 @@ walkthrough, including systemd units.
 ### Integration with capze
 
 [capze](https://github.com/yuuki/capze) deploys archives in a Capistrano-like
-directory layout and keeps the last releases, here in `/var/containers/app`,
-which only root may enter, as above. capze moves the directory it is given
-into `releases/`, where it becomes `/` of the container: extract each archive
-into a new directory with mode 0755, inside a temporary directory that only
-root can enter:
+directory layout and keeps the last releases. It moves the directory it is
+given into `releases/` as it is, so extract the archive into a new directory
+inside one that only root can access (`mktemp -d`), and keep the releases in
+`/var/containers`, as above:
 
 ```console
-$ sudo install -d -m 700 /var/containers/app
-$ tmp=$(sudo mktemp -d)   # a new directory, mode 0700, owned by root
-$ sudo install -d -m 755 "$tmp/app"
-$ sudo tar -xpzf app.tar.gz -C "$tmp/app"   # after verifying the checksum as above
+$ sudo mkdir -p /var/containers/app
+$ tmp=$(sudo mktemp -d)
+$ sudo mkdir -m 755 "$tmp/app" && sudo tar -xpzf app.tar.gz -C "$tmp/app"   # after verifying the checksum as above
 $ sudo capze --keep 5 "$tmp/app" /var/containers/app && sudo rmdir "$tmp"
 ```
 
@@ -207,8 +202,7 @@ $ gh release create v1.2.3 app_linux_amd64.tar.gz app_linux_amd64.tar.gz.sha256
 
 and on the servers, as root, with the hook installed as
 `/usr/local/bin/droot-extract-release` and `GITHUB_TOKEN` set, in
-`/var/containers/app`, created with `install -d -m 700` (only root may enter
-it, as above):
+`/var/containers/app`:
 
 ```console
 # dewy server --registry ghr://example/app --port 8080 --health-path /health \
@@ -222,6 +216,36 @@ delete files of the host through the bind mounts of `droot run`. The
 application takes the listening socket of dewy from `SERVER_STARTER_PORT`. See
 [Deploying with dewy](documentation/deployment.md#deploying-with-dewy) for a
 systemd unit and the details.
+
+### Integration with stretcher
+
+[stretcher](https://github.com/fujiwara/stretcher) deploys on each server the
+release that a manifest describes, when a Consul or Serf event gives it the
+manifest's URL: it downloads the archive, verifies its checksum, extracts it
+with `tar` (as root, the owners and setuid bits are kept) and runs the
+commands of the manifest. Have it extract each release into a new directory
+(`sync_strategy: mv`, with `TMPDIR` on the same file system) and switch
+`current` in its `post` commands. An excerpt of the template
+[`examples/stretcher/deploy.yml`](examples/stretcher/deploy.yml), which also
+deploys each version only once, checks the new release and deletes old ones:
+
+```yaml
+src: s3://example-releases/app/app-1.2.3.tar.gz
+checksum: "3f0c…"   # from app-1.2.3.tar.gz.sha256
+dest: /var/containers/app/releases/1.2.3
+sync_strategy: mv
+commands:
+  post:
+    - ln -sfn releases/1.2.3 /var/containers/app/current.new && mv -T /var/containers/app/current.new /var/containers/app/current
+    - systemctl restart app
+```
+
+Never let the default `rsync -a --delete` of stretcher update a root that
+`droot run` uses: rsync deletes what droot creates in the root (the files of
+`/dev`, the mount points) and, through the bind mounts of a run without
+`--unshare`, files of the host. See
+[Deploying with stretcher](documentation/deployment.md#deploying-with-stretcher)
+for the setup of the servers and the details.
 
 ## Commands
 
@@ -653,7 +677,8 @@ $ DOCKER_HOST=ssh://deploy@build.example.com droot export -o app.tar app
 
 - [Deploying an application](documentation/deployment.md): from `docker build`
   to a systemd service, with [example units](examples/systemd), or with
-  [dewy](documentation/deployment.md#deploying-with-dewy)
+  [dewy](documentation/deployment.md#deploying-with-dewy) or
+  [stretcher](documentation/deployment.md#deploying-with-stretcher)
 - [Command line reference](documentation/cli.md)
 - [How droot works](documentation/architecture.md)
 - [Security considerations](documentation/security.md)

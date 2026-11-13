@@ -122,17 +122,17 @@ $ aws s3 cp app.tar.gz.sha256 s3://drootexamples/app.tar.gz.sha256
 $ aws s3 cp s3://drootexamples/app.tar.gz . && aws s3 cp s3://drootexamples/app.tar.gz.sha256 .
 $ sha256sum -c app.tar.gz.sha256
 $ sudo install -d -m 700 /var/containers
-$ sudo install -d -m 755 /var/containers/demo
-$ sudo tar -xpzf app.tar.gz -C /var/containers/demo
-$ sudo droot run --cp --user appuser --group appgroup --bind /var/log/app --root /var/containers/demo -- command
+$ sudo mkdir -m 755 /var/containers/app
+$ sudo tar -xpzf app.tar.gz -C /var/containers/app
+$ sudo droot run --cp --user appuser --group appgroup --bind /var/log/app --root /var/containers/app -- command
 ```
 
-`/var/containers`（モード 0700）には root しか入れないようにします。展開したファイルにはイメージの setuid プログラムと setgid プログラム（`su`、`passwd`、`mount` など）が含まれており、そうしないとホストのどのユーザーでも、コンテナの外でそれらを root の権限や `shadow` などのグループの権限で実行できてしまいます。droot は root で動作するので、ほかのユーザーのアクセス権は必要ありません。アーカイブには `/` のエントリがないため、展開先のディレクトリが、指定したモードのままコンテナの `/` になります。コンテナのユーザーが自分のファイルにたどり着けるよう、モードは 0755 にしてください。`--unshare` を指定しない場合、`command` と同じ UID を持つホストのユーザーは、`command` の実行中にこれらのプログラムにたどり着けます。[セキュリティに関する考慮事項](documentation/security.md)（英語）を参照してください。
+`/var/containers` には root だけがアクセスできるようにします。イメージの setuid プログラムと setgid プログラムは所有者ごと展開されるので、そうしないとホストのユーザーがそれを root の権限や `shadow` などのグループの権限で実行できてしまいます（[セキュリティに関する考慮事項](documentation/security.md)を参照）。`--unshare` を指定しない場合、`command` と同じ UID を持つホストのユーザーは、`command` の実行中にこれらのプログラムにたどり着けます。`/var/containers/app` 自体はモード 0755 にします（`-m 755` により umask に関係なくこのモードになります）。コンテナのユーザーがアクセスするためです。
 
 `droot run` は、コマンドの終了後もマウントをそのまま残します（`--unshare` を指定した場合を除く）。新しいバージョンをデプロイする場合など、ディレクトリを削除または置き換える前に、マウントを解除してください。マウントが残ったまま削除すると、バインドマウントを通じてホストのファイルまで削除されてしまいます。
 
 ```console
-$ sudo droot umount --root /var/containers/demo
+$ sudo droot umount --root /var/containers/app
 ```
 
 新しいバージョンは、それぞれ新しいディレクトリに展開し、それらを切り替えてデプロイします（例えば後述の capze を使います）。
@@ -142,13 +142,12 @@ systemd ユニットを含む一通りの手順については、[アプリケ�
 <a id="integration-with-capze"></a>
 ### capze との連携
 
-[capze](https://github.com/yuuki/capze) は、Capistrano 風のディレクトリ構成でアーカイブをデプロイし、直近のリリースを保持します。ここでは、上と同じく root しか入れない `/var/containers/app` に保持します。capze は渡されたディレクトリをそのまま `releases/` に移動し、そのディレクトリがコンテナの `/` になります。そのため、各アーカイブは、root しか入れない一時ディレクトリの中にモード 0755 の新しいディレクトリを作り、そこに展開します。
+[capze](https://github.com/yuuki/capze) は、Capistrano 風のディレクトリ構成でアーカイブをデプロイし、直近のリリースを保持します。capze は渡されたディレクトリをそのまま `releases/` に移動します。そのため、アーカイブは root だけがアクセスできるディレクトリ（`mktemp -d`）の中の新しいディレクトリに展開し、リリースは上記と同じく `/var/containers` に置いてください。
 
 ```console
-$ sudo install -d -m 700 /var/containers/app
-$ tmp=$(sudo mktemp -d)   # モード 0700、所有者 root の新しいディレクトリ
-$ sudo install -d -m 755 "$tmp/app"
-$ sudo tar -xpzf app.tar.gz -C "$tmp/app"   # 上記のようにチェックサムを確認した後で
+$ sudo mkdir -p /var/containers/app
+$ tmp=$(sudo mktemp -d)
+$ sudo mkdir -m 755 "$tmp/app" && sudo tar -xpzf app.tar.gz -C "$tmp/app"   # 上記のようにチェックサムを確認した後で
 $ sudo capze --keep 5 "$tmp/app" /var/containers/app && sudo rmdir "$tmp"
 ```
 
@@ -165,7 +164,7 @@ $ sha256sum app_linux_amd64.tar.gz > app_linux_amd64.tar.gz.sha256
 $ gh release create v1.2.3 app_linux_amd64.tar.gz app_linux_amd64.tar.gz.sha256
 ```
 
-サーバーでは、フックを `/usr/local/bin/droot-extract-release` に置き、`GITHUB_TOKEN` を設定したうえで、root で `/var/containers/app` から次のように実行します。このディレクトリは `install -d -m 700` で作ります（上と同じく、root しか入れないようにします）。
+サーバーでは、フックを `/usr/local/bin/droot-extract-release` に置き、`GITHUB_TOKEN` を設定したうえで、root で `/var/containers/app` から次のように実行します。
 
 ```console
 # dewy server --registry ghr://example/app --port 8080 --health-path /health \
@@ -175,6 +174,24 @@ $ gh release create v1.2.3 app_linux_amd64.tar.gz app_linux_amd64.tar.gz.sha256
 ```
 
 `--unshare` は必須です。dewy は古いリリースを削除するため、これがないと `droot run` のバインドマウントを通じてホストのファイルが削除されます。アプリケーションは、dewy の待ち受けソケットを `SERVER_STARTER_PORT` から受け取ります。systemd ユニットと詳細は [dewy によるデプロイ](documentation/deployment.md#deploying-with-dewy)（英語）を参照してください。
+
+<a id="integration-with-stretcher"></a>
+### stretcher との連携
+
+[stretcher](https://github.com/fujiwara/stretcher) は、Consul や Serf のイベントでマニフェストの URL を受け取り、そのマニフェストが示すリリースを各サーバーにデプロイします。アーカイブをダウンロードしてチェックサムを検証し、`tar` で展開して（root で実行すれば、所有者と setuid ビットは保たれます）、マニフェストのコマンドを実行します。リリースごとに新しいディレクトリに展開させ（`sync_strategy: mv`。`TMPDIR` は同じファイルシステムに置きます）、`post` コマンドで `current` を切り替えてください。次はテンプレート [`examples/stretcher/deploy.yml`](examples/stretcher/deploy.yml) の抜粋です。テンプレートは、各バージョンを一度だけデプロイし、新しいリリースを確認してから古いリリースを削除します。
+
+```yaml
+src: s3://example-releases/app/app-1.2.3.tar.gz
+checksum: "3f0c…"   # app-1.2.3.tar.gz.sha256 の値
+dest: /var/containers/app/releases/1.2.3
+sync_strategy: mv
+commands:
+  post:
+    - ln -sfn releases/1.2.3 /var/containers/app/current.new && mv -T /var/containers/app/current.new /var/containers/app/current
+    - systemctl restart app
+```
+
+`droot run` が使っているルートディレクトリを、stretcher の既定の `rsync -a --delete` で更新してはいけません。rsync は、droot がルートディレクトリの中に作ったもの（`/dev` のファイルやマウントポイント）を削除します。`--unshare` なしで実行した場合は、バインドマウントを通じてホストのファイルも削除します。サーバーの準備と詳細は [stretcher によるデプロイ](documentation/deployment.md#deploying-with-stretcher)（英語）を参照してください。
 
 <a id="commands"></a>
 ## コマンド
@@ -454,7 +471,7 @@ $ DOCKER_HOST=ssh://deploy@build.example.com droot export -o app.tar app
 <a id="documentation"></a>
 ## ドキュメント
 
-- [アプリケーションのデプロイ](documentation/deployment.md): `docker build` から systemd サービスまで（[ユニットの例](examples/systemd)付き）、および [dewy によるデプロイ](documentation/deployment.md#deploying-with-dewy)
+- [アプリケーションのデプロイ](documentation/deployment.md): `docker build` から systemd サービスまで（[ユニットの例](examples/systemd)付き）、および [dewy によるデプロイ](documentation/deployment.md#deploying-with-dewy) と [stretcher によるデプロイ](documentation/deployment.md#deploying-with-stretcher)
 - [コマンドラインリファレンス](documentation/cli.md)
 - [droot の仕組み](documentation/architecture.md)
 - [セキュリティに関する考慮事項](documentation/security.md)
