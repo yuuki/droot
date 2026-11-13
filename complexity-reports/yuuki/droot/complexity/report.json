@@ -1,9 +1,9 @@
 {
   "repository": "yuuki/droot/complexity",
   "ref": "refs/heads/master",
-  "commit": "9c776e3ede7a0437905ef6e63c47730eac63fff2",
+  "commit": "a1f8d0f259e511cf41803d53140d351aed6124f7",
   "base_ref": "refs/heads/master",
-  "timestamp": "2026-11-13T07:27:46.03115246Z",
+  "timestamp": "2026-11-13T15:21:04.471364151Z",
   "custom_metrics": [
     {
       "key": "code_complexity",
@@ -12,12 +12,12 @@
         {
           "key": "function_count",
           "name": "Function count",
-          "value": 686
+          "value": 740
         },
         {
           "key": "cognitive_sum",
           "name": "Cognitive: total",
-          "value": 2669
+          "value": 2866
         },
         {
           "key": "cognitive_max",
@@ -37,7 +37,7 @@
         {
           "key": "cyclomatic_sum",
           "name": "Cyclomatic: total",
-          "value": 2835
+          "value": 3060
         },
         {
           "key": "cyclomatic_max",
