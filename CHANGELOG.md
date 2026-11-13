@@ -28,6 +28,18 @@ Releases up to 0.7.7 are described on the
   seccomp filter. Every value is checked and quoted so that the image cannot
   add a setting to the unit (#66).
 
+### Changed
+
+- The capze instructions (`README.md`, `documentation/deployment.md`) use
+  the commands of the capze that follows 0.2 (`capze deploy`,
+  `capze rollback`, `capze prune`), which no longer accepts those of 0.2.
+  That capze moves the extracted directory with `rename(2)` and never
+  copies it, so archives are extracted in a directory created by
+  `mktemp -d -p /var/containers/app`, on the file system of the releases,
+  instead of `/tmp`. It leaves an old release that still has mounts below
+  it: without `--unshare`, the instructions unmount the old releases with
+  `droot umount` before `capze prune`.
+
 ### Fixed
 
 - `examples/dewy/droot-extract-release` creates the root directory of a
@@ -43,7 +55,8 @@ Releases up to 0.7.7 are described on the
   reach, so that they could run the setuid-root programs of an image (`su`,
   `passwd`, ...) as root, outside droot. The root directories are now kept
   in `/var/containers`, created with mode 0700, and archives are extracted
-  in a directory created by `mktemp -d` before capze moves them into place;
+  in a directory created by `mktemp -d` there before capze moves them into
+  place;
   `documentation/security.md` explains why. The capze instructions also
   create the directory of the releases, without which capze fails.
 - `documentation/security.md` also says that the setgid programs of an image

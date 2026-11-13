@@ -142,14 +142,23 @@ systemd ユニットを含む一通りの手順については、[アプリケ�
 <a id="integration-with-capze"></a>
 ### capze との連携
 
-[capze](https://github.com/yuuki/capze) は、Capistrano 風のディレクトリ構成でアーカイブをデプロイし、直近のリリースを保持します。capze は渡されたディレクトリをそのまま `releases/` に移動します。そのため、アーカイブは root だけがアクセスできるディレクトリ（`mktemp -d`）の中の新しいディレクトリに展開し、リリースは上記と同じく `/var/containers` に置いてください。
+[capze](https://github.com/yuuki/capze) は、Capistrano 風のディレクトリ構成でアーカイブをデプロイし、直近のリリースを保持します。capze は渡されたディレクトリをそのまま `releases/` に移動し、コピーはしません。そのため、アーカイブはリリースを置くディレクトリ自体の中の新しいディレクトリ（`mktemp -d -p`）に展開してください。そこはリリースと同じファイルシステムにあります。リリースは上記と同じく、root だけがアクセスできる `/var/containers` に置いてください。
 
 ```console
 $ sudo mkdir -p /var/containers/app
-$ tmp=$(sudo mktemp -d)
+$ tmp=$(sudo mktemp -d -p /var/containers/app)
 $ sudo mkdir -m 755 "$tmp/app" && sudo tar -xpzf app.tar.gz -C "$tmp/app"   # 上記のようにチェックサムを確認した後で
-$ sudo capze --keep 5 "$tmp/app" /var/containers/app && sudo rmdir "$tmp"
+$ sudo capze deploy --keep 5 "$tmp/app" /var/containers/app && sudo rmdir "$tmp"
 ```
+
+`capze rollback /var/containers/app` は、`current` を1つ前のリリースに戻します。capze はマウントポイントを越えて削除しません。配下にマウントが残っている古いリリースは削除せずに残し、その旨を報告します。`--unshare` を指定していない場合は、先に古いリリースのマウントを解除してください。
+
+```console
+$ sudo capze prune --keep 5 --dry-run /var/containers/app | sudo xargs -r -n 1 droot umount --root
+$ sudo capze prune --keep 5 /var/containers/app
+```
+
+これらは capze 0.2 より後のコマンドです。0.2 のコマンドは異なります。
 
 <a id="integration-with-dewy"></a>
 ### dewy との連携
