@@ -7,6 +7,13 @@ Releases up to 0.7.7 are described on the
 
 ## [Unreleased]
 
+### Fixed
+
+- `examples/dewy/droot-extract-release` creates the root directory of a
+  release with mode 0755 whatever the umask: with a umask such as 077, it had
+  mode 0700, and the users of the container other than root (`--user app`)
+  could not reach its files.
+
 ## [0.8.0] - 2026-11-11
 
 Maintenance release after several years: modern Go and Docker, far fewer

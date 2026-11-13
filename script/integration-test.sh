@@ -390,7 +390,9 @@ rel=$WORK/dewy/releases/2
 mkdir "$rel"
 "$DROOT" export -q --compress gzip --checksum -o "$rel/rootfs.tar.gz" "$IMAGE"
 ln -sfn "$rel" "$WORK/dewy/current"
-(cd "$WORK/dewy" && "$HOOK" >/dev/null)
+(cd "$WORK/dewy" && umask 077 && "$HOOK" >/dev/null)
+assert_eq "dewy hook: the root directory has mode 755, whatever the umask" \
+  "$(stat -c %a "$rel/rootfs")" "755"
 assert_eq "dewy hook: droot run --root current/rootfs" \
   "$("$DROOT" run --unshare --root "$WORK/dewy/current/rootfs")" "myapp-ok from-entrypoint from-cmd"
 # A failure leaves no rootfs, and gives the space back.
