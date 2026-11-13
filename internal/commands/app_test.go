@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -260,7 +261,7 @@ func TestWriteFileIsAtomic(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := writeFile(context.Background(), out, func(w io.Writer) error {
+	err := writeFile(context.Background(), out, true, func(w io.Writer) error {
 		_, _ = io.WriteString(w, "partial")
 		return errors.New("export failed")
 	})
@@ -274,7 +275,7 @@ func TestWriteFileIsAtomic(t *testing.T) {
 		t.Fatalf("temporary files left behind: %v", entries)
 	}
 
-	if err := writeFile(context.Background(), out, func(w io.Writer) error {
+	if err := writeFile(context.Background(), out, true, func(w io.Writer) error {
 		_, err := io.WriteString(w, "archive")
 		return err
 	}); err != nil {
@@ -288,7 +289,7 @@ func TestWriteFileIsAtomic(t *testing.T) {
 		t.Fatalf("got %q mode %v", b, fi.Mode())
 	}
 
-	if err := writeFile(context.Background(), dir, func(io.Writer) error { return nil }); err == nil {
+	if err := writeFile(context.Background(), dir, true, func(io.Writer) error { return nil }); err == nil {
 		t.Fatal("writing to a directory should fail")
 	}
 }
@@ -357,7 +358,7 @@ func TestWriteFileLikeCreate(t *testing.T) {
 
 	old := syscall.Umask(0o077)
 	newFile := filepath.Join(dir, "new.tar")
-	err := writeFile(ctx, newFile, write("a"))
+	err := writeFile(ctx, newFile, true, write("a"))
 	syscall.Umask(old)
 	if err != nil {
 		t.Fatal(err)
@@ -373,7 +374,7 @@ func TestWriteFileLikeCreate(t *testing.T) {
 	if err := os.Chmod(existing, 0o640); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeFile(ctx, existing, write("b")); err != nil {
+	if err := writeFile(ctx, existing, true, write("b")); err != nil {
 		t.Fatal(err)
 	}
 	if m := mode(existing); m != 0o640 {
@@ -384,7 +385,7 @@ func TestWriteFileLikeCreate(t *testing.T) {
 	if err := os.Symlink("existing.tar", link); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeFile(ctx, link, write("c")); err != nil {
+	if err := writeFile(ctx, link, true, write("c")); err != nil {
 		t.Fatal(err)
 	}
 	if fi, _ := os.Lstat(link); fi.Mode()&fs.ModeSymlink == 0 {
@@ -398,7 +399,7 @@ func TestWriteFileLikeCreate(t *testing.T) {
 	if err := os.Symlink("created.tar", dangling); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeFile(ctx, dangling, write("d")); err != nil {
+	if err := writeFile(ctx, dangling, true, write("d")); err != nil {
 		t.Fatal(err)
 	}
 	if b, _ := os.ReadFile(filepath.Join(dir, "created.tar")); string(b) != "d" {
@@ -409,7 +410,7 @@ func TestWriteFileLikeCreate(t *testing.T) {
 	if err := os.Link(existing, hard); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeFile(ctx, hard, write("e")); err != nil {
+	if err := writeFile(ctx, hard, true, write("e")); err != nil {
 		t.Fatal(err)
 	}
 	if b, _ := os.ReadFile(existing); string(b) != "e" {
@@ -417,8 +418,119 @@ func TestWriteFileLikeCreate(t *testing.T) {
 	}
 
 	long := filepath.Join(dir, strings.Repeat("x", 250)+".tar")
-	if err := writeFile(ctx, long, write("f")); err != nil {
+	if err := writeFile(ctx, long, true, write("f")); err != nil {
 		t.Fatalf("a long file name must work: %v", err)
+	}
+}
+
+// TestWriteFileToDescriptor writes to -o /dev/stdout, /dev/fd/N and
+// /proc/self/fd/N when the descriptor is a pipe or a socket, whose link
+// reads pipe:[1234] or socket:[1234]: not a path.
+func TestWriteFileToDescriptor(t *testing.T) {
+	if _, err := os.Stat("/proc/self/fd"); err != nil {
+		t.Skip("no /proc/self/fd:", err)
+	}
+	pipe := func(t *testing.T) (r, w *os.File) {
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r, w
+	}
+	socket := func(t *testing.T) (r, w *os.File) {
+		fds, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return os.NewFile(uintptr(fds[0]), "r"), os.NewFile(uintptr(fds[1]), "w")
+	}
+	names := []struct {
+		name string
+		path func(dir string, fd uintptr) string
+	}{
+		{"/proc/self/fd/N", func(_ string, fd uintptr) string { return fmt.Sprintf("/proc/self/fd/%d", fd) }},
+		{"/dev/fd/N", func(_ string, fd uintptr) string { return fmt.Sprintf("/dev/fd/%d", fd) }},
+		{"/dev/stdout", func(dir string, fd uintptr) string {
+			// Like /dev/stdout -> /proc/self/fd/1.
+			link := filepath.Join(dir, "stdout")
+			if err := os.Symlink(fmt.Sprintf("/proc/self/fd/%d", fd), link); err != nil {
+				t.Fatal(err)
+			}
+			return link
+		}},
+	}
+	for _, kind := range []struct {
+		name string
+		open func(*testing.T) (r, w *os.File)
+	}{{"pipe", pipe}, {"socket", socket}} {
+		for _, n := range names {
+			t.Run(kind.name+" "+n.name, func(t *testing.T) {
+				r, w := kind.open(t)
+				defer r.Close()
+				defer w.Close()
+				path := n.path(t.TempDir(), w.Fd())
+				const content = "archive"
+				err := writeFile(context.Background(), path, true, func(w io.Writer) error {
+					_, err := io.WriteString(w, content)
+					return err
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				buf := make([]byte, len(content))
+				if _, err := io.ReadFull(r, buf); err != nil || string(buf) != content {
+					t.Fatalf("read %q, %v; want %q", buf, err, content)
+				}
+			})
+		}
+	}
+}
+
+// TestWriteFileToOpenFile writes to /proc/self/fd/N when the descriptor is a
+// regular file: through its path, atomically, or in place when the file was
+// deleted, whose link reads "PATH (deleted)".
+func TestWriteFileToOpenFile(t *testing.T) {
+	if _, err := os.Stat("/proc/self/fd"); err != nil {
+		t.Skip("no /proc/self/fd:", err)
+	}
+	ctx := context.Background()
+	write := func(content string) func(io.Writer) error {
+		return func(w io.Writer) error {
+			_, err := io.WriteString(w, content)
+			return err
+		}
+	}
+	dir := t.TempDir()
+
+	out := filepath.Join(dir, "out.tar")
+	f, err := os.Create(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := writeFile(ctx, fmt.Sprintf("/proc/self/fd/%d", f.Fd()), true, write("a")); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(out); string(b) != "a" {
+		t.Errorf("the file must be written through its path, got %q", b)
+	}
+
+	deleted, err := os.Create(filepath.Join(dir, "deleted.tar"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer deleted.Close()
+	if err := os.Remove(deleted.Name()); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFile(ctx, fmt.Sprintf("/proc/self/fd/%d", deleted.Fd()), true, write("b")); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := io.ReadAll(deleted); string(b) != "b" {
+		t.Errorf("the deleted file must be written, got %q", b)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 1 {
+		t.Errorf("want only out.tar, got %v", entries)
 	}
 }
 

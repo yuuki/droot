@@ -116,7 +116,7 @@ func doUnit(ctx context.Context, cmd *cli.Invocation) error {
 		return err
 	}
 	if output := cmd.String("output"); output != "" && output != "-" {
-		return writeFile(ctx, output, write)
+		return writeFile(ctx, output, false, write)
 	}
 	return write(cmd.App.Output())
 }
