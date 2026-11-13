@@ -1,0 +1,30 @@
+# Deploys the app run by droot at each Consul event deploy-app: consul watch
+# runs stretcher (https://github.com/fujiwara/stretcher), as root, with the
+# URL of the manifest that the event gives (generated from
+# examples/stretcher/deploy.yml). The app itself runs in
+# examples/systemd/app.service. See
+# documentation/deployment.md#deploying-with-stretcher.
+[Unit]
+Description=stretcher for app (Consul event deploy-app)
+Wants=network-online.target
+After=network-online.target consul.service
+
+[Service]
+Type=exec
+# stretcher extracts the archives here, on the file system of the releases:
+# sync_strategy: mv renames the extracted directory.
+Environment=TMPDIR=/var/containers/app/.tmp
+# CONSUL_HTTP_TOKEN, a token that may read the event (event "deploy-app"
+# { policy = "read" }): with ACLs, consul watch receives no event without
+# it. And the credentials of the storage, e.g. AWS_REGION and the AWS_*
+# keys (or an instance profile). Mode 0600.
+EnvironmentFile=/etc/stretcher/app.env
+# consul watch passes the recent events of its agent to stretcher whenever
+# it starts, and stretcher deploys the last one: the manifests deploy each
+# version once, so that a version deployed before fails and changes nothing.
+ExecStart=/usr/bin/consul watch -type event -name deploy-app /usr/local/bin/stretcher
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
