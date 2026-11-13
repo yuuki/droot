@@ -30,6 +30,16 @@ Releases up to 0.7.7 are described on the
 
 ### Fixed
 
+- `droot export -o /dev/stdout` (also `/dev/fd/N` and `/proc/self/fd/N`)
+  works when the descriptor is a pipe or a socket, as in
+  `droot export -o /dev/stdout IMAGE | gzip`. droot read the target of the
+  link `/proc/self/fd/1`, `pipe:[1234]`, as a path and failed with
+  "open /proc/self/fd/.droot-….tmp: no such file or directory". It now opens
+  such a link as is, and writes a socket through its own descriptor, which
+  open(2) cannot reopen. A deleted file open on the descriptor is written in
+  place instead of a new file named `PATH (deleted)`. `droot unit -o` writes
+  its settings the same way, also to a terminal, which only `droot export`
+  refuses.
 - `examples/dewy/droot-extract-release` creates the root directory of a
   release with mode 0755 whatever the umask: with a umask such as 077, it had
   mode 0700, and the users of the container other than root (`--user app`)
