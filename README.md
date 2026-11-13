@@ -138,10 +138,17 @@ setuid bits are preserved):
 ```console
 $ aws s3 cp s3://drootexamples/app.tar.gz . && aws s3 cp s3://drootexamples/app.tar.gz.sha256 .
 $ sha256sum -c app.tar.gz.sha256
-$ sudo mkdir -p /var/containers/app
+$ sudo install -d -m 700 /var/containers
+$ sudo mkdir /var/containers/app
 $ sudo tar -xpzf app.tar.gz -C /var/containers/app
 $ sudo droot run --cp --user appuser --group appgroup --bind /var/log/app --root /var/containers/app -- command
 ```
+
+Only root can access `/var/containers`: the setuid programs of the image,
+extracted with their owner, would otherwise let the users of the host run
+them as root (see [Security considerations](documentation/security.md)).
+`/var/containers/app` itself keeps the mode `mkdir` gives it, 0755, which the
+users of the container need.
 
 `droot run` leaves its mounts in place after the command exits (unless
 `--unshare` is given). Remove them before deleting or replacing the directory,
@@ -161,11 +168,16 @@ walkthrough, including systemd units.
 ### Integration with capze
 
 [capze](https://github.com/yuuki/capze) deploys archives in a Capistrano-like
-directory layout and keeps the last releases:
+directory layout and keeps the last releases. It moves the directory it is
+given into `releases/` as it is, so extract the archive into a new directory
+inside one that only root can access (`mktemp -d`), and keep the releases in
+`/var/containers`, as above:
 
 ```console
-$ sudo mkdir /tmp/app && sudo tar -xpzf app.tar.gz -C /tmp/app   # after verifying the checksum as above
-$ sudo capze --keep 5 /tmp/app /var/containers/app
+$ sudo mkdir -p /var/containers/app
+$ tmp=$(sudo mktemp -d)
+$ sudo mkdir "$tmp/app" && sudo tar -xpzf app.tar.gz -C "$tmp/app"   # after verifying the checksum as above
+$ sudo capze --keep 5 "$tmp/app" /var/containers/app && sudo rmdir "$tmp"
 ```
 
 ### Integration with dewy

@@ -80,7 +80,15 @@ $ aws s3 cp app-1.2.3.tar.gz.sha256 s3://example-releases/app/
 On each server, as root: download, verify, extract into a new directory, then
 switch the release atomically. [capze](https://github.com/yuuki/capze) keeps
 the releases in a Capistrano-like layout, with a `current` symlink to the
-active one, and removes the old ones (see its README for the details):
+active one, and removes the old ones (see its README for the details).
+Once, create the directory of the releases in one that only root can access:
+
+```console
+# install -d -m 700 /var/containers
+# mkdir /var/containers/app
+```
+
+Then, for each release:
 
 ```console
 # cd /tmp
@@ -88,15 +96,25 @@ active one, and removes the old ones (see its README for the details):
 # aws s3 cp s3://example-releases/app/app-1.2.3.tar.gz.sha256 .
 # sha256sum -c app-1.2.3.tar.gz.sha256
 app-1.2.3.tar.gz: OK
-# mkdir /tmp/app-1.2.3
-# tar -xpzf app-1.2.3.tar.gz -C /tmp/app-1.2.3
-# capze --keep 5 /tmp/app-1.2.3 /var/containers/app
+# tmp=$(mktemp -d)
+# mkdir "$tmp/app-1.2.3"
+# tar -xpzf app-1.2.3.tar.gz -C "$tmp/app-1.2.3"
+# capze --keep 5 "$tmp/app-1.2.3" /var/containers/app && rmdir "$tmp"
 # systemctl restart app
 ```
 
 Extract as root with `tar -p`, so that ownership, permissions and setuid bits
 are those of the image — and only extract archives you verified: they are
 extracted, and later run, as root.
+
+The setuid programs of the image (`su`, `passwd`, ...) are then setuid root
+on the host too: only root may reach them, or the users of the host could
+run them as root (see [Security considerations](security.md)). `mktemp -d`
+creates a directory that only root can access, and capze moves the
+directory extracted in it as it is into `/var/containers/app/releases/`,
+which only root can reach through `/var/containers`. The directory extracted
+into becomes the root directory of the container: it keeps the mode `mkdir`
+gives it, 0755, which the users of the container need.
 
 `droot run --root /var/containers/app/current` resolves the symlink: each run
 uses the release `current` pointed to when it started.
@@ -340,6 +358,7 @@ ExecStart=/usr/local/bin/dewy server \
 ```
 
 ```console
+# install -d -m 700 /var/containers           # only root may reach the setuid programs of the releases
 # mkdir -p /var/containers/app /etc/dewy
 # install -d -o 1500 -g 1500 /var/log/app      # owned by the image's user app (uid 1500 here)
 # install -m 600 /dev/null /etc/dewy/app.env   # then add GITHUB_TOKEN=..., or the AWS_* variables
@@ -404,4 +423,6 @@ Notes:
 - Run as a user other than root, dewy runs droot rootless, which passes the
   socket on as well. The hook, run by dewy, then extracts the files as that
   user, who is root in the user namespace of droot: run the application with
-  `--user 0`.
+  `--user 0`. Give that user a working directory of its own, outside
+  `/var/containers`: the files being its own, their setuid bits give no
+  more than its own privileges.
