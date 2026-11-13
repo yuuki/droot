@@ -52,16 +52,24 @@ running on the host with a different root directory.
   using setuid programs such as `sudo`), `MemoryMax=`, `CPUQuota=`.
 - Extract archives with `tar -xpf` as root only if you trust their origin;
   verify a checksum or signature of the archive before deploying it.
-- Extract them only inside a directory that root alone can enter: mode 0700,
-  owned by root (`install -d -m 700 /var/containers`, or `mktemp -d` for a
-  temporary extraction). `tar -xp` keeps the setuid bits of the image's
-  programs (`su`, `passwd`, `mount`, ...). Below a directory that every user
-  can traverse, any user of the host could run them as root, outside the
-  container, where none of the limits of `droot run` (`no_new_privs`, the
-  bounding set) apply. An old image can also hold a setuid program with a
-  known vulnerability, which the updates of the host do not fix. droot runs
-  as root and needs no access for other users. The root directory itself,
-  `/` in the container, needs mode 0755.
+- Extract each archive into a new directory with mode 0755, which becomes
+  `/` in the container, inside a directory that root alone can enter: mode
+  0700, owned by root (`install -d -m 700 /var/containers`, or `mktemp -d`
+  for a temporary extraction). `tar -xp` keeps the setuid and setgid bits of
+  the image's programs (`su`, `passwd`, `mount`, ...). Below a directory that
+  every user can traverse, any user of the host could run them outside the
+  container, as root or with a group such as `shadow`, where none of the
+  limits of `droot run` (`no_new_privs`, the bounding set) apply. An old
+  image can also hold a setuid program with a known vulnerability, which the
+  updates of the host do not fix. droot runs as root and needs no access for
+  other users.
+- Without `--unshare`, that directory does not protect the root directory
+  from the users of the host with the UID of a process of the container:
+  they can reach it through `/proc/PID/root` of the process while it runs,
+  and run its setuid programs as root. With `--unshare`, the kernel ignores
+  the setuid and setgid bits there, since the files are on mounts of another
+  mount namespace. Use `--unshare`, or run the application under a UID that
+  no user of the host has.
 
 ## Rootless mode
 

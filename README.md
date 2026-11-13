@@ -139,18 +139,21 @@ setuid bits are preserved):
 $ aws s3 cp s3://drootexamples/app.tar.gz . && aws s3 cp s3://drootexamples/app.tar.gz.sha256 .
 $ sha256sum -c app.tar.gz.sha256
 $ sudo install -d -m 700 /var/containers
-$ sudo install -d -m 755 /var/containers/app
-$ sudo tar -xpzf app.tar.gz -C /var/containers/app
-$ sudo droot run --cp --user appuser --group appgroup --bind /var/log/app --root /var/containers/app -- command
+$ sudo install -d -m 755 /var/containers/demo
+$ sudo tar -xpzf app.tar.gz -C /var/containers/demo
+$ sudo droot run --cp --user appuser --group appgroup --bind /var/log/app --root /var/containers/demo -- command
 ```
 
 Only root may enter `/var/containers` (mode 0700): the extracted files
-include the setuid-root programs of the image (`su`, `passwd`, `mount`, ...),
-which any user of the host could otherwise run as root, outside the
-container. droot runs as root and needs no access for other users. The
-archive has no entry for `/`: the directory it is extracted into becomes `/`
-in the container with its own mode, which must be 0755 so that the users of
-the container can reach their files.
+include the setuid and setgid programs of the image (`su`, `passwd`,
+`mount`, ...), which any user of the host could otherwise run, outside the
+container, as root or with a group such as `shadow`. droot runs as root and
+needs no access for other users. The archive has no entry for `/`: the
+directory it is extracted into becomes `/` in the container with its own
+mode, which must be 0755 so that the users of the container can reach their
+files. Without `--unshare`, a user of the host with the UID of `command` can
+still reach these programs while it runs: see
+[Security considerations](documentation/security.md).
 
 `droot run` leaves its mounts in place after the command exits (unless
 `--unshare` is given). Remove them before deleting or replacing the directory,
@@ -158,7 +161,7 @@ for instance to deploy a new version — deleting it with mounts below would
 delete files of the host through the bind mounts:
 
 ```console
-$ sudo droot umount --root /var/containers/app
+$ sudo droot umount --root /var/containers/demo
 ```
 
 To deploy new versions, extract each one into a new directory and switch
@@ -170,12 +173,14 @@ walkthrough, including systemd units.
 ### Integration with capze
 
 [capze](https://github.com/yuuki/capze) deploys archives in a Capistrano-like
-directory layout and keeps the last releases. It moves the directory it is
-given into `releases/`, where it becomes `/` of the container: extract each
-archive into a new directory with mode 0755, inside a temporary directory
-that only root can enter:
+directory layout and keeps the last releases, here in `/var/containers/app`,
+which only root may enter, as above. capze moves the directory it is given
+into `releases/`, where it becomes `/` of the container: extract each archive
+into a new directory with mode 0755, inside a temporary directory that only
+root can enter:
 
 ```console
+$ sudo install -d -m 700 /var/containers/app
 $ tmp=$(sudo mktemp -d)   # a new directory, mode 0700, owned by root
 $ sudo install -d -m 755 "$tmp/app"
 $ sudo tar -xpzf app.tar.gz -C "$tmp/app"   # after verifying the checksum as above
@@ -202,7 +207,8 @@ $ gh release create v1.2.3 app_linux_amd64.tar.gz app_linux_amd64.tar.gz.sha256
 
 and on the servers, as root, with the hook installed as
 `/usr/local/bin/droot-extract-release` and `GITHUB_TOKEN` set, in
-`/var/containers/app`:
+`/var/containers/app`, created with `install -d -m 700` (only root may enter
+it, as above):
 
 ```console
 # dewy server --registry ghr://example/app --port 8080 --health-path /health \
@@ -482,8 +488,8 @@ user namespace with the ID mapping of [rootless](#running-without-root) `droot
 run`, so that archives keep the owners of their files:
 
 ```console
-$ droot unshare tar -xpf app.tar -C app
-$ droot unshare rm -rf app      # files owned by subordinate IDs
+$ droot unshare tar -xpf app.tar -C ~/containers/app
+$ droot unshare rm -rf ~/containers/app      # files owned by subordinate IDs
 ```
 
 ### Global options

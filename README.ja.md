@@ -122,17 +122,17 @@ $ aws s3 cp app.tar.gz.sha256 s3://drootexamples/app.tar.gz.sha256
 $ aws s3 cp s3://drootexamples/app.tar.gz . && aws s3 cp s3://drootexamples/app.tar.gz.sha256 .
 $ sha256sum -c app.tar.gz.sha256
 $ sudo install -d -m 700 /var/containers
-$ sudo install -d -m 755 /var/containers/app
-$ sudo tar -xpzf app.tar.gz -C /var/containers/app
-$ sudo droot run --cp --user appuser --group appgroup --bind /var/log/app --root /var/containers/app -- command
+$ sudo install -d -m 755 /var/containers/demo
+$ sudo tar -xpzf app.tar.gz -C /var/containers/demo
+$ sudo droot run --cp --user appuser --group appgroup --bind /var/log/app --root /var/containers/demo -- command
 ```
 
-`/var/containers`（モード 0700）には root しか入れないようにします。展開したファイルにはイメージの setuid root プログラム（`su`、`passwd`、`mount` など）が含まれており、そうしないとホストのどのユーザーでも、コンテナの外でそれらを root として実行できてしまいます。droot は root で動作するので、ほかのユーザーのアクセス権は必要ありません。アーカイブには `/` のエントリがないため、展開先のディレクトリが、指定したモードのままコンテナの `/` になります。コンテナのユーザーが自分のファイルにたどり着けるよう、モードは 0755 にしてください。
+`/var/containers`（モード 0700）には root しか入れないようにします。展開したファイルにはイメージの setuid プログラムと setgid プログラム（`su`、`passwd`、`mount` など）が含まれており、そうしないとホストのどのユーザーでも、コンテナの外でそれらを root の権限や `shadow` などのグループの権限で実行できてしまいます。droot は root で動作するので、ほかのユーザーのアクセス権は必要ありません。アーカイブには `/` のエントリがないため、展開先のディレクトリが、指定したモードのままコンテナの `/` になります。コンテナのユーザーが自分のファイルにたどり着けるよう、モードは 0755 にしてください。`--unshare` を指定しない場合、`command` と同じ UID を持つホストのユーザーは、`command` の実行中にこれらのプログラムにたどり着けます。[セキュリティに関する考慮事項](documentation/security.md)（英語）を参照してください。
 
 `droot run` は、コマンドの終了後もマウントをそのまま残します（`--unshare` を指定した場合を除く）。新しいバージョンをデプロイする場合など、ディレクトリを削除または置き換える前に、マウントを解除してください。マウントが残ったまま削除すると、バインドマウントを通じてホストのファイルまで削除されてしまいます。
 
 ```console
-$ sudo droot umount --root /var/containers/app
+$ sudo droot umount --root /var/containers/demo
 ```
 
 新しいバージョンは、それぞれ新しいディレクトリに展開し、それらを切り替えてデプロイします（例えば後述の capze を使います）。
@@ -142,9 +142,10 @@ systemd ユニットを含む一通りの手順については、[アプリケ�
 <a id="integration-with-capze"></a>
 ### capze との連携
 
-[capze](https://github.com/yuuki/capze) は、Capistrano 風のディレクトリ構成でアーカイブをデプロイし、直近のリリースを保持します。capze は渡されたディレクトリをそのまま `releases/` に移動し、そのディレクトリがコンテナの `/` になります。そのため、各アーカイブは、root しか入れない一時ディレクトリの中にモード 0755 の新しいディレクトリを作り、そこに展開します。
+[capze](https://github.com/yuuki/capze) は、Capistrano 風のディレクトリ構成でアーカイブをデプロイし、直近のリリースを保持します。ここでは、上と同じく root しか入れない `/var/containers/app` に保持します。capze は渡されたディレクトリをそのまま `releases/` に移動し、そのディレクトリがコンテナの `/` になります。そのため、各アーカイブは、root しか入れない一時ディレクトリの中にモード 0755 の新しいディレクトリを作り、そこに展開します。
 
 ```console
+$ sudo install -d -m 700 /var/containers/app
 $ tmp=$(sudo mktemp -d)   # モード 0700、所有者 root の新しいディレクトリ
 $ sudo install -d -m 755 "$tmp/app"
 $ sudo tar -xpzf app.tar.gz -C "$tmp/app"   # 上記のようにチェックサムを確認した後で
@@ -164,7 +165,7 @@ $ sha256sum app_linux_amd64.tar.gz > app_linux_amd64.tar.gz.sha256
 $ gh release create v1.2.3 app_linux_amd64.tar.gz app_linux_amd64.tar.gz.sha256
 ```
 
-サーバーでは、フックを `/usr/local/bin/droot-extract-release` に置き、`GITHUB_TOKEN` を設定したうえで、root で `/var/containers/app` から次のように実行します。
+サーバーでは、フックを `/usr/local/bin/droot-extract-release` に置き、`GITHUB_TOKEN` を設定したうえで、root で `/var/containers/app` から次のように実行します。このディレクトリは `install -d -m 700` で作ります（上と同じく、root しか入れないようにします）。
 
 ```console
 # dewy server --registry ghr://example/app --port 8080 --health-path /health \
@@ -358,8 +359,8 @@ droot unshare [COMMAND [ARG...]]
 root 以外のユーザー向けのコマンドです。[rootless](#root-を使わない実行) の `droot run` と同じ ID マッピングのユーザー名前空間で、`COMMAND`（デフォルトは `$SHELL`）を root として実行します。これにより、アーカイブのファイルの所有者がそのまま保たれます。
 
 ```console
-$ droot unshare tar -xpf app.tar -C app
-$ droot unshare rm -rf app      # サブ ID が所有するファイル
+$ droot unshare tar -xpf app.tar -C ~/containers/app
+$ droot unshare rm -rf ~/containers/app      # サブ ID が所有するファイル
 ```
 
 <a id="global-options"></a>

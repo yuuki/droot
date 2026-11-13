@@ -17,16 +17,26 @@ Releases up to 0.7.7 are described on the
 ### Security
 
 - The deployment examples extracted the images into directories that every
-  user of the host can traverse, where any of them could run the setuid-root
-  programs of an image (`su`, `passwd`, `mount`, ...) as root, outside the
-  container. The READMEs and `documentation/deployment.md` now extract them
-  inside a directory that only root can enter (`install -d -m 700`, or
-  `mktemp -d` for a temporary extraction), and
-  `documentation/security.md` explains why. On servers set up that way,
-  restrict the directory that holds the root directories, e.g.
-  `chmod 700 /var/containers/app` with capze or dewy, or
-  `chmod 700 /var/containers` after the quick start: never a root directory
-  itself, which is `/` in the container and needs mode 0755.
+  user of the host can traverse, where any of them could run the setuid and
+  setgid programs of an image (`su`, `passwd`, `mount`, ...) outside the
+  container, as root or with a group such as `shadow`. The READMEs,
+  `documentation/deployment.md` and the help of `droot unshare` now extract
+  each archive into a new directory with mode 0755, which becomes `/` in the
+  container, inside a directory that only root can enter (`install -d -m
+  700`, or `mktemp -d` for a temporary extraction). The root directory of
+  the quick start moved to `/var/containers/demo`, so that
+  `/var/containers/app` is only the directory of the releases of capze and
+  dewy. `documentation/security.md` explains why, and that without
+  `--unshare`, the users of the host with the UID of the application can
+  still reach the root directory through `/proc/PID/root`.
+- On servers set up with the earlier examples, restrict the directory that
+  holds the root directories: `chmod 700 /var/containers`, owned by root (or
+  `/var/containers/app`, owned by its user, for a rootless dewy). Never
+  restrict a root directory itself: it is `/` in the container and needs
+  mode 0755. Delete the extraction directories that failed deployments left
+  in `/tmp` (`/tmp/app`, `/tmp/app-X.Y.Z`), once
+  `droot status --root DIR` shows no mounts below them. Rootless, keep your
+  root directories in a directory with mode 0700 of your own.
 
 ## [0.8.0] - 2026-11-11
 

@@ -84,7 +84,7 @@ active one, and removes the old ones (see its README for the details):
 
 ```console
 # install -d -m 700 /var/containers/app
-# cd "$(mktemp -d)"
+# tmp=$(mktemp -d) && cd "$tmp"
 # aws s3 cp s3://example-releases/app/app-1.2.3.tar.gz .
 # aws s3 cp s3://example-releases/app/app-1.2.3.tar.gz.sha256 .
 # sha256sum -c app-1.2.3.tar.gz.sha256
@@ -92,6 +92,7 @@ app-1.2.3.tar.gz: OK
 # install -d -m 755 app-1.2.3
 # tar -xpzf app-1.2.3.tar.gz -C app-1.2.3
 # capze --keep 5 app-1.2.3 /var/containers/app
+# cd / && rm -r "$tmp"
 # systemctl restart app
 ```
 
@@ -100,10 +101,10 @@ are those of the image — and only extract archives you verified: they are
 extracted, and later run, as root.
 
 Only root may enter `/var/containers/app` and the temporary directory of
-`mktemp -d`, both with mode 0700: the releases contain the setuid programs of
-the image (`su`, `passwd`, `mount`, ...), which the users of the host could
-otherwise run as root, outside the container. droot runs as root and needs
-no access for other users. (`mktemp -d` makes a new directory: another user
+`mktemp -d`, both with mode 0700: the releases contain the setuid and setgid
+programs of the image (`su`, `passwd`, `mount`, ...), which the users of the
+host could otherwise run, outside the container, as root or with a group
+such as `shadow`. droot runs as root and needs no access for other users. (`mktemp -d` makes a new directory: another user
 could have created a fixed name in `/tmp` first.) The release itself,
 `app-1.2.3`, has mode 0755: the archive has no entry for `/`, so this
 directory, which capze moves into `releases/`, is `/` in the container, and
@@ -187,7 +188,10 @@ Options given on the command line take precedence over the file, e.g.
 If you do not want a private mount namespace, use
 [`examples/systemd/app-host-mounts.service`](../examples/systemd/app-host-mounts.service)
 instead: it removes the mounts with `droot umount` in `ExecStopPost=`, and in
-`ExecStartPre=` in case a crash left some behind.
+`ExecStartPre=` in case a crash left some behind. Without the private mount
+namespace, a user of the host with the UID of the application can reach the
+release through `/proc/PID/root` of the application, and run its setuid
+programs as root (see [Security considerations](security.md)).
 
 ```console
 # mkdir -p /etc/droot && cp app.toml /etc/droot/
@@ -422,4 +426,5 @@ Notes:
   `--user 0`. `/var/containers/app` must then belong to that user, still with
   mode 0700 (`install -d -m 700 -o USER -g GROUP /var/containers/app`): the
   setuid programs of the image become setuid programs of that user, which
-  the other users of the host could otherwise run.
+  the other users of the host could otherwise run. That user must be able to
+  reach it: not below a `/var/containers` restricted to root.

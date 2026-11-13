@@ -11,7 +11,9 @@ After=network-online.target
 
 [Service]
 Type=exec
-# dewy keeps current, releases/ and its cache here.
+# dewy keeps current, releases/ and its cache here. Create it with
+# install -d -m 700: the releases hold the setuid programs of the image,
+# which only root may reach.
 WorkingDirectory=/var/containers/app
 # The credentials of the registry: GITHUB_TOKEN, AWS_ACCESS_KEY_ID, ...
 EnvironmentFile=/etc/dewy/app.env
