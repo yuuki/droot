@@ -70,57 +70,63 @@ func runCommand() *cli.Command {
 			"   command = [\"/app/bin/server\", \"--port=8080\"]",
 		StopAtFirstArg: true, // everything from COMMAND on belongs to COMMAND
 		ArgsComplete:   "command",
-		Flags: []*cli.Flag{
-			{Name: "config", Kind: cli.String, Placeholder: "FILE", Complete: "file",
-				Usage: "read options from FILE: the long names of the options of droot run as keys, and command, in a subset of TOML (see droot(1)); the command line takes precedence"},
-			{Name: "root", Aliases: []string{"r"}, Kind: cli.String, Placeholder: "ROOT_DIR", Complete: "dir",
-				Usage: "root directory to chroot into (required)"},
-			{Name: "user", Aliases: []string{"u"}, Kind: cli.String, Placeholder: "USER", Complete: "user",
-				Usage: "user (name or ID) to run COMMAND as (default: the image's USER, or droot's own user); names are looked up in ROOT_DIR/etc/passwd, then on the host"},
-			{Name: "group", Aliases: []string{"g"}, Kind: cli.String, Placeholder: "GROUP", Complete: "group",
-				Usage: "group (name or ID) to run COMMAND as (default: the primary group of --user)"},
-			{Name: "workdir", Aliases: []string{"w"}, Kind: cli.String, Placeholder: "DIR",
-				Usage: "working directory of COMMAND inside the container (default: the image's WORKDIR, or /)"},
-			{Name: "bind", Aliases: []string{"b"}, Kind: cli.Strings, Placeholder: "SRC[:DEST][:OPTS]", Complete: "file",
-				Usage: "bind mount SRC from the host on DEST (default: SRC) in the container; OPTS is a comma-separated list of ro, rw and rbind (recursive)"},
-			{Name: "robind", Kind: cli.Strings, Placeholder: "SRC[:DEST][:OPTS]", Complete: "file",
-				Usage: "read-only bind mount (same as --bind SRC:DEST:ro)"},
-			{Name: "tmpfs", Kind: cli.Strings, Placeholder: "PATH[:OPTS]",
-				Usage: "mount a tmpfs on PATH in the container; OPTS are mount flags (ro, exec, ...: nosuid,nodev,noexec by default) and tmpfs options (size=64m, mode=1777, ...)"},
-			{Name: "copy-files", Aliases: []string{"cp"}, Kind: cli.Bool,
-				Usage: "copy the host's " + strings.Join(hostFiles, ", ") + " into the container"},
-			{Name: "bind-net-files", Kind: cli.Bool,
-				Usage: "read-only bind mount the host's " + strings.Join(netFiles, " and ") + " into the container, so that COMMAND sees later changes made to them in place (unlike --cp)"},
-			{Name: "no-dropcaps", Kind: cli.Bool,
-				Usage: "do not drop capabilities (dangerous)"},
-			{Name: "cap-add", Kind: cli.Strings, Placeholder: "CAP",
-				Usage: "also keep the capability CAP (e.g. NET_RAW, SYS_PTRACE, or ALL) in the bounding set"},
-			{Name: "cap-drop", Kind: cli.Strings, Placeholder: "CAP",
-				Usage: "drop the capability CAP (e.g. CHOWN, or ALL) from the ones kept by default"},
-			{Name: "ulimit", Kind: cli.Strings, Placeholder: "NAME=SOFT[:HARD]",
-				Usage: "set a resource limit of COMMAND, e.g. nofile=65536 or core=0:unlimited (names of ulimit, as in docker run)"},
-			{Name: "unshare", Kind: cli.Bool,
-				Usage: "make the mounts in a private mount namespace: they disappear when COMMAND and its children exit, and need no 'droot umount' (always the case rootless)"},
-			{Name: "unshare-ipc", Kind: cli.Bool,
-				Usage: "run COMMAND in a private IPC namespace (System V IPC, POSIX message queues)"},
-			{Name: "hostname", Kind: cli.String, Placeholder: "NAME",
-				Usage: "run COMMAND in a private UTS namespace with the host name NAME"},
-			{Name: "read-only", Kind: cli.Bool,
-				Usage: "make the root directory read-only for COMMAND (implies --unshare); use --tmpfs or --bind for the paths it writes"},
-			{Name: "no-mask", Kind: cli.Bool,
-				Usage: "do not mask the sensitive files of /proc and /sys nor make /proc/sys, /sys and the like read-only (dangerous)"},
-			{Name: "no-systemd", Kind: cli.Bool,
-				Usage: "do not pass systemd's notification socket, socket activation and watchdog variables (NOTIFY_SOCKET, LISTEN_*, WATCHDOG_*) on to COMMAND, nor bind the notification socket in the container; inherited descriptors are kept"},
-			{Name: "no-new-privileges", Kind: cli.Bool,
-				Usage: "set no_new_privs: setuid programs and file capabilities cannot grant privileges to COMMAND (default: true; --no-new-privileges=false lets programs such as sudo or su work)"},
-			{Name: "seccomp", Kind: cli.String, Placeholder: "PROFILE",
-				Usage: "seccomp profile: default (deny the system calls Docker's default profile denies, such as unshare, mount, keyctl, bpf; amd64, arm64, arm and 386) or unconfined (the default)"},
-			{Name: "env", Aliases: []string{"e"}, Kind: cli.Strings, Placeholder: "KEY[=VALUE]",
-				Usage: "set an environment variable, overriding /.drootenv and --env-file; a bare KEY takes its value from droot's own environment"},
-			{Name: "env-file", Kind: cli.Strings, Placeholder: "FILE", Complete: "file",
-				Usage: "read KEY=VALUE lines from the host's FILE, overriding /.drootenv; a bare KEY takes its value from droot's own environment"},
-		},
-		Action: doRun,
+		Flags:          runFlags(),
+		Action:         doRun,
+	}
+}
+
+// runFlags returns the options of droot run, which droot unit accepts too:
+// their long names are the keys of the --config files of both.
+func runFlags() []*cli.Flag {
+	return []*cli.Flag{
+		{Name: "config", Kind: cli.String, Placeholder: "FILE", Complete: "file",
+			Usage: "read options from FILE: the long names of the options of droot run as keys, and command, in a subset of TOML (see droot(1)); the command line takes precedence"},
+		{Name: "root", Aliases: []string{"r"}, Kind: cli.String, Placeholder: "ROOT_DIR", Complete: "dir",
+			Usage: "root directory to chroot into (required)"},
+		{Name: "user", Aliases: []string{"u"}, Kind: cli.String, Placeholder: "USER", Complete: "user",
+			Usage: "user (name or ID) to run COMMAND as (default: the image's USER, or droot's own user); names are looked up in ROOT_DIR/etc/passwd, then on the host"},
+		{Name: "group", Aliases: []string{"g"}, Kind: cli.String, Placeholder: "GROUP", Complete: "group",
+			Usage: "group (name or ID) to run COMMAND as (default: the primary group of --user)"},
+		{Name: "workdir", Aliases: []string{"w"}, Kind: cli.String, Placeholder: "DIR",
+			Usage: "working directory of COMMAND inside the container (default: the image's WORKDIR, or /)"},
+		{Name: "bind", Aliases: []string{"b"}, Kind: cli.Strings, Placeholder: "SRC[:DEST][:OPTS]", Complete: "file",
+			Usage: "bind mount SRC from the host on DEST (default: SRC) in the container; OPTS is a comma-separated list of ro, rw and rbind (recursive)"},
+		{Name: "robind", Kind: cli.Strings, Placeholder: "SRC[:DEST][:OPTS]", Complete: "file",
+			Usage: "read-only bind mount (same as --bind SRC:DEST:ro)"},
+		{Name: "tmpfs", Kind: cli.Strings, Placeholder: "PATH[:OPTS]",
+			Usage: "mount a tmpfs on PATH in the container; OPTS are mount flags (ro, exec, ...: nosuid,nodev,noexec by default) and tmpfs options (size=64m, mode=1777, ...)"},
+		{Name: "copy-files", Aliases: []string{"cp"}, Kind: cli.Bool,
+			Usage: "copy the host's " + strings.Join(hostFiles, ", ") + " into the container"},
+		{Name: "bind-net-files", Kind: cli.Bool,
+			Usage: "read-only bind mount the host's " + strings.Join(netFiles, " and ") + " into the container, so that COMMAND sees later changes made to them in place (unlike --cp)"},
+		{Name: "no-dropcaps", Kind: cli.Bool,
+			Usage: "do not drop capabilities (dangerous)"},
+		{Name: "cap-add", Kind: cli.Strings, Placeholder: "CAP",
+			Usage: "also keep the capability CAP (e.g. NET_RAW, SYS_PTRACE, or ALL) in the bounding set"},
+		{Name: "cap-drop", Kind: cli.Strings, Placeholder: "CAP",
+			Usage: "drop the capability CAP (e.g. CHOWN, or ALL) from the ones kept by default"},
+		{Name: "ulimit", Kind: cli.Strings, Placeholder: "NAME=SOFT[:HARD]",
+			Usage: "set a resource limit of COMMAND, e.g. nofile=65536 or core=0:unlimited (names of ulimit, as in docker run)"},
+		{Name: "unshare", Kind: cli.Bool,
+			Usage: "make the mounts in a private mount namespace: they disappear when COMMAND and its children exit, and need no 'droot umount' (always the case rootless)"},
+		{Name: "unshare-ipc", Kind: cli.Bool,
+			Usage: "run COMMAND in a private IPC namespace (System V IPC, POSIX message queues)"},
+		{Name: "hostname", Kind: cli.String, Placeholder: "NAME",
+			Usage: "run COMMAND in a private UTS namespace with the host name NAME"},
+		{Name: "read-only", Kind: cli.Bool,
+			Usage: "make the root directory read-only for COMMAND (implies --unshare); use --tmpfs or --bind for the paths it writes"},
+		{Name: "no-mask", Kind: cli.Bool,
+			Usage: "do not mask the sensitive files of /proc and /sys nor make /proc/sys, /sys and the like read-only (dangerous)"},
+		{Name: "no-systemd", Kind: cli.Bool,
+			Usage: "do not pass systemd's notification socket, socket activation and watchdog variables (NOTIFY_SOCKET, LISTEN_*, WATCHDOG_*) on to COMMAND, nor bind the notification socket in the container; inherited descriptors are kept"},
+		{Name: "no-new-privileges", Kind: cli.Bool,
+			Usage: "set no_new_privs: setuid programs and file capabilities cannot grant privileges to COMMAND (default: true; --no-new-privileges=false lets programs such as sudo or su work)"},
+		{Name: "seccomp", Kind: cli.String, Placeholder: "PROFILE",
+			Usage: "seccomp profile: default (deny the system calls Docker's default profile denies, such as unshare, mount, keyctl, bpf; amd64, arm64, arm and 386) or unconfined (the default)"},
+		{Name: "env", Aliases: []string{"e"}, Kind: cli.Strings, Placeholder: "KEY[=VALUE]",
+			Usage: "set an environment variable, overriding /.drootenv and --env-file; a bare KEY takes its value from droot's own environment"},
+		{Name: "env-file", Kind: cli.Strings, Placeholder: "FILE", Complete: "file",
+			Usage: "read KEY=VALUE lines from the host's FILE, overriding /.drootenv; a bare KEY takes its value from droot's own environment"},
 	}
 }
 
@@ -290,17 +296,27 @@ func doRun(ctx context.Context, cmd *cli.Invocation) error {
 	if r.cfg, err = imageconfig.Read(root); err != nil {
 		return err
 	}
-	argv := r.cfg.Command(opts.args)
-	if len(argv) == 0 || argv[0] == "" {
-		if r.cfg != nil {
-			return cmd.UsageError("a command to run is required: the image defines neither ENTRYPOINT nor CMD")
-		}
-		return cmd.UsageError("a command to run is required")
+	argv, err := commandToRun(cmd, r.cfg, opts.args)
+	if err != nil {
+		return err
 	}
 	if rootless {
 		return runRootless(ctx, !cmd.Bool("no-systemd"))
 	}
 	return r.run(ctx, argv)
+}
+
+// commandToRun returns the command to run: args, COMMAND as given, or else
+// the ENTRYPOINT and CMD of the image configuration cfg (nil without one).
+func commandToRun(cmd *cli.Invocation, cfg *imageconfig.Config, args []string) ([]string, error) {
+	argv := cfg.Command(args)
+	if len(argv) == 0 || argv[0] == "" {
+		if cfg != nil {
+			return nil, cmd.UsageError("a command to run is required: the image defines neither ENTRYPOINT nor CMD")
+		}
+		return nil, cmd.UsageError("a command to run is required")
+	}
+	return argv, nil
 }
 
 // runOptions are the options of droot run that are parsed before the setup.
@@ -872,6 +888,14 @@ func applyConfigFile(cmd *cli.Invocation, path string) ([]string, error) {
 	}
 	if _, ok := values["config"]; ok {
 		return nil, fmt.Errorf("%s: a configuration file cannot include another one", path)
+	}
+	// The file holds the options of droot run, whichever command reads it:
+	// the options of droot unit alone are not accepted there.
+	for key := range values {
+		isFlag := func(f *cli.Flag) bool { return f.Name == key }
+		if !slices.ContainsFunc(runFlags(), isFlag) && slices.ContainsFunc(cmd.Command.Flags, isFlag) {
+			return nil, fmt.Errorf("%s: %s is not an option of droot run, whose options the file holds", path, key)
+		}
 	}
 	if err := cmd.ApplyConfig(values); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)

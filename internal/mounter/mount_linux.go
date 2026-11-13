@@ -309,17 +309,6 @@ func (m *Mounter) MountSysProc() error {
 	return s.Close()
 }
 
-// maskedPaths are hidden from the container, like Docker does: files are
-// covered with a read-only bind mount of /dev/null, directories with an
-// empty read-only tmpfs. Paths missing on this kernel are skipped.
-var maskedPaths = []string{
-	"/proc/acpi", "/proc/asound", "/proc/interrupts", "/proc/kcore", "/proc/keys",
-	"/proc/latency_stats", "/proc/sched_debug", "/proc/scsi", "/proc/timer_list",
-	"/proc/timer_stats", "/sys/devices/virtual/powercap", "/sys/firmware",
-	// Mounted below the host's /sys, unlike in Docker's fresh sysfs.
-	"/sys/kernel/debug", "/sys/kernel/security", "/sys/kernel/tracing",
-}
-
 // readonlyPaths of /proc are made read-only, like Docker does. /sys is
 // read-only as a whole.
 var readonlyPaths = []string{"/proc/bus", "/proc/fs", "/proc/irq", "/proc/sys", "/proc/sysrq-trigger"}
@@ -359,7 +348,7 @@ func (m *Mounter) ProtectKernelFS() error {
 		}
 		return sys, strings.TrimPrefix(p, "/sys/")
 	}
-	for _, p := range maskedPaths {
+	for _, p := range MaskedPaths {
 		b, rel := base(p)
 		if err := m.maskPath(b, rel, p); err != nil {
 			return fmt.Errorf("mask %s: %w", p, err)

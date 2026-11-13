@@ -67,22 +67,7 @@ func LookPath(file, pathEnv string, isExecutable func(string) error) (string, er
 // capabilities and mount options are not considered). It lets a privileged
 // caller check what will happen once it has switched to that user.
 func CanExecute(path string, uid, gid int, groups []int) error {
-	allowed := func(fi fs.FileInfo, bit fs.FileMode) bool {
-		mode := fi.Mode().Perm()
-		if uid == 0 {
-			return mode&0o111 != 0 || fi.IsDir()
-		}
-		owner, group, _, ok := FileOwner(fi)
-		switch {
-		case !ok:
-			return true // unknown: let execve(2) decide
-		case owner == uid:
-			return mode&(bit<<6) != 0
-		case group == gid || slices.Contains(groups, group):
-			return mode&(bit<<3) != 0
-		}
-		return mode&bit != 0
-	}
+	allowed := func(fi fs.FileInfo, bit fs.FileMode) bool { return permits(fi, bit, uid, gid, groups) }
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return err
@@ -103,11 +88,38 @@ func CanExecute(path string, uid, gid int, groups []int) error {
 	if err != nil {
 		return err
 	}
+	return CanExecuteFile(path, fi, uid, gid, groups)
+}
+
+// CanExecuteFile is CanExecute for the file at path whose information is
+// fi, judging from its permission bits only.
+func CanExecuteFile(path string, fi fs.FileInfo, uid, gid int, groups []int) error {
 	if fi.IsDir() || !fi.Mode().IsRegular() {
 		return &fs.PathError{Op: "exec", Path: path, Err: errors.New("not a regular file")}
 	}
-	if !allowed(fi, 0o1) {
+	if !permits(fi, 0o1, uid, gid, groups) {
 		return &fs.PathError{Op: "exec", Path: path, Err: fmt.Errorf("permission denied for uid %d", uid)}
 	}
 	return nil
+}
+
+// permits reports whether the permission bit (0o1 execute or search, 0o2
+// write, 0o4 read) of the file fi is granted to the user uid, with the
+// primary group gid and the supplementary groups. Root needs an execute
+// bit to execute a file, like execve(2).
+func permits(fi fs.FileInfo, bit fs.FileMode, uid, gid int, groups []int) bool {
+	mode := fi.Mode().Perm()
+	if uid == 0 {
+		return mode&0o111 != 0 || fi.IsDir()
+	}
+	owner, group, _, ok := FileOwner(fi)
+	switch {
+	case !ok:
+		return true // unknown: let execve(2) decide
+	case owner == uid:
+		return mode&(bit<<6) != 0
+	case group == gid || slices.Contains(groups, group):
+		return mode&(bit<<3) != 0
+	}
+	return mode&bit != 0
 }

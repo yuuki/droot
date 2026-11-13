@@ -7,6 +7,16 @@ Releases up to 0.7.7 are described on the
 
 ## [Unreleased]
 
+### Added
+
+- `droot unit` prints the settings of a systemd service that runs an
+  extracted image with systemd alone (`RootDirectory=`), as `droot run` with
+  the same options, or the same `--config` file, would: the image's
+  `ENTRYPOINT`, `CMD`, `USER`, `WORKDIR`, `ENV` and `STOPSIGNAL`
+  (`KillSignal=`), the mounts, the capabilities, `no_new_privs` and the
+  seccomp filter. Every value is checked and quoted so that the image cannot
+  add a setting to the unit (#66).
+
 ## [0.8.0] - 2026-11-11
 
 Maintenance release after several years: modern Go and Docker, far fewer

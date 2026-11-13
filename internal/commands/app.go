@@ -19,7 +19,8 @@ func NewApp(version string) *cli.App {
 			"runs a command inside an extracted archive with chroot(2) (run), as root or\n" +
 			"rootless in a user namespace, cleans up the mounts made by run (umount) and\n" +
 			"shows them (status), and runs commands in the user namespace of rootless runs\n" +
-			"(unshare).",
+			"(unshare). It also prints the settings of a systemd service that runs an\n" +
+			"extracted archive like run, with systemd alone (unit).",
 		Flags: []*cli.Flag{
 			{
 				Name:    "debug",
@@ -46,6 +47,7 @@ func NewApp(version string) *cli.App {
 		Commands: []*cli.Command{
 			exportCommand(),
 			runCommand(),
+			unitCommand(),
 			umountCommand(),
 			statusCommand(),
 			unshareCommand(),

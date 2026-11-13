@@ -75,7 +75,14 @@ type Group struct {
 // a name other than "root" maps to uid 0. Numeric IDs do not depend on the
 // image.
 func Resolve(root *osutil.Root, userSpec, groupSpec string) (*Credential, error) {
-	cred := &Credential{UID: os.Getuid(), GID: os.Getgid()}
+	return ResolveAs(root, userSpec, groupSpec, os.Getuid(), os.Getgid())
+}
+
+// ResolveAs is Resolve for a process that runs as uid and gid instead of
+// droot's own user: they are the credential without user and group, and gid
+// is the group of a numeric uid that is unknown everywhere.
+func ResolveAs(root *osutil.Root, userSpec, groupSpec string, uid, gid int) (*Credential, error) {
+	cred := &Credential{UID: uid, GID: gid}
 	if userSpec == "" && groupSpec == "" {
 		// Keep the identity, but find its name and home directory in
 		// the container, for HOME and USER. This is best effort: the
@@ -207,6 +214,28 @@ func lookupHostUser(spec string) (User, bool) {
 	}
 	log.Debugf("user %s found with getent: uid=%d gid=%d", spec, uid, gid)
 	return User{Name: f[0], UID: uid, GID: gid, Home: f[5]}, true
+}
+
+// HostHasUID reports whether the host's user database has the user uid.
+func HostHasUID(uid int) bool {
+	_, ok := lookupHostUser(strconv.Itoa(uid))
+	return ok
+}
+
+// HostHasGID reports whether the host's group database has the group gid: in
+// /etc/group (or through the C library when droot is built with cgo), then
+// with getent(1).
+func HostHasGID(gid int) bool {
+	key := strconv.Itoa(gid)
+	if _, err := osuser.LookupGroupId(key); err == nil {
+		return true
+	}
+	f := getentEntry("group", key, 3)
+	if f == nil {
+		return false
+	}
+	id, ok := parseID(f[2])
+	return ok && id == gid
 }
 
 // lookupHostGroup looks a group name up on the host: in /etc/group (or

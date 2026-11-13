@@ -134,6 +134,44 @@ users, the reason why some distributions restrict them — nothing droot or
   `COMMAND`.
 - `droot umount --root /` is refused.
 
+## `droot unit`
+
+`droot unit` writes the settings of a systemd service from the image: its
+environment, its command, its user. systemd reads them as root, and a setting
+added to the unit (e.g. `ExecStartPre=+...`, which runs on the host with full
+privileges) would escape the container. Every value therefore goes through
+[`internal/systemd/unitfile.go`](../internal/systemd/unitfile.go):
+
+- Control characters are refused, so no value can end its line: a newline in
+  an environment variable or an argument is an error, not an escape.
+- Words are double-quoted, with `\` and `"` escaped, `%` (specifiers) doubled,
+  and `$` (variables) doubled in `ExecStart=`. Paths written unquoted
+  (`RootDirectory=`, `WorkingDirectory=`) cannot contain quotes, backslashes
+  or trailing white space.
+- The image never chooses a setting: users and groups are written as numeric
+  IDs, `STOPSIGNAL` as a signal name from a fixed table (or left out), the
+  names of environment variables only with letters, digits and underscores.
+  The header quotes the image's name and ID.
+
+A fuzz test checks that every value is refused or read back by systemd's
+rules as itself, and the unit tests run `systemd-analyze verify` when it is
+installed.
+
+The service gets the protections of `droot run` from systemd, with these
+differences:
+
+- systemd adds the host's supplementary groups of the user (`User=`), which
+  may grant access to files of the host; droot sets the groups of the image.
+  Check the groups of the host's user with these IDs.
+- `--seccomp default` denies the same system calls, plus, with
+  `SystemCallArchitectures=native`, every 32-bit system call of a 64-bit
+  kernel. `PrivateDevices=` also removes `CAP_MKNOD` and `CAP_SYS_RAWIO`.
+- The drop-in, and `systemctl show`, can be read by any user of the host:
+  give secrets with an `EnvironmentFile=` of mode 0600, not with `--env`.
+- An older systemd ignores the settings it does not know (with a warning in
+  the journal): see the versions in the
+  [deployment guide](deployment.md#7-run-with-systemd-alone).
+
 ## Reporting a vulnerability
 
 Please report security issues privately, as described in

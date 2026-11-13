@@ -102,7 +102,10 @@ for what:
   `ProtectProc=`). The two work together: `droot export` makes the root
   directory from an image and `droot run` applies the image's configuration,
   while the unit adds the isolation and limits droot does not provide (see the
-  [security considerations](security.md#recommendations)).
+  [security considerations](security.md#recommendations)). `droot unit` writes
+  the settings that make systemd run the root directory by itself, with the
+  image's configuration (see
+  [Run with systemd alone](deployment.md#7-run-with-systemd-alone)).
 - **Podman with Quadlet** runs containers as systemd services with the
   isolation droot avoids (PID and network namespaces, a cgroup per container).
   Choose it when the services need that isolation.

@@ -22,8 +22,9 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
 - **[ux]** By default, mounts are made in the host's mount namespace and
   persist after the command exits: users must remember `droot umount`, and
   concurrent runs share mounts (`--unshare` avoids both).
-- **[compat]** `STOPSIGNAL` is saved but not used (droot does not supervise
-  COMMAND), and `HOSTNAME` is only set with `--hostname`.
+- **[compat]** `STOPSIGNAL` is saved but not used by `droot run` (droot does
+  not supervise COMMAND; `droot unit` sets `KillSignal=` to it), and
+  `HOSTNAME` is only set with `--hostname`.
 - **[compat]** Nothing is created in `/dev` when it is a mount point, including
   `--tmpfs /dev`; a fresh `/dev` like Docker's would need droot to tell its own
   tmpfs from the host's `devtmpfs`.
@@ -44,6 +45,21 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
   takes precedence when it names the same path: through a symlink of the
   image (`--bind X:/var/run/systemd/notify` with `/var/run -> /run`),
   the socket replaces it.
+
+### `droot unit`
+
+- **[compat]** `--copy-files`, `--env-file`, `--hostname`, a `--bind` on
+  `/dev` and a `--tmpfs` on `/dev` have no counterpart and are refused.
+- **[compat]** systemd needs the image's user and groups in the host's
+  databases (numeric IDs included) and adds the host's supplementary groups
+  of the user; it also adds variables of its own (`INVOCATION_ID`, `LANG`,
+  `SHELL`, ...). Environment variables whose names are not made of letters,
+  digits and underscores, or whose values contain control characters, are
+  refused.
+- **[ux]** The settings are those of one release: a deployment must write
+  them again and run `systemctl daemon-reload`, which capze and dewy do not.
+- **[compat]** `--read-only` (`ReadOnlyPaths=+/`) was tested with systemd 255
+  only; the version that added the `+` prefix is not known.
 
 ### `droot export`
 
@@ -81,6 +97,11 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
   systemd; who removes the cgroup after the command exits must be decided.
   Today: `--ulimit`, and systemd (`systemd-run --scope`, `MemoryMax=`).
 - **[feature]** `droot umount --all`.
+- **[feature]** `droot unit`: `--env-file` as `EnvironmentFile=` when systemd
+  reads the file as droot does; `RootImage=` with dm-verity (`RootHash=`) for
+  images made by another tool; a systemd generator that writes the settings
+  at `daemon-reload` from `/etc/droot/*.toml`, so that switching `current`
+  needs only a reload.
 
 ### Building and shipping
 

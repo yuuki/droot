@@ -7,6 +7,7 @@
 - `umount` never follows symlinks and checks the mount ID before detaching.
 - Change capabilities and credentials on the thread that calls `execve(2)`: `runtime.LockOSThread` before the first mount, no goroutine hand-off.
 - Empty the inheritable and ambient capability sets; create device nodes only on the container's own file system.
+- `droot unit` writes image content into units that systemd reads as root: every value goes through `internal/systemd/unitfile.go` (quoted, control characters refused); content never chooses a setting.
 - `droot export` never runs the image, removes its temporary container even after an error or a signal, and streams (never holds the archive in memory).
 - Credentials go over HTTPS only, redirects included; plain HTTP only to loopback registries.
 - Rootless, droot re-executes itself in the user namespace before reading anything (`--config` and `--env-file` may be pipes).
@@ -21,9 +22,9 @@
 - Release asset names and layout, which download scripts depend on: `.goreleaser.yaml`.
 
 ## Before opening a pull request
-- `make check`; also `run`, `umount`, `unshare`, `mounter`, `osutil`, `identity`, `userns` → `make test-root`; a parser → `make fuzz FUZZTIME=1m`.
-- `run`, `umount`, `export`, the Docker or registry client, the archive format → `make integration-test`; flags or help texts → `make docs`.
+- `make check`; also `run`, `umount`, `unshare`, `mounter`, `osutil`, `identity`, `userns` → `make test-root`; a parser or the unit writer → `make fuzz FUZZTIME=1m`.
+- `run`, `unit`, `umount`, `export`, the Docker or registry client, the archive format → `make integration-test` (`unit` needs systemd as init); flags or help texts → `make docs`.
 
 ## Git conventions
 - Branches: `<type>/<issue>-<summary>` (`<type>/<summary>` without an issue); tools' `agent/*`, `claude/*`, `copilot/*`, `dependabot/*` keep their names.
-- Commits and PR titles: Conventional Commits 1.0.0, types `feat` `fix` `perf` `refactor` `test` `docs` `build` `ci` `chore` `revert`; scopes: `run`, `export`, `umount`, `osutil`, `mounter`, `docker`, `image`, `userns`.
+- Commits and PR titles: Conventional Commits 1.0.0, types `feat` `fix` `perf` `refactor` `test` `docs` `build` `ci` `chore` `revert`; scopes: `run`, `unit`, `export`, `umount`, `osutil`, `mounter`, `docker`, `image`, `userns`.

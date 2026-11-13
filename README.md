@@ -416,6 +416,29 @@ See [the deployment guide](documentation/deployment.md#6-notifications-and-socke
 for a `.socket` unit, and [Running without root](#running-without-root) for
 rootless services.
 
+### `droot unit`
+
+```
+droot unit --root ROOT_DIR [OPTIONS] [-o FILE] [--] [COMMAND [ARG...]]
+```
+
+Prints the `[Service]` settings of a systemd unit that runs `COMMAND` in
+`ROOT_DIR` with systemd alone, as `droot run` with the same options would:
+systemd changes the root (`RootDirectory=`), makes the mounts and applies the
+protections, and the server needs droot only to write the settings. The
+options are those of `droot run`, and so are the `--config` files; `-o FILE`
+writes the settings atomically, e.g. to a drop-in of your unit:
+
+```console
+# droot unit --config /etc/droot/app.toml -o /etc/systemd/system/app.service.d/droot.conf
+# systemctl daemon-reload && systemctl restart app
+```
+
+The settings are those of one release: write them again at each deployment.
+systemd needs the image's users and groups in the host's databases. See
+[Run with systemd alone](documentation/deployment.md#7-run-with-systemd-alone)
+for a complete unit and the differences with `droot run`.
+
 ### `droot umount`
 
 ```

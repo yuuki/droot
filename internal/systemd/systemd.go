@@ -38,6 +38,9 @@ const (
 // sd_notify(3).
 const NotifySocket = "NOTIFY_SOCKET"
 
+// ServiceVariables are the variables of both protocols that Env passes on.
+var ServiceVariables = []string{NotifySocket, listenPID, listenPIDFDID, listenFDs, listenFDNames, watchdogUSec, watchdogPID}
+
 // FirstListenFD is the first descriptor of socket activation
 // (SD_LISTEN_FDS_START).
 const FirstListenFD = 3

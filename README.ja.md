@@ -308,6 +308,21 @@ ExecStart=/usr/local/bin/droot run --root /var/containers/app --user app -- app
 
 `.socket` ユニットについては[デプロイガイド](documentation/deployment.md#6-notifications-and-socket-activation)を、rootless のサービスについては [root を使わない実行](#root-を使わない実行)を参照してください。
 
+### `droot unit`
+
+```
+droot unit --root ROOT_DIR [OPTIONS] [-o FILE] [--] [COMMAND [ARG...]]
+```
+
+`droot run` を同じオプションで実行したときと同じように、`ROOT_DIR` の中の `COMMAND` を systemd だけで実行する systemd ユニットの `[Service]` の設定を出力します。ルートの変更（`RootDirectory=`）、マウント、保護の設定は systemd が行います。サーバーで droot が必要になるのは、この設定を書き出すときだけです。オプションは `droot run` と同じで、`--config` ファイルもそのまま使えます。`-o FILE` を指定すると、設定をアトミックに書き込みます。たとえば、ユニットの drop-in として書き出します。
+
+```console
+# droot unit --config /etc/droot/app.toml -o /etc/systemd/system/app.service.d/droot.conf
+# systemctl daemon-reload && systemctl restart app
+```
+
+出力される設定は 1 つのリリースのためのものです。デプロイのたびに書き出し直してください。また、systemd はイメージのユーザーとグループをホストのデータベースで探すため、ホストにも同じ ID のユーザーとグループが必要です。ユニット全体の例と `droot run` との違いは、[systemd だけで実行する](documentation/deployment.md#7-run-with-systemd-alone)を参照してください。
+
 ### `droot umount`
 
 ```

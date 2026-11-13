@@ -7,7 +7,7 @@ droot \- a super\-easy container with chroot, without docker
 [\fIglobal options\fR] \fICOMMAND\fR [\fIoptions\fR] [\fIARG\fR...]
 .SH DESCRIPTION
 .PP
-droot exports the file system of a container image as a tar archive (export), runs a command inside an extracted archive with chroot(2) (run), as root or rootless in a user namespace, cleans up the mounts made by run (umount) and shows them (status), and runs commands in the user namespace of rootless runs (unshare).
+droot exports the file system of a container image as a tar archive (export), runs a command inside an extracted archive with chroot(2) (run), as root or rootless in a user namespace, cleans up the mounts made by run (umount) and shows them (status), and runs commands in the user namespace of rootless runs (unshare). It also prints the settings of a systemd service that runs an extracted archive like run, with systemd alone (unit).
 .SH GLOBAL OPTIONS
 .PP
 Accepted before and after \fICOMMAND\fR.
@@ -170,6 +170,95 @@ set an environment variable, overriding /.drootenv and \-\-env\-file; a bare KEY
 .TP
 \fB\-\-env\-file\fR \fIFILE\fR
 read KEY=VALUE lines from the host's FILE, overriding /.drootenv; a bare KEY takes its value from droot's own environment (repeatable)
+.TP
+\fB\-h, \-\-help\fR
+show help
+.SS droot unit [options] [\-\-] [COMMAND [ARG...]]
+.PP
+Print the settings of a systemd service that runs COMMAND in ROOT_DIR without droot.
+.PP
+Prints the [Service] settings of a systemd unit that runs COMMAND in ROOT_DIR with systemd alone (RootDirectory=), as 'droot run' with the same options would: the ENTRYPOINT, CMD, USER, WORKDIR, ENV and STOPSIGNAL of the image saved by 'droot export', the mounts, the capabilities and the other protections. The options are those of droot run, and so are the \-\-config files. Install the settings as a drop\-in, e.g. /etc/systemd/system/app.service.d/droot.conf, next to a unit of your own that sets Type=, Restart=, the limits and [Install], then run 'systemctl daemon\-reload'.
+.PP
+The settings are those of one release: ROOT_DIR is resolved (systemd does not follow a symlink there), and the configuration of the image is read now. Generate them again whenever ROOT_DIR changes.
+.PP
+systemd looks the user and the groups up in the host's databases, where they must exist with the IDs of the image (droot warns otherwise), and adds the host's supplementary groups of the user. The supplementary groups of the image that the host does not have are left out. A bare \-\-env KEY takes its value from the environment of droot unit.
+.PP
+The options that have no counterpart in a unit are refused: \-\-copy\-files, \-\-env\-file, \-\-hostname, a \-\-bind on /dev or below, and a \-\-tmpfs on /dev. \-\-unshare is implied. Values that systemd would read differently, such as environment variables whose names are not made of letters, digits and underscores or whose values contain control characters, are errors.
+.TP
+\fB\-\-config\fR \fIFILE\fR
+read options from FILE: the long names of the options of droot run as keys, and command, in a subset of TOML (see droot(1)); the command line takes precedence
+.TP
+\fB\-r,\fR \fI\-\-root ROOT_DIR\fR
+root directory to chroot into (required)
+.TP
+\fB\-u,\fR \fI\-\-user USER\fR
+user (name or ID) to run COMMAND as (default: the image's USER, or droot's own user); names are looked up in ROOT_DIR/etc/passwd, then on the host
+.TP
+\fB\-g,\fR \fI\-\-group GROUP\fR
+group (name or ID) to run COMMAND as (default: the primary group of \-\-user)
+.TP
+\fB\-w,\fR \fI\-\-workdir DIR\fR
+working directory of COMMAND inside the container (default: the image's WORKDIR, or /)
+.TP
+\fB\-b,\fR \fI\-\-bind SRC[:DEST][:OPTS]\fR
+bind mount SRC from the host on DEST (default: SRC) in the container; OPTS is a comma\-separated list of ro, rw and rbind (recursive) (repeatable)
+.TP
+\fB\-\-robind\fR \fISRC[:DEST][:OPTS]\fR
+read\-only bind mount (same as \-\-bind SRC:DEST:ro) (repeatable)
+.TP
+\fB\-\-tmpfs\fR \fIPATH[:OPTS]\fR
+mount a tmpfs on PATH in the container; OPTS are mount flags (ro, exec, ...: nosuid,nodev,noexec by default) and tmpfs options (size=64m, mode=1777, ...) (repeatable)
+.TP
+\fB\-\-copy\-files, \-\-cp\fR
+copy the host's /etc/group, /etc/passwd, /etc/resolv.conf, /etc/hosts into the container
+.TP
+\fB\-\-bind\-net\-files\fR
+read\-only bind mount the host's /etc/resolv.conf and /etc/hosts into the container, so that COMMAND sees later changes made to them in place (unlike \-\-cp)
+.TP
+\fB\-\-no\-dropcaps\fR
+do not drop capabilities (dangerous)
+.TP
+\fB\-\-cap\-add\fR \fICAP\fR
+also keep the capability CAP (e.g. NET_RAW, SYS_PTRACE, or ALL) in the bounding set (repeatable)
+.TP
+\fB\-\-cap\-drop\fR \fICAP\fR
+drop the capability CAP (e.g. CHOWN, or ALL) from the ones kept by default (repeatable)
+.TP
+\fB\-\-ulimit\fR \fINAME=SOFT[:HARD]\fR
+set a resource limit of COMMAND, e.g. nofile=65536 or core=0:unlimited (names of ulimit, as in docker run) (repeatable)
+.TP
+\fB\-\-unshare\fR
+make the mounts in a private mount namespace: they disappear when COMMAND and its children exit, and need no 'droot umount' (always the case rootless)
+.TP
+\fB\-\-unshare\-ipc\fR
+run COMMAND in a private IPC namespace (System V IPC, POSIX message queues)
+.TP
+\fB\-\-hostname\fR \fINAME\fR
+run COMMAND in a private UTS namespace with the host name NAME
+.TP
+\fB\-\-read\-only\fR
+make the root directory read\-only for COMMAND (implies \-\-unshare); use \-\-tmpfs or \-\-bind for the paths it writes
+.TP
+\fB\-\-no\-mask\fR
+do not mask the sensitive files of /proc and /sys nor make /proc/sys, /sys and the like read\-only (dangerous)
+.TP
+\fB\-\-no\-systemd\fR
+do not pass systemd's notification socket, socket activation and watchdog variables (NOTIFY_SOCKET, LISTEN_*, WATCHDOG_*) on to COMMAND, nor bind the notification socket in the container; inherited descriptors are kept
+.TP
+\fB\-\-no\-new\-privileges\fR
+set no_new_privs: setuid programs and file capabilities cannot grant privileges to COMMAND (default: true; \-\-no\-new\-privileges=false lets programs such as sudo or su work)
+.TP
+\fB\-\-seccomp\fR \fIPROFILE\fR
+seccomp profile: default (deny the system calls Docker's default profile denies, such as unshare, mount, keyctl, bpf; amd64, arm64, arm and 386) or unconfined (the default)
+.TP
+\fB\-e,\fR \fI\-\-env KEY[=VALUE]\fR
+set an environment variable, overriding /.drootenv and \-\-env\-file; a bare KEY takes its value from droot's own environment (repeatable)
+.TP
+\fB\-\-env\-file\fR \fIFILE\fR
+read KEY=VALUE lines from the host's FILE, overriding /.drootenv; a bare KEY takes its value from droot's own environment (repeatable)
+.TP
+\fB\-o,\fR \fI\-\-output FILE\fR
+write the settings to FILE instead of STDOUT (written atomically); not a key of the \-\-config file
 .TP
 \fB\-h, \-\-help\fR
 show help

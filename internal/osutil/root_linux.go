@@ -531,6 +531,26 @@ func (r *Root) OpenNoFollow(path string) (*os.File, error) {
 	return os.NewFile(uintptr(fd), r.displayPath(path)), nil
 }
 
+// Stat returns the information of the file at path, following symlinks
+// inside the root, without opening the file itself for reading.
+func (r *Root) Stat(path string) (fs.FileInfo, error) {
+	res, err := r.lookup(path, lookupOptions{followLast: true})
+	if err != nil {
+		return nil, err
+	}
+	fd := res.dir
+	if res.name != "" {
+		defer unix.Close(res.dir)
+		fd, err = unix.Openat(res.dir, res.name, unix.O_PATH|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		if err != nil {
+			return nil, &fs.PathError{Op: "stat", Path: r.displayPath(path), Err: err}
+		}
+	}
+	f := os.NewFile(uintptr(fd), r.displayPath(path))
+	defer f.Close()
+	return f.Stat()
+}
+
 // OpenFile opens the regular file at path for reading, following symlinks
 // inside the root. FIFOs, devices and other special files are refused
 // without blocking.
