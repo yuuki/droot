@@ -80,8 +80,10 @@ $ aws s3 cp app-1.2.3.tar.gz.sha256 s3://example-releases/app/
 On each server, as root: download, verify, extract into a new directory, then
 switch the release atomically. [capze](https://github.com/yuuki/capze) keeps
 the releases in a Capistrano-like layout, with a `current` symlink to the
-active one, and removes the old ones (see its README for the details).
-Once, create the directory of the releases in one that only root can access:
+active one, and removes the old ones (see its README for the details; the
+commands below are those of the capze that follows 0.2, which had other
+ones). Once, create the directory of the releases in one that only root can
+access:
 
 ```console
 # install -d -m 700 /var/containers
@@ -96,10 +98,10 @@ Then, for each release:
 # aws s3 cp s3://example-releases/app/app-1.2.3.tar.gz.sha256 .
 # sha256sum -c app-1.2.3.tar.gz.sha256
 app-1.2.3.tar.gz: OK
-# tmp=$(mktemp -d)
+# tmp=$(mktemp -d -p /var/containers/app)
 # mkdir -m 755 "$tmp/app-1.2.3"
 # tar -xpzf app-1.2.3.tar.gz -C "$tmp/app-1.2.3"
-# capze --keep 5 "$tmp/app-1.2.3" /var/containers/app && rmdir "$tmp"
+# capze deploy --keep 5 "$tmp/app-1.2.3" /var/containers/app && rmdir "$tmp"
 # systemctl restart app
 ```
 
@@ -110,12 +112,15 @@ extracted, and later run, as root.
 The setuid and setgid programs of the image (`su`, `passwd`, ...) are then
 setuid root (or setgid to a group such as `shadow`) on the host too: only
 root may reach them, or the users of the host could run them with these
-privileges (see [Security considerations](security.md)). `mktemp -d`
-creates a directory that only root can access, and capze moves the
-directory extracted in it as it is into `/var/containers/app/releases/`,
-which only root can reach through `/var/containers`. The directory extracted
-into becomes the root directory of the container: it has mode 0755
-(`mkdir -m 755`, whatever the umask), which the users of the container need.
+privileges (see [Security considerations](security.md)).
+`mktemp -d -p /var/containers/app` creates the directory to extract into
+inside the directory of the releases: only root can reach it through
+`/var/containers`, and it is on the file system of the releases. capze
+requires that: it moves the directory extracted there as it is into
+`/var/containers/app/releases/` with `rename(2)`, and never copies it. The
+directory extracted into becomes the root directory of the container: it has
+mode 0755 (`mkdir -m 755`, whatever the umask), which the users of the
+container need.
 
 `droot run --root /var/containers/app/current` resolves the symlink: each run
 uses the release `current` pointed to when it started.
@@ -130,6 +135,20 @@ that a Consul or Serf event announces, see
 > would delete files of the host through the bind mounts. With `--unshare`
 > (below), the mounts disappear with the service. Otherwise run
 > `droot umount --root DIR` first, and check with `droot status --root DIR`.
+
+`capze deploy --keep 5` deletes the releases beyond the 5 most recent once
+`current` points to the new one. It never deletes through a mount point: it
+leaves a release that still has mounts below it as it is, and reports it,
+without failing the deployment. Without `--unshare`, unmount the old
+releases and delete them once the service runs the new release:
+
+```console
+# capze prune --keep 5 --dry-run /var/containers/app | xargs -r -n 1 droot umount --root
+# capze prune --keep 5 /var/containers/app
+```
+
+`capze prune --dry-run` prints the directories that `capze prune` would
+delete, and `droot umount` is safe to run where nothing is mounted.
 
 ## 5. Run with systemd
 
@@ -441,8 +460,19 @@ SystemCallArchitectures=native
 
 ## Rolling back
 
-capze keeps the previous releases: point `current` back to one of them, or
-deploy the previous archive again, and restart the service. With
+capze keeps the previous releases. Point `current` back to the release
+before, and restart the service:
+
+```console
+# capze rollback /var/containers/app
+/var/containers/app/releases/20261112093000
+# systemctl restart app
+```
+
+`capze list /var/containers/app` prints the releases, and
+`capze rollback --to NAME` points `current` to the one named. The next
+deployment discards the releases that were rolled back. Deploying the
+previous archive again works too. With
 [systemd alone](#7-run-with-systemd-alone), write the drop-in of `droot unit`
 again and run `systemctl daemon-reload` first.
 

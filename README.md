@@ -171,16 +171,29 @@ walkthrough, including systemd units.
 
 [capze](https://github.com/yuuki/capze) deploys archives in a Capistrano-like
 directory layout and keeps the last releases. It moves the directory it is
-given into `releases/` as it is, so extract the archive into a new directory
-inside one that only root can access (`mktemp -d`), and keep the releases in
-`/var/containers`, as above:
+given into `releases/` as it is, and never copies it: extract the archive
+into a new directory of the directory of the releases itself
+(`mktemp -d -p`), which is on the same file system, and keep the releases in
+`/var/containers`, which only root can access, as above:
 
 ```console
 $ sudo mkdir -p /var/containers/app
-$ tmp=$(sudo mktemp -d)
+$ tmp=$(sudo mktemp -d -p /var/containers/app)
 $ sudo mkdir -m 755 "$tmp/app" && sudo tar -xpzf app.tar.gz -C "$tmp/app"   # after verifying the checksum as above
-$ sudo capze --keep 5 "$tmp/app" /var/containers/app && sudo rmdir "$tmp"
+$ sudo capze deploy --keep 5 "$tmp/app" /var/containers/app && sudo rmdir "$tmp"
 ```
+
+`capze rollback /var/containers/app` points `current` back to the release
+before. capze never deletes through a mount point: it leaves an old release
+that still has mounts below it, and reports it. Without `--unshare`, unmount
+the old releases first:
+
+```console
+$ sudo capze prune --keep 5 --dry-run /var/containers/app | sudo xargs -r -n 1 droot umount --root
+$ sudo capze prune --keep 5 /var/containers/app
+```
+
+These are the commands of the capze that follows 0.2, which had other ones.
 
 ### Integration with dewy
 
