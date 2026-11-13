@@ -25,7 +25,9 @@ cd "$release"
 trap 'status=$?; [ "$status" -eq 0 ] || rm -rf rootfs.tmp rootfs.tar.gz' EXIT
 sha256sum -c rootfs.tar.gz.sha256
 rm -rf rootfs.tmp
-mkdir rootfs.tmp
+# The archive has no entry for /: rootfs keeps this mode, whatever the umask,
+# so that the users of the container can reach their files.
+mkdir -m 755 rootfs.tmp
 tar -xpzf rootfs.tar.gz -C rootfs.tmp
 mv rootfs.tmp rootfs
 rm rootfs.tar.gz

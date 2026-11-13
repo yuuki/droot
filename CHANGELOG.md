@@ -21,6 +21,14 @@ Releases up to 0.7.7 are described on the
   host through the bind mounts of a run without `--unshare`
   (`documentation/deployment.md`).
 
+### Fixed
+
+- `examples/dewy/droot-extract-release` creates the root directory of a
+  release with mode 0755 whatever the umask: with a umask such as 077, it had
+  mode 0700, and the users of the container other than root (`--user app`)
+  could not reach its files. The README and `documentation/deployment.md`
+  create the root directories with `mkdir -m 755` for the same reason.
+
 ### Security
 
 - The deployment instructions (`README.md`, `documentation/deployment.md`)
@@ -31,6 +39,20 @@ Releases up to 0.7.7 are described on the
   in a directory created by `mktemp -d` before capze moves them into place;
   `documentation/security.md` explains why. The capze instructions also
   create the directory of the releases, without which capze fails.
+- `documentation/security.md` also says that the setgid programs of an image
+  are exposed in the same way (a group such as `shadow`), and that without
+  `--unshare`, the users of the host with the UID of a process of the
+  container can still reach its root directory through `/proc/PID/root` and
+  run its setuid programs as root. Rootless, the setuid-root programs of an
+  image become setuid programs of the user: the README, the help of
+  `droot unshare` and the rootless dewy note now keep the root directories
+  in a directory with mode 0700 of that user.
+- On servers set up with the earlier instructions, run
+  `chmod 700 /var/containers` (owned by root), never on a root directory
+  itself, which is `/` in the container and needs mode 0755, and delete the
+  extraction directories that failed deployments left in `/tmp`
+  (`/tmp/app`, `/tmp/app-X.Y.Z`) once `droot status --root DIR` shows no
+  mounts below them.
 
 ## [0.8.0] - 2026-11-11
 

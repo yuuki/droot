@@ -24,9 +24,11 @@ func unshareCommand() *cli.Command {
 			"as root, and your subordinate IDs (/etc/subuid and /etc/subgid, with the\n" +
 			"newuidmap and newgidmap commands) as the other users. There, files keep the\n" +
 			"owners of an archive, so that the users of an image can write their files:\n\n" +
-			"  droot unshare tar -xpf app.tar -C app\n\n" +
-			"Files owned by subordinate IDs can only be deleted in the namespace too:\n\n" +
-			"  droot unshare rm -rf app",
+			"  droot unshare tar -xpf app.tar -C ~/containers/app\n\n" +
+			"Keep ~/containers at mode 0700: the setuid-root programs of the image become\n" +
+			"setuid programs of your user. Files owned by subordinate IDs can only be\n" +
+			"deleted in the namespace too:\n\n" +
+			"  droot unshare rm -rf ~/containers/app",
 		StopAtFirstArg: true,
 		Action:         doUnshare,
 	}

@@ -122,12 +122,12 @@ $ aws s3 cp app.tar.gz.sha256 s3://drootexamples/app.tar.gz.sha256
 $ aws s3 cp s3://drootexamples/app.tar.gz . && aws s3 cp s3://drootexamples/app.tar.gz.sha256 .
 $ sha256sum -c app.tar.gz.sha256
 $ sudo install -d -m 700 /var/containers
-$ sudo mkdir /var/containers/app
+$ sudo mkdir -m 755 /var/containers/app
 $ sudo tar -xpzf app.tar.gz -C /var/containers/app
 $ sudo droot run --cp --user appuser --group appgroup --bind /var/log/app --root /var/containers/app -- command
 ```
 
-`/var/containers` には root だけがアクセスできるようにします。イメージの setuid プログラムは所有者ごと展開されるので、そうしないとホストのユーザーがそれを root として実行できてしまいます（[セキュリティに関する考慮事項](documentation/security.md)を参照）。`/var/containers/app` 自体は `mkdir` が作るモード 0755 のままにします。コンテナのユーザーがアクセスするためです。
+`/var/containers` には root だけがアクセスできるようにします。イメージの setuid プログラムと setgid プログラムは所有者ごと展開されるので、そうしないとホストのユーザーがそれを root の権限や `shadow` などのグループの権限で実行できてしまいます（[セキュリティに関する考慮事項](documentation/security.md)を参照）。`--unshare` を指定しない場合、`command` と同じ UID を持つホストのユーザーは、`command` の実行中にこれらのプログラムにたどり着けます。`/var/containers/app` 自体はモード 0755 にします（`-m 755` により umask に関係なくこのモードになります）。コンテナのユーザーがアクセスするためです。
 
 `droot run` は、コマンドの終了後もマウントをそのまま残します（`--unshare` を指定した場合を除く）。新しいバージョンをデプロイする場合など、ディレクトリを削除または置き換える前に、マウントを解除してください。マウントが残ったまま削除すると、バインドマウントを通じてホストのファイルまで削除されてしまいます。
 
@@ -147,7 +147,7 @@ systemd ユニットを含む一通りの手順については、[アプリケ�
 ```console
 $ sudo mkdir -p /var/containers/app
 $ tmp=$(sudo mktemp -d)
-$ sudo mkdir "$tmp/app" && sudo tar -xpzf app.tar.gz -C "$tmp/app"   # 上記のようにチェックサムを確認した後で
+$ sudo mkdir -m 755 "$tmp/app" && sudo tar -xpzf app.tar.gz -C "$tmp/app"   # 上記のようにチェックサムを確認した後で
 $ sudo capze --keep 5 "$tmp/app" /var/containers/app && sudo rmdir "$tmp"
 ```
 
@@ -376,8 +376,8 @@ droot unshare [COMMAND [ARG...]]
 root 以外のユーザー向けのコマンドです。[rootless](#root-を使わない実行) の `droot run` と同じ ID マッピングのユーザー名前空間で、`COMMAND`（デフォルトは `$SHELL`）を root として実行します。これにより、アーカイブのファイルの所有者がそのまま保たれます。
 
 ```console
-$ droot unshare tar -xpf app.tar -C app
-$ droot unshare rm -rf app      # サブ ID が所有するファイル
+$ droot unshare tar -xpf app.tar -C ~/containers/app
+$ droot unshare rm -rf ~/containers/app      # サブ ID が所有するファイル
 ```
 
 <a id="global-options"></a>
@@ -418,9 +418,12 @@ root 以外のユーザーが `droot run` を実行すると、**rootless** で�
 $ grep "^$USER:" /etc/subuid /etc/subgid
 /etc/subuid:alice:100000:65536
 /etc/subgid:alice:100000:65536
-$ mkdir app && droot unshare tar -xpf app.tar -C app
-$ droot run --root app --bind ~/app-data:/data
+$ install -d -m 700 ~/containers && install -d -m 755 ~/containers/app
+$ droot unshare tar -xpf app.tar -C ~/containers/app
+$ droot run --root ~/containers/app --bind ~/app-data:/data
 ```
+
+`~/containers`（モード 0700）には自分のユーザーしか入れないようにします。イメージの setuid root プログラムは自分のユーザーの setuid プログラムになるため、そうしないとホストのほかのユーザーが、それらを自分のユーザーの権限で実行できてしまいます。
 
 rootless では、ハードリミットを引き上げること（`--ulimit`）はできず、バインドマウントできるのは自分のユーザーが読めるものだけです。ディストリビューションによっては、非特権ユーザー名前空間が制限されています。Ubuntu 24.04 以降では、`kernel.apparmor_restrict_unprivileged_userns` が 0 であるか、AppArmor プロファイルが droot を許可していない限り、ユーザー名前空間でケーパビリティが使えません。それ以外の環境では `user.max_user_namespaces` と `kernel.unprivileged_userns_clone` を確認してください。ロックは `$XDG_RUNTIME_DIR/droot` に作成されます。
 

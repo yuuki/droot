@@ -97,7 +97,7 @@ Then, for each release:
 # sha256sum -c app-1.2.3.tar.gz.sha256
 app-1.2.3.tar.gz: OK
 # tmp=$(mktemp -d)
-# mkdir "$tmp/app-1.2.3"
+# mkdir -m 755 "$tmp/app-1.2.3"
 # tar -xpzf app-1.2.3.tar.gz -C "$tmp/app-1.2.3"
 # capze --keep 5 "$tmp/app-1.2.3" /var/containers/app && rmdir "$tmp"
 # systemctl restart app
@@ -107,14 +107,15 @@ Extract as root with `tar -p`, so that ownership, permissions and setuid bits
 are those of the image — and only extract archives you verified: they are
 extracted, and later run, as root.
 
-The setuid programs of the image (`su`, `passwd`, ...) are then setuid root
-on the host too: only root may reach them, or the users of the host could
-run them as root (see [Security considerations](security.md)). `mktemp -d`
+The setuid and setgid programs of the image (`su`, `passwd`, ...) are then
+setuid root (or setgid to a group such as `shadow`) on the host too: only
+root may reach them, or the users of the host could run them with these
+privileges (see [Security considerations](security.md)). `mktemp -d`
 creates a directory that only root can access, and capze moves the
 directory extracted in it as it is into `/var/containers/app/releases/`,
 which only root can reach through `/var/containers`. The directory extracted
-into becomes the root directory of the container: it keeps the mode `mkdir`
-gives it, 0755, which the users of the container need.
+into becomes the root directory of the container: it has mode 0755
+(`mkdir -m 755`, whatever the umask), which the users of the container need.
 
 `droot run --root /var/containers/app/current` resolves the symlink: each run
 uses the release `current` pointed to when it started.
@@ -196,7 +197,10 @@ Options given on the command line take precedence over the file, e.g.
 If you do not want a private mount namespace, use
 [`examples/systemd/app-host-mounts.service`](../examples/systemd/app-host-mounts.service)
 instead: it removes the mounts with `droot umount` in `ExecStopPost=`, and in
-`ExecStartPre=` in case a crash left some behind.
+`ExecStartPre=` in case a crash left some behind. Without the private mount
+namespace, a user of the host with the UID of the application can reach the
+release through `/proc/PID/root` of the application, and run its setuid
+programs as root (see [Security considerations](security.md)).
 
 ```console
 # mkdir -p /etc/droot && cp app.toml /etc/droot/
@@ -426,8 +430,10 @@ Notes:
   socket on as well. The hook, run by dewy, then extracts the files as that
   user, who is root in the user namespace of droot: run the application with
   `--user 0`. Give that user a working directory of its own, outside
-  `/var/containers`: the files being its own, their setuid bits give no
-  more than its own privileges.
+  `/var/containers`, with mode 0700
+  (`install -d -m 700 -o USER -g GROUP DIR`): the setuid programs of the
+  image become setuid programs of that user, which the other users of the
+  host could otherwise run as that user.
 
 ## Deploying with stretcher
 

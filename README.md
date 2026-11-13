@@ -139,16 +139,18 @@ setuid bits are preserved):
 $ aws s3 cp s3://drootexamples/app.tar.gz . && aws s3 cp s3://drootexamples/app.tar.gz.sha256 .
 $ sha256sum -c app.tar.gz.sha256
 $ sudo install -d -m 700 /var/containers
-$ sudo mkdir /var/containers/app
+$ sudo mkdir -m 755 /var/containers/app
 $ sudo tar -xpzf app.tar.gz -C /var/containers/app
 $ sudo droot run --cp --user appuser --group appgroup --bind /var/log/app --root /var/containers/app -- command
 ```
 
-Only root can access `/var/containers`: the setuid programs of the image,
-extracted with their owner, would otherwise let the users of the host run
-them as root (see [Security considerations](documentation/security.md)).
-`/var/containers/app` itself keeps the mode `mkdir` gives it, 0755, which the
-users of the container need.
+Only root can access `/var/containers`: the setuid and setgid programs of
+the image, extracted with their owner, would otherwise let the users of the
+host run them as root or with a group such as `shadow` (see
+[Security considerations](documentation/security.md)). Without `--unshare`,
+a user of the host with the UID of `command` can still reach them while it
+runs. `/var/containers/app` itself has mode 0755 (`-m 755`, whatever the
+umask), which the users of the container need.
 
 `droot run` leaves its mounts in place after the command exits (unless
 `--unshare` is given). Remove them before deleting or replacing the directory,
@@ -176,7 +178,7 @@ inside one that only root can access (`mktemp -d`), and keep the releases in
 ```console
 $ sudo mkdir -p /var/containers/app
 $ tmp=$(sudo mktemp -d)
-$ sudo mkdir "$tmp/app" && sudo tar -xpzf app.tar.gz -C "$tmp/app"   # after verifying the checksum as above
+$ sudo mkdir -m 755 "$tmp/app" && sudo tar -xpzf app.tar.gz -C "$tmp/app"   # after verifying the checksum as above
 $ sudo capze --keep 5 "$tmp/app" /var/containers/app && sudo rmdir "$tmp"
 ```
 
@@ -510,8 +512,8 @@ user namespace with the ID mapping of [rootless](#running-without-root) `droot
 run`, so that archives keep the owners of their files:
 
 ```console
-$ droot unshare tar -xpf app.tar -C app
-$ droot unshare rm -rf app      # files owned by subordinate IDs
+$ droot unshare tar -xpf app.tar -C ~/containers/app
+$ droot unshare rm -rf ~/containers/app      # files owned by subordinate IDs
 ```
 
 ### Global options
@@ -567,9 +569,14 @@ with its status. In the namespace:
 $ grep "^$USER:" /etc/subuid /etc/subgid
 /etc/subuid:alice:100000:65536
 /etc/subgid:alice:100000:65536
-$ mkdir app && droot unshare tar -xpf app.tar -C app
-$ droot run --root app --bind ~/app-data:/data
+$ install -d -m 700 ~/containers && install -d -m 755 ~/containers/app
+$ droot unshare tar -xpf app.tar -C ~/containers/app
+$ droot run --root ~/containers/app --bind ~/app-data:/data
 ```
+
+Only your user may enter `~/containers` (mode 0700): the setuid-root
+programs of the image become setuid programs of your user, which the other
+users of the host could otherwise run as you.
 
 Rootless runs cannot raise hard resource limits (`--ulimit`), and bind mount
 only what your user can read. Some distributions restrict unprivileged user
