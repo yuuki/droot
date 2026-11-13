@@ -21,6 +21,17 @@ Releases up to 0.7.7 are described on the
   host through the bind mounts of a run without `--unshare`
   (`documentation/deployment.md`).
 
+### Security
+
+- The deployment instructions (`README.md`, `documentation/deployment.md`)
+  extracted images into directories that every user of the host could
+  reach, so that they could run the setuid-root programs of an image (`su`,
+  `passwd`, ...) as root, outside droot. The root directories are now kept
+  in `/var/containers`, created with mode 0700, and archives are extracted
+  in a directory created by `mktemp -d` before capze moves them into place;
+  `documentation/security.md` explains why. The capze instructions also
+  create the directory of the releases, without which capze fails.
+
 ## [0.8.0] - 2026-11-11
 
 Maintenance release after several years: modern Go and Docker, far fewer

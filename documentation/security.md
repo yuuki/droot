@@ -52,6 +52,15 @@ running on the host with a different root directory.
   using setuid programs such as `sudo`), `MemoryMax=`, `CPUQuota=`.
 - Extract archives with `tar -xpf` as root only if you trust their origin;
   verify a checksum or signature of the archive before deploying it.
+- Keep the root directories in a directory that only root can access, e.g.
+  `install -d -m 700 /var/containers`, and extract archives into one too
+  (`mktemp -d`) before moving them into place. Extracted as root, a root
+  directory holds the setuid-root programs of the image (`su`, `passwd`,
+  `mount`, ...) with their owner and mode: where the users of the host can
+  reach them, they can run them on the host, as root and outside droot, so
+  that a vulnerable one in an old image gives them root. The root directory
+  itself must stay searchable (mode `0755`, which `mkdir` gives it): the
+  users of the container need it.
 
 ## Rootless mode
 

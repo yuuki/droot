@@ -164,7 +164,9 @@ exist, `droot run` takes the environment of `config.json` and applies
 `/.drootenv` over it, so that edits to `/.drootenv` still take effect.
 
 Extract archives as root with `tar -xpf` so that ownership, permissions and
-setuid bits are preserved.
+setuid bits are preserved, in a directory that only root can access: the
+setuid programs of the image are setuid root on the host too (see
+[Security considerations](security.md)).
 
 ## `droot run`
 
