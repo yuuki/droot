@@ -138,10 +138,19 @@ setuid bits are preserved):
 ```console
 $ aws s3 cp s3://drootexamples/app.tar.gz . && aws s3 cp s3://drootexamples/app.tar.gz.sha256 .
 $ sha256sum -c app.tar.gz.sha256
-$ sudo mkdir -p /var/containers/app
+$ sudo install -d -m 700 /var/containers
+$ sudo install -d -m 755 /var/containers/app
 $ sudo tar -xpzf app.tar.gz -C /var/containers/app
 $ sudo droot run --cp --user appuser --group appgroup --bind /var/log/app --root /var/containers/app -- command
 ```
+
+Only root may enter `/var/containers` (mode 0700): the extracted files
+include the setuid-root programs of the image (`su`, `passwd`, `mount`, ...),
+which any user of the host could otherwise run as root, outside the
+container. droot runs as root and needs no access for other users. The
+archive has no entry for `/`: the directory it is extracted into becomes `/`
+in the container with its own mode, which must be 0755 so that the users of
+the container can reach their files.
 
 `droot run` leaves its mounts in place after the command exits (unless
 `--unshare` is given). Remove them before deleting or replacing the directory,
@@ -161,11 +170,16 @@ walkthrough, including systemd units.
 ### Integration with capze
 
 [capze](https://github.com/yuuki/capze) deploys archives in a Capistrano-like
-directory layout and keeps the last releases:
+directory layout and keeps the last releases. It moves the directory it is
+given into `releases/`, where it becomes `/` of the container: extract each
+archive into a new directory with mode 0755, inside a temporary directory
+that only root can enter:
 
 ```console
-$ sudo mkdir /tmp/app && sudo tar -xpzf app.tar.gz -C /tmp/app   # after verifying the checksum as above
-$ sudo capze --keep 5 /tmp/app /var/containers/app
+$ tmp=$(sudo mktemp -d)   # a new directory, mode 0700, owned by root
+$ sudo install -d -m 755 "$tmp/app"
+$ sudo tar -xpzf app.tar.gz -C "$tmp/app"   # after verifying the checksum as above
+$ sudo capze --keep 5 "$tmp/app" /var/containers/app && sudo rmdir "$tmp"
 ```
 
 ### Integration with dewy
@@ -525,9 +539,14 @@ with its status. In the namespace:
 $ grep "^$USER:" /etc/subuid /etc/subgid
 /etc/subuid:alice:100000:65536
 /etc/subgid:alice:100000:65536
-$ mkdir app && droot unshare tar -xpf app.tar -C app
-$ droot run --root app --bind ~/app-data:/data
+$ install -d -m 700 ~/containers && install -d -m 755 ~/containers/app
+$ droot unshare tar -xpf app.tar -C ~/containers/app
+$ droot run --root ~/containers/app --bind ~/app-data:/data
 ```
+
+Only your user may enter `~/containers` (mode 0700): the setuid-root
+programs of the image become setuid programs of your user, which the other
+users of the host could otherwise run as you.
 
 Rootless runs cannot raise hard resource limits (`--ulimit`), and bind mount
 only what your user can read. Some distributions restrict unprivileged user

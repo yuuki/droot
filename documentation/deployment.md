@@ -83,20 +83,31 @@ the releases in a Capistrano-like layout, with a `current` symlink to the
 active one, and removes the old ones (see its README for the details):
 
 ```console
-# cd /tmp
+# install -d -m 700 /var/containers/app
+# cd "$(mktemp -d)"
 # aws s3 cp s3://example-releases/app/app-1.2.3.tar.gz .
 # aws s3 cp s3://example-releases/app/app-1.2.3.tar.gz.sha256 .
 # sha256sum -c app-1.2.3.tar.gz.sha256
 app-1.2.3.tar.gz: OK
-# mkdir /tmp/app-1.2.3
-# tar -xpzf app-1.2.3.tar.gz -C /tmp/app-1.2.3
-# capze --keep 5 /tmp/app-1.2.3 /var/containers/app
+# install -d -m 755 app-1.2.3
+# tar -xpzf app-1.2.3.tar.gz -C app-1.2.3
+# capze --keep 5 app-1.2.3 /var/containers/app
 # systemctl restart app
 ```
 
 Extract as root with `tar -p`, so that ownership, permissions and setuid bits
 are those of the image — and only extract archives you verified: they are
 extracted, and later run, as root.
+
+Only root may enter `/var/containers/app` and the temporary directory of
+`mktemp -d`, both with mode 0700: the releases contain the setuid programs of
+the image (`su`, `passwd`, `mount`, ...), which the users of the host could
+otherwise run as root, outside the container. droot runs as root and needs
+no access for other users. (`mktemp -d` makes a new directory: another user
+could have created a fixed name in `/tmp` first.) The release itself,
+`app-1.2.3`, has mode 0755: the archive has no entry for `/`, so this
+directory, which capze moves into `releases/`, is `/` in the container, and
+its users (`--user app`) must be able to reach their files.
 
 `droot run --root /var/containers/app/current` resolves the symlink: each run
 uses the release `current` pointed to when it started.
@@ -340,13 +351,17 @@ ExecStart=/usr/local/bin/dewy server \
 ```
 
 ```console
-# mkdir -p /var/containers/app /etc/dewy
+# install -d -m 700 /var/containers/app /etc/dewy
 # install -d -o 1500 -g 1500 /var/log/app      # owned by the image's user app (uid 1500 here)
 # install -m 600 /dev/null /etc/dewy/app.env   # then add GITHUB_TOKEN=..., or the AWS_* variables
 # cp app.service /etc/systemd/system/
 # systemctl daemon-reload
 # systemctl enable --now app
 ```
+
+As in [4. Deploy](#4-deploy), only root may enter `/var/containers/app`,
+where dewy keeps the releases and their setuid programs. The hook gives the
+root directory of each release, `rootfs`, mode 0755.
 
 For each new version, dewy:
 
@@ -404,4 +419,7 @@ Notes:
 - Run as a user other than root, dewy runs droot rootless, which passes the
   socket on as well. The hook, run by dewy, then extracts the files as that
   user, who is root in the user namespace of droot: run the application with
-  `--user 0`.
+  `--user 0`. `/var/containers/app` must then belong to that user, still with
+  mode 0700 (`install -d -m 700 -o USER -g GROUP /var/containers/app`): the
+  setuid programs of the image become setuid programs of that user, which
+  the other users of the host could otherwise run.

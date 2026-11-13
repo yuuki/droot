@@ -14,6 +14,20 @@ Releases up to 0.7.7 are described on the
   mode 0700, and the users of the container other than root (`--user app`)
   could not reach its files.
 
+### Security
+
+- The deployment examples extracted the images into directories that every
+  user of the host can traverse, where any of them could run the setuid-root
+  programs of an image (`su`, `passwd`, `mount`, ...) as root, outside the
+  container. The READMEs and `documentation/deployment.md` now extract them
+  inside a directory that only root can enter (`install -d -m 700`, or
+  `mktemp -d` for a temporary extraction), and
+  `documentation/security.md` explains why. On servers set up that way,
+  restrict the directory that holds the root directories, e.g.
+  `chmod 700 /var/containers/app` with capze or dewy, or
+  `chmod 700 /var/containers` after the quick start: never a root directory
+  itself, which is `/` in the container and needs mode 0755.
+
 ## [0.8.0] - 2026-11-11
 
 Maintenance release after several years: modern Go and Docker, far fewer

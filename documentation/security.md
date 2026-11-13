@@ -52,6 +52,16 @@ running on the host with a different root directory.
   using setuid programs such as `sudo`), `MemoryMax=`, `CPUQuota=`.
 - Extract archives with `tar -xpf` as root only if you trust their origin;
   verify a checksum or signature of the archive before deploying it.
+- Extract them only inside a directory that root alone can enter: mode 0700,
+  owned by root (`install -d -m 700 /var/containers`, or `mktemp -d` for a
+  temporary extraction). `tar -xp` keeps the setuid bits of the image's
+  programs (`su`, `passwd`, `mount`, ...). Below a directory that every user
+  can traverse, any user of the host could run them as root, outside the
+  container, where none of the limits of `droot run` (`no_new_privs`, the
+  bounding set) apply. An old image can also hold a setuid program with a
+  known vulnerability, which the updates of the host do not fix. droot runs
+  as root and needs no access for other users. The root directory itself,
+  `/` in the container, needs mode 0755.
 
 ## Rootless mode
 
@@ -67,6 +77,10 @@ users, the reason why some distributions restrict them — nothing droot or
 - Inside, the same rules as above apply to the application and the root
   directory: a process running as root in the container can modify every
   file of the root directory and of the `--bind` mounts.
+- The files you extract keep the setuid bits of the image: its setuid-root
+  programs become setuid programs of your user. Keep the root directory
+  inside a directory with mode 0700 of your own, or the other users of the
+  host could run them as you.
 - Without subordinate IDs, `setgroups(2)` is denied in the namespace, so the
   host's supplementary groups of the user stay with `COMMAND` (they show as
   `nobody`): their file permissions still apply.

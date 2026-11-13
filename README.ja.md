@@ -121,10 +121,13 @@ $ aws s3 cp app.tar.gz.sha256 s3://drootexamples/app.tar.gz.sha256
 ```console
 $ aws s3 cp s3://drootexamples/app.tar.gz . && aws s3 cp s3://drootexamples/app.tar.gz.sha256 .
 $ sha256sum -c app.tar.gz.sha256
-$ sudo mkdir -p /var/containers/app
+$ sudo install -d -m 700 /var/containers
+$ sudo install -d -m 755 /var/containers/app
 $ sudo tar -xpzf app.tar.gz -C /var/containers/app
 $ sudo droot run --cp --user appuser --group appgroup --bind /var/log/app --root /var/containers/app -- command
 ```
+
+`/var/containers`（モード 0700）には root しか入れないようにします。展開したファイルにはイメージの setuid root プログラム（`su`、`passwd`、`mount` など）が含まれており、そうしないとホストのどのユーザーでも、コンテナの外でそれらを root として実行できてしまいます。droot は root で動作するので、ほかのユーザーのアクセス権は必要ありません。アーカイブには `/` のエントリがないため、展開先のディレクトリが、指定したモードのままコンテナの `/` になります。コンテナのユーザーが自分のファイルにたどり着けるよう、モードは 0755 にしてください。
 
 `droot run` は、コマンドの終了後もマウントをそのまま残します（`--unshare` を指定した場合を除く）。新しいバージョンをデプロイする場合など、ディレクトリを削除または置き換える前に、マウントを解除してください。マウントが残ったまま削除すると、バインドマウントを通じてホストのファイルまで削除されてしまいます。
 
@@ -139,11 +142,13 @@ systemd ユニットを含む一通りの手順については、[アプリケ�
 <a id="integration-with-capze"></a>
 ### capze との連携
 
-[capze](https://github.com/yuuki/capze) は、Capistrano 風のディレクトリ構成でアーカイブをデプロイし、直近のリリースを保持します。
+[capze](https://github.com/yuuki/capze) は、Capistrano 風のディレクトリ構成でアーカイブをデプロイし、直近のリリースを保持します。capze は渡されたディレクトリをそのまま `releases/` に移動し、そのディレクトリがコンテナの `/` になります。そのため、各アーカイブは、root しか入れない一時ディレクトリの中にモード 0755 の新しいディレクトリを作り、そこに展開します。
 
 ```console
-$ sudo mkdir /tmp/app && sudo tar -xpzf app.tar.gz -C /tmp/app   # 上記のようにチェックサムを確認した後で
-$ sudo capze --keep 5 /tmp/app /var/containers/app
+$ tmp=$(sudo mktemp -d)   # モード 0700、所有者 root の新しいディレクトリ
+$ sudo install -d -m 755 "$tmp/app"
+$ sudo tar -xpzf app.tar.gz -C "$tmp/app"   # 上記のようにチェックサムを確認した後で
+$ sudo capze --keep 5 "$tmp/app" /var/containers/app && sudo rmdir "$tmp"
 ```
 
 <a id="integration-with-dewy"></a>
@@ -395,9 +400,12 @@ root 以外のユーザーが `droot run` を実行すると、**rootless** で�
 $ grep "^$USER:" /etc/subuid /etc/subgid
 /etc/subuid:alice:100000:65536
 /etc/subgid:alice:100000:65536
-$ mkdir app && droot unshare tar -xpf app.tar -C app
-$ droot run --root app --bind ~/app-data:/data
+$ install -d -m 700 ~/containers && install -d -m 755 ~/containers/app
+$ droot unshare tar -xpf app.tar -C ~/containers/app
+$ droot run --root ~/containers/app --bind ~/app-data:/data
 ```
+
+`~/containers`（モード 0700）には自分のユーザーしか入れないようにします。イメージの setuid root プログラムは自分のユーザーの setuid プログラムになるため、そうしないとホストのほかのユーザーが、それらを自分のユーザーの権限で実行できてしまいます。
 
 rootless では、ハードリミットを引き上げること（`--ulimit`）はできず、バインドマウントできるのは自分のユーザーが読めるものだけです。ディストリビューションによっては、非特権ユーザー名前空間が制限されています。Ubuntu 24.04 以降では、`kernel.apparmor_restrict_unprivileged_userns` が 0 であるか、AppArmor プロファイルが droot を許可していない限り、ユーザー名前空間でケーパビリティが使えません。それ以外の環境では `user.max_user_namespaces` と `kernel.unprivileged_userns_clone` を確認してください。ロックは `$XDG_RUNTIME_DIR/droot` に作成されます。
 
