@@ -138,10 +138,19 @@ setuid bits are preserved):
 ```console
 $ aws s3 cp s3://drootexamples/app.tar.gz . && aws s3 cp s3://drootexamples/app.tar.gz.sha256 .
 $ sha256sum -c app.tar.gz.sha256
-$ sudo mkdir -p /var/containers/app
+$ sudo install -d -m 700 /var/containers
+$ sudo mkdir -m 755 /var/containers/app
 $ sudo tar -xpzf app.tar.gz -C /var/containers/app
 $ sudo droot run --cp --user appuser --group appgroup --bind /var/log/app --root /var/containers/app -- command
 ```
+
+Only root can access `/var/containers`: the setuid and setgid programs of
+the image, extracted with their owner, would otherwise let the users of the
+host run them as root or with a group such as `shadow` (see
+[Security considerations](documentation/security.md)). Without `--unshare`,
+a user of the host with the UID of `command` can still reach them while it
+runs. `/var/containers/app` itself has mode 0755 (`-m 755`, whatever the
+umask), which the users of the container need.
 
 `droot run` leaves its mounts in place after the command exits (unless
 `--unshare` is given). Remove them before deleting or replacing the directory,
@@ -161,11 +170,16 @@ walkthrough, including systemd units.
 ### Integration with capze
 
 [capze](https://github.com/yuuki/capze) deploys archives in a Capistrano-like
-directory layout and keeps the last releases:
+directory layout and keeps the last releases. It moves the directory it is
+given into `releases/` as it is, so extract the archive into a new directory
+inside one that only root can access (`mktemp -d`), and keep the releases in
+`/var/containers`, as above:
 
 ```console
-$ sudo mkdir /tmp/app && sudo tar -xpzf app.tar.gz -C /tmp/app   # after verifying the checksum as above
-$ sudo capze --keep 5 /tmp/app /var/containers/app
+$ sudo mkdir -p /var/containers/app
+$ tmp=$(sudo mktemp -d)
+$ sudo mkdir -m 755 "$tmp/app" && sudo tar -xpzf app.tar.gz -C "$tmp/app"   # after verifying the checksum as above
+$ sudo capze --keep 5 "$tmp/app" /var/containers/app && sudo rmdir "$tmp"
 ```
 
 ### Integration with dewy
@@ -202,6 +216,36 @@ delete files of the host through the bind mounts of `droot run`. The
 application takes the listening socket of dewy from `SERVER_STARTER_PORT`. See
 [Deploying with dewy](documentation/deployment.md#deploying-with-dewy) for a
 systemd unit and the details.
+
+### Integration with stretcher
+
+[stretcher](https://github.com/fujiwara/stretcher) deploys on each server the
+release that a manifest describes, when a Consul or Serf event gives it the
+manifest's URL: it downloads the archive, verifies its checksum, extracts it
+with `tar` (as root, the owners and setuid bits are kept) and runs the
+commands of the manifest. Have it extract each release into a new directory
+(`sync_strategy: mv`, with `TMPDIR` on the same file system) and switch
+`current` in its `post` commands. An excerpt of the template
+[`examples/stretcher/deploy.yml`](examples/stretcher/deploy.yml), which also
+deploys each version only once, checks the new release and deletes old ones:
+
+```yaml
+src: s3://example-releases/app/app-1.2.3.tar.gz
+checksum: "3f0c…"   # from app-1.2.3.tar.gz.sha256
+dest: /var/containers/app/releases/1.2.3
+sync_strategy: mv
+commands:
+  post:
+    - ln -sfn releases/1.2.3 /var/containers/app/current.new && mv -T /var/containers/app/current.new /var/containers/app/current
+    - systemctl restart app
+```
+
+Never let the default `rsync -a --delete` of stretcher update a root that
+`droot run` uses: rsync deletes what droot creates in the root (the files of
+`/dev`, the mount points) and, through the bind mounts of a run without
+`--unshare`, files of the host. See
+[Deploying with stretcher](documentation/deployment.md#deploying-with-stretcher)
+for the setup of the servers and the details.
 
 ## Commands
 
@@ -491,8 +535,8 @@ user namespace with the ID mapping of [rootless](#running-without-root) `droot
 run`, so that archives keep the owners of their files:
 
 ```console
-$ droot unshare tar -xpf app.tar -C app
-$ droot unshare rm -rf app      # files owned by subordinate IDs
+$ droot unshare tar -xpf app.tar -C ~/containers/app
+$ droot unshare rm -rf ~/containers/app      # files owned by subordinate IDs
 ```
 
 ### Global options
@@ -548,9 +592,14 @@ with its status. In the namespace:
 $ grep "^$USER:" /etc/subuid /etc/subgid
 /etc/subuid:alice:100000:65536
 /etc/subgid:alice:100000:65536
-$ mkdir app && droot unshare tar -xpf app.tar -C app
-$ droot run --root app --bind ~/app-data:/data
+$ install -d -m 700 ~/containers && install -d -m 755 ~/containers/app
+$ droot unshare tar -xpf app.tar -C ~/containers/app
+$ droot run --root ~/containers/app --bind ~/app-data:/data
 ```
+
+Only your user may enter `~/containers` (mode 0700): the setuid-root
+programs of the image become setuid programs of your user, which the other
+users of the host could otherwise run as you.
 
 Rootless runs cannot raise hard resource limits (`--ulimit`), and bind mount
 only what your user can read. Some distributions restrict unprivileged user
@@ -651,7 +700,8 @@ $ DOCKER_HOST=ssh://deploy@build.example.com droot export -o app.tar app
 
 - [Deploying an application](documentation/deployment.md): from `docker build`
   to a systemd service, with [example units](examples/systemd), or with
-  [dewy](documentation/deployment.md#deploying-with-dewy)
+  [dewy](documentation/deployment.md#deploying-with-dewy) or
+  [stretcher](documentation/deployment.md#deploying-with-stretcher)
 - [Command line reference](documentation/cli.md)
 - [How droot works](documentation/architecture.md)
 - [Security considerations](documentation/security.md)

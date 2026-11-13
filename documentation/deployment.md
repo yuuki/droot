@@ -80,7 +80,15 @@ $ aws s3 cp app-1.2.3.tar.gz.sha256 s3://example-releases/app/
 On each server, as root: download, verify, extract into a new directory, then
 switch the release atomically. [capze](https://github.com/yuuki/capze) keeps
 the releases in a Capistrano-like layout, with a `current` symlink to the
-active one, and removes the old ones (see its README for the details):
+active one, and removes the old ones (see its README for the details).
+Once, create the directory of the releases in one that only root can access:
+
+```console
+# install -d -m 700 /var/containers
+# mkdir /var/containers/app
+```
+
+Then, for each release:
 
 ```console
 # cd /tmp
@@ -88,9 +96,10 @@ active one, and removes the old ones (see its README for the details):
 # aws s3 cp s3://example-releases/app/app-1.2.3.tar.gz.sha256 .
 # sha256sum -c app-1.2.3.tar.gz.sha256
 app-1.2.3.tar.gz: OK
-# mkdir /tmp/app-1.2.3
-# tar -xpzf app-1.2.3.tar.gz -C /tmp/app-1.2.3
-# capze --keep 5 /tmp/app-1.2.3 /var/containers/app
+# tmp=$(mktemp -d)
+# mkdir -m 755 "$tmp/app-1.2.3"
+# tar -xpzf app-1.2.3.tar.gz -C "$tmp/app-1.2.3"
+# capze --keep 5 "$tmp/app-1.2.3" /var/containers/app && rmdir "$tmp"
 # systemctl restart app
 ```
 
@@ -98,11 +107,23 @@ Extract as root with `tar -p`, so that ownership, permissions and setuid bits
 are those of the image — and only extract archives you verified: they are
 extracted, and later run, as root.
 
+The setuid and setgid programs of the image (`su`, `passwd`, ...) are then
+setuid root (or setgid to a group such as `shadow`) on the host too: only
+root may reach them, or the users of the host could run them with these
+privileges (see [Security considerations](security.md)). `mktemp -d`
+creates a directory that only root can access, and capze moves the
+directory extracted in it as it is into `/var/containers/app/releases/`,
+which only root can reach through `/var/containers`. The directory extracted
+into becomes the root directory of the container: it has mode 0755
+(`mkdir -m 755`, whatever the umask), which the users of the container need.
+
 `droot run --root /var/containers/app/current` resolves the symlink: each run
 uses the release `current` pointed to when it started.
 
 To let the servers pull the releases instead, see
-[Deploying with dewy](#deploying-with-dewy).
+[Deploying with dewy](#deploying-with-dewy); to have them deploy the release
+that a Consul or Serf event announces, see
+[Deploying with stretcher](#deploying-with-stretcher).
 
 > [!WARNING]
 > Never delete a root directory that still has mounts below it: deleting it
@@ -176,7 +197,10 @@ Options given on the command line take precedence over the file, e.g.
 If you do not want a private mount namespace, use
 [`examples/systemd/app-host-mounts.service`](../examples/systemd/app-host-mounts.service)
 instead: it removes the mounts with `droot umount` in `ExecStopPost=`, and in
-`ExecStartPre=` in case a crash left some behind.
+`ExecStartPre=` in case a crash left some behind. Without the private mount
+namespace, a user of the host with the UID of the application can reach the
+release through `/proc/PID/root` of the application, and run its setuid
+programs as root (see [Security considerations](security.md)).
 
 ```console
 # mkdir -p /etc/droot && cp app.toml /etc/droot/
@@ -289,10 +313,12 @@ droot only to write these settings, not to run the service.
 Install [`examples/systemd/app-rootdir.service`](../examples/systemd/app-rootdir.service)
 as `/etc/systemd/system/app.service`: it holds what is yours (`Type=`,
 `Restart=`, the limits, `[Install]`). The settings of `droot unit` go in a
-drop-in next to it, written again at each deployment:
+drop-in next to it, written again at each deployment: in
+[4. Deploy](#4-deploy), once capze has switched the release, write the
+drop-in before restarting the service.
 
 ```console
-# capze --keep 5 /tmp/app-1.2.3 /var/containers/app
+# capze --keep 5 "$tmp/app-1.2.3" /var/containers/app && rmdir "$tmp"
 # mkdir -p /etc/systemd/system/app.service.d
 # droot unit --config /etc/droot/app.toml -o /etc/systemd/system/app.service.d/droot.conf
 # systemctl daemon-reload
@@ -384,8 +410,11 @@ SystemCallArchitectures=native
   and, without `size=`, half of the memory (the kernel's default). systemd
   creates the mount points it needs in the release, e.g. `/run` and the
   destination of a bind mount. The mounts are made in the private mount
-  namespace of the service: deleting an old release cannot delete files of
-  the host.
+  namespace of the service, as with `--unshare`: deleting an old release
+  cannot delete files of the host, and the setuid programs of the release
+  cannot be run as root through `/proc/PID/root` (see
+  [Security considerations](security.md)). Keep the releases in
+  `/var/containers` all the same.
 - **Working directory.** systemd enters it as the user of the service,
   `droot run` as root: droot warns when the user cannot enter it (the
   service would fail with the status 200/CHDIR). A command with `..` in its
@@ -476,6 +505,7 @@ ExecStart=/usr/local/bin/dewy server \
 ```
 
 ```console
+# install -d -m 700 /var/containers           # only root may reach the setuid programs of the releases
 # mkdir -p /var/containers/app /etc/dewy
 # install -d -o 1500 -g 1500 /var/log/app      # owned by the image's user app (uid 1500 here)
 # install -m 600 /dev/null /etc/dewy/app.env   # then add GITHUB_TOKEN=..., or the AWS_* variables
@@ -540,4 +570,194 @@ Notes:
 - Run as a user other than root, dewy runs droot rootless, which passes the
   socket on as well. The hook, run by dewy, then extracts the files as that
   user, who is root in the user namespace of droot: run the application with
-  `--user 0`.
+  `--user 0`. Give that user a working directory of its own, outside
+  `/var/containers`, with mode 0700
+  (`install -d -m 700 -o USER -g GROUP DIR`): the setuid programs of the
+  image become setuid programs of that user, which the other users of the
+  host could otherwise run as that user.
+
+## Deploying with stretcher
+
+[stretcher](https://github.com/fujiwara/stretcher) is an agent that deploys,
+on each server, the release a manifest describes. A Consul or Serf event
+gives it the URL of the manifest, or its standard input does (over `ssh`,
+for instance). It downloads the archive (Amazon S3, Google Cloud Storage,
+HTTP(S) or a local file), verifies its checksum, extracts it with `tar` into
+a temporary directory, moves the files to the `dest` of the manifest, and
+runs the commands of the manifest before and after. When stretcher runs as
+root, its `tar` keeps the owners, modes, setuid bits and links of the image,
+like `tar -xp` in [4. Deploy](#4-deploy).
+
+By default, stretcher synchronizes `dest` with `rsync -a --delete`, which
+does not suit a root directory of droot: never let it update a root that
+`droot run` uses. rsync deletes what droot creates in the root and the
+archive does not contain: the device nodes and symbolic links of `/dev`, the
+`/var/lock` link, and the mount points of `/dev/pts`, `/dev/shm` and of the
+`--bind`, `--tmpfs` and `--bind-net-files` mounts. With `--unshare`, a
+running application loses them (its `/dev/null`, its bind mounts) while
+stretcher reports a success. Without `--unshare`, rsync deletes files of the
+host through every bind mount left in the root, then reports a failure.
+Instead, have stretcher extract each release into a new directory with
+`sync_strategy: mv`, and switch a `current` symlink, as capze does.
+
+### Publishing a release
+
+Export the image as in [2. Export](#2-export), generate the manifest of the
+release from the template
+[`examples/stretcher/deploy.yml`](../examples/stretcher/deploy.yml) (the
+`sed` command also drops its comments), upload both, and send the event:
+
+```console
+$ droot export --compress gzip --checksum --reproducible --drop-docker-files \
+    -o app-1.2.3.tar.gz registry.example.com/app:1.2.3
+$ sed -e '/^ *#/d' -e 's/@VERSION@/1.2.3/g' \
+    -e "s/@SHA256@/$(cut -d' ' -f1 app-1.2.3.tar.gz.sha256)/" deploy.yml >deploy-1.2.3.yml
+$ aws s3 cp app-1.2.3.tar.gz s3://example-releases/app/
+$ aws s3 cp deploy-1.2.3.yml s3://example-releases/app/
+$ consul event -name deploy-app s3://example-releases/app/deploy-1.2.3.yml
+```
+
+The version names a directory and a file on the servers: use letters,
+digits, `.`, `-` and `_` only. The manifest of the release:
+
+```yaml
+src: s3://example-releases/app/app-1.2.3.tar.gz
+checksum: "3f0c…"
+dest: /var/containers/app/releases/1.2.3
+sync_strategy: mv
+
+commands:
+  pre:
+    - test ! -e /var/containers/app/deployed/1.2.3
+    - mkdir -p /var/containers/app/releases /var/containers/app/deployed
+  post:
+    - touch /var/containers/app/deployed/1.2.3
+    - ln -sfn releases/1.2.3 /var/containers/app/current.new && mv -T /var/containers/app/current.new /var/containers/app/current
+    - systemctl restart app
+    - curl -fsS -o /dev/null --retry 10 --retry-delay 1 --retry-connrefused http://127.0.0.1:8080/health
+    - |
+      cd /var/containers/app || exit
+      ls -1t deployed | tail -n +6 | while read -r v; do
+        [ -d "releases/$v" ] && ! [ "releases/$v" -ef current ] || continue
+        /usr/local/bin/droot umount --root "releases/$v" && rm -rf -- "releases/$v"
+      done
+      true
+```
+
+### Running stretcher
+
+On each server, set up the service as in
+[5. Run with systemd](#5-run-with-systemd): `/etc/droot/app.toml` runs the
+release `current` points to (`root = "/var/containers/app/current"`) in a
+private mount namespace (`unshare = true`). Make `/var/containers/app`
+accessible to root only, and create in it the directory stretcher extracts
+the archives into, on the file system of the releases. Then run stretcher as
+root, with that directory as `TMPDIR`, at each event: `consul watch` runs it
+in the unit
+[`examples/stretcher/stretcher-app.service`](../examples/stretcher/stretcher-app.service):
+
+```ini
+[Service]
+Type=exec
+Environment=TMPDIR=/var/containers/app/.tmp
+EnvironmentFile=/etc/stretcher/app.env
+ExecStart=/usr/bin/consul watch -type event -name deploy-app /usr/local/bin/stretcher
+Restart=on-failure
+```
+
+```console
+# install -d -m 700 /var/containers/app /var/containers/app/.tmp /etc/stretcher
+# install -m 600 /dev/null /etc/stretcher/app.env   # then add CONSUL_HTTP_TOKEN=..., and AWS_REGION=... for S3
+# cp stretcher-app.service /etc/systemd/system/
+# systemctl daemon-reload
+# systemctl enable --now stretcher-app
+```
+
+The releases contain the setuid programs of the image (`su`, `passwd`,
+...): in a directory that other users can reach, the users of the host could
+run them. droot runs as root and needs no access for other users.
+
+`consul watch` runs stretcher when it starts too, with the recent events of
+its agent: stretcher deploys the last one, or, if there is none, logs
+"No Consul events found" and does nothing.
+
+For each event, stretcher:
+
+1. downloads the manifest, then the archive into `$TMPDIR`, and verifies its
+   checksum;
+2. runs the `pre` commands: they stop the deployment of a version that was
+   deployed before (it has a file in `deployed/`), and create `releases/`
+   and `deployed/`;
+3. extracts the archive with `tar`, as root, into a new directory of
+   `$TMPDIR`, and renames it to `releases/1.2.3` (`sync_strategy: mv`);
+4. runs the `post` commands: they record the version in `deployed/`, point
+   `current` to the release (`mv -T` replaces the symlink atomically),
+   restart the service, check that the application answers on its health
+   endpoint, and delete the releases beyond the 5 most recently deployed,
+   except the one `current` points to, after removing with `droot umount`
+   the mounts that a run without `--unshare` may have left in them;
+5. runs the `success` commands, or, after the first step that failed, the
+   `failure` commands, with its log on their standard input.
+
+Notes:
+
+- `$TMPDIR` must be on the file system of the releases: `sync_strategy: mv`
+  renames the extracted directory, which fails across file systems
+  ("invalid cross-device link"). By default, it is `/tmp`, often a tmpfs,
+  which would also hold the whole image in memory. It needs room for the
+  archive and the extracted files. A stretcher killed during a deployment
+  leaves them there: empty the directory when no deployment runs.
+- Each version is deployed once. The `pre` commands stop a manifest
+  delivered again, such as the last event, which `consul watch` passes to
+  stretcher again whenever it starts: the deployment fails, and the
+  `failure` commands run, but nothing changes. Without them, a restart of
+  `stretcher-app.service` would deploy again a release that was rolled back
+  and deleted since, and switch `current` to it. `mv` also refuses a
+  release directory that exists ("file exists"). To deploy a version again,
+  delete `deployed/VERSION`, and its release directory if `current` does not
+  point to it: `droot umount --root releases/VERSION` first.
+- Keep `sync_strategy: mv`, also with a new directory as `dest`. With
+  `rsync`, a manifest delivered again would synchronize the release in use,
+  with the damage described above, and the hard links of the image would
+  become copies (`rsync -a` without `-H`). stretcher ignores unknown keys:
+  with `sync_strategy` misspelled, it falls back to rsync.
+- `systemctl restart` returns as soon as droot has started (`Type=exec`),
+  not when the application works: the health check decides whether the
+  deployment succeeded, before old releases are deleted. Adapt it to the
+  application. With `Type=notify`
+  ([6. Notifications and socket activation](#6-notifications-and-socket-activation)),
+  `systemctl restart` waits until the application reports that it is ready.
+- If a `post` command fails, stretcher stops there: `current` points to the
+  new release, and no release is deleted. To roll back, point `current` to
+  the previous release with the same `ln -sfn` and `mv -T`, and restart the
+  service.
+- With `--unshare`, the mounts of a release disappear with the service, so
+  that deleting old releases is safe. With the mounts in the namespace of
+  the host
+  ([`app-host-mounts.service`](../examples/systemd/app-host-mounts.service)),
+  the `droot umount --root /var/containers/app/current` of `ExecStopPost=`
+  runs after the switch, on the new release: the previous release keeps its
+  mounts until the `post` commands delete it, after `droot umount`. Never
+  delete a release with `rm -rf` alone.
+- The owners, modes and setuid bits are those of the image only if
+  stretcher runs as root. GNU `tar` recognizes gzip archives, and zstd ones
+  (`droot export --compress zstd`) if the `zstd` command is installed.
+- The commands of a manifest run as root on every server, and the checksum
+  that protects the archive comes from the manifest itself: stretcher cannot
+  verify a signature ([2. Export](#2-export)). Whoever can write a manifest,
+  or send the event, which gives the URL of the manifest (`s3://`,
+  `https://`, but also `http://` or `file://`), controls the servers:
+  - serve the manifests from S3 or over HTTPS, with restricted write access;
+  - with Consul, enable ACLs with a default policy of `deny`; give the
+    deployers a token whose policy allows only to send the event
+    (`event "deploy-app" { policy = "write" }`, and
+    `agent_prefix "" { policy = "read" }`, which `consul event` needs), and
+    the servers one that may only read it
+    (`event "deploy-app" { policy = "read" }`, as `CONSUL_HTTP_TOKEN` in
+    `/etc/stretcher/app.env`); encrypt the gossip of the agents, and use
+    TLS;
+  - Serf has no ACLs: every member of the cluster can send the event, and
+    whoever knows the encryption key (`-encrypt`) can join the cluster. Use
+    it only where all of them are trusted.
+
+  See [Security considerations](security.md).

@@ -52,6 +52,23 @@ running on the host with a different root directory.
   using setuid programs such as `sudo`), `MemoryMax=`, `CPUQuota=`.
 - Extract archives with `tar -xpf` as root only if you trust their origin;
   verify a checksum or signature of the archive before deploying it.
+- Keep the root directories in a directory that only root can access, e.g.
+  `install -d -m 700 /var/containers`, and extract archives into one too
+  (`mktemp -d`) before moving them into place. Extracted as root, a root
+  directory holds the setuid-root programs of the image (`su`, `passwd`,
+  `mount`, ...) with their owner and mode: where the users of the host can
+  reach them, they can run them on the host, as root and outside droot, so
+  that a vulnerable one in an old image gives them root. Its setgid
+  programs give them a group such as `shadow` in the same way. The root
+  directory itself must stay searchable (mode `0755`: `mkdir -m 755`,
+  whatever the umask): the users of the container need it.
+- Without `--unshare`, that directory does not protect the root directory
+  from the users of the host with the UID of a process of the container:
+  they can reach it through `/proc/PID/root` of the process while it runs,
+  and run its setuid programs as root. With `--unshare`, the kernel ignores
+  the setuid and setgid bits there, since the files are on mounts of another
+  mount namespace. Use `--unshare`, or run the application under a UID that
+  no user of the host has.
 
 ## Rootless mode
 
@@ -67,6 +84,10 @@ users, the reason why some distributions restrict them — nothing droot or
 - Inside, the same rules as above apply to the application and the root
   directory: a process running as root in the container can modify every
   file of the root directory and of the `--bind` mounts.
+- The files you extract keep the setuid bits of the image: its setuid-root
+  programs become setuid programs of your user. Keep the root directory
+  inside a directory with mode 0700 of your own, or the other users of the
+  host could run them as you.
 - Without subordinate IDs, `setgroups(2)` is denied in the namespace, so the
   host's supplementary groups of the user stay with `COMMAND` (they show as
   `nobody`): their file permissions still apply.

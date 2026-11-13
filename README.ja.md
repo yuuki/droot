@@ -121,10 +121,13 @@ $ aws s3 cp app.tar.gz.sha256 s3://drootexamples/app.tar.gz.sha256
 ```console
 $ aws s3 cp s3://drootexamples/app.tar.gz . && aws s3 cp s3://drootexamples/app.tar.gz.sha256 .
 $ sha256sum -c app.tar.gz.sha256
-$ sudo mkdir -p /var/containers/app
+$ sudo install -d -m 700 /var/containers
+$ sudo mkdir -m 755 /var/containers/app
 $ sudo tar -xpzf app.tar.gz -C /var/containers/app
 $ sudo droot run --cp --user appuser --group appgroup --bind /var/log/app --root /var/containers/app -- command
 ```
+
+`/var/containers` には root だけがアクセスできるようにします。イメージの setuid プログラムと setgid プログラムは所有者ごと展開されるので、そうしないとホストのユーザーがそれを root の権限や `shadow` などのグループの権限で実行できてしまいます（[セキュリティに関する考慮事項](documentation/security.md)を参照）。`--unshare` を指定しない場合、`command` と同じ UID を持つホストのユーザーは、`command` の実行中にこれらのプログラムにたどり着けます。`/var/containers/app` 自体はモード 0755 にします（`-m 755` により umask に関係なくこのモードになります）。コンテナのユーザーがアクセスするためです。
 
 `droot run` は、コマンドの終了後もマウントをそのまま残します（`--unshare` を指定した場合を除く）。新しいバージョンをデプロイする場合など、ディレクトリを削除または置き換える前に、マウントを解除してください。マウントが残ったまま削除すると、バインドマウントを通じてホストのファイルまで削除されてしまいます。
 
@@ -139,11 +142,13 @@ systemd ユニットを含む一通りの手順については、[アプリケ�
 <a id="integration-with-capze"></a>
 ### capze との連携
 
-[capze](https://github.com/yuuki/capze) は、Capistrano 風のディレクトリ構成でアーカイブをデプロイし、直近のリリースを保持します。
+[capze](https://github.com/yuuki/capze) は、Capistrano 風のディレクトリ構成でアーカイブをデプロイし、直近のリリースを保持します。capze は渡されたディレクトリをそのまま `releases/` に移動します。そのため、アーカイブは root だけがアクセスできるディレクトリ（`mktemp -d`）の中の新しいディレクトリに展開し、リリースは上記と同じく `/var/containers` に置いてください。
 
 ```console
-$ sudo mkdir /tmp/app && sudo tar -xpzf app.tar.gz -C /tmp/app   # 上記のようにチェックサムを確認した後で
-$ sudo capze --keep 5 /tmp/app /var/containers/app
+$ sudo mkdir -p /var/containers/app
+$ tmp=$(sudo mktemp -d)
+$ sudo mkdir -m 755 "$tmp/app" && sudo tar -xpzf app.tar.gz -C "$tmp/app"   # 上記のようにチェックサムを確認した後で
+$ sudo capze --keep 5 "$tmp/app" /var/containers/app && sudo rmdir "$tmp"
 ```
 
 <a id="integration-with-dewy"></a>
@@ -169,6 +174,24 @@ $ gh release create v1.2.3 app_linux_amd64.tar.gz app_linux_amd64.tar.gz.sha256
 ```
 
 `--unshare` は必須です。dewy は古いリリースを削除するため、これがないと `droot run` のバインドマウントを通じてホストのファイルが削除されます。アプリケーションは、dewy の待ち受けソケットを `SERVER_STARTER_PORT` から受け取ります。systemd ユニットと詳細は [dewy によるデプロイ](documentation/deployment.md#deploying-with-dewy)（英語）を参照してください。
+
+<a id="integration-with-stretcher"></a>
+### stretcher との連携
+
+[stretcher](https://github.com/fujiwara/stretcher) は、Consul や Serf のイベントでマニフェストの URL を受け取り、そのマニフェストが示すリリースを各サーバーにデプロイします。アーカイブをダウンロードしてチェックサムを検証し、`tar` で展開して（root で実行すれば、所有者と setuid ビットは保たれます）、マニフェストのコマンドを実行します。リリースごとに新しいディレクトリに展開させ（`sync_strategy: mv`。`TMPDIR` は同じファイルシステムに置きます）、`post` コマンドで `current` を切り替えてください。次はテンプレート [`examples/stretcher/deploy.yml`](examples/stretcher/deploy.yml) の抜粋です。テンプレートは、各バージョンを一度だけデプロイし、新しいリリースを確認してから古いリリースを削除します。
+
+```yaml
+src: s3://example-releases/app/app-1.2.3.tar.gz
+checksum: "3f0c…"   # app-1.2.3.tar.gz.sha256 の値
+dest: /var/containers/app/releases/1.2.3
+sync_strategy: mv
+commands:
+  post:
+    - ln -sfn releases/1.2.3 /var/containers/app/current.new && mv -T /var/containers/app/current.new /var/containers/app/current
+    - systemctl restart app
+```
+
+`droot run` が使っているルートディレクトリを、stretcher の既定の `rsync -a --delete` で更新してはいけません。rsync は、droot がルートディレクトリの中に作ったもの（`/dev` のファイルやマウントポイント）を削除します。`--unshare` なしで実行した場合は、バインドマウントを通じてホストのファイルも削除します。サーバーの準備と詳細は [stretcher によるデプロイ](documentation/deployment.md#deploying-with-stretcher)（英語）を参照してください。
 
 <a id="commands"></a>
 ## コマンド
@@ -368,8 +391,8 @@ droot unshare [COMMAND [ARG...]]
 root 以外のユーザー向けのコマンドです。[rootless](#root-を使わない実行) の `droot run` と同じ ID マッピングのユーザー名前空間で、`COMMAND`（デフォルトは `$SHELL`）を root として実行します。これにより、アーカイブのファイルの所有者がそのまま保たれます。
 
 ```console
-$ droot unshare tar -xpf app.tar -C app
-$ droot unshare rm -rf app      # サブ ID が所有するファイル
+$ droot unshare tar -xpf app.tar -C ~/containers/app
+$ droot unshare rm -rf ~/containers/app      # サブ ID が所有するファイル
 ```
 
 <a id="global-options"></a>
@@ -410,9 +433,12 @@ root 以外のユーザーが `droot run` を実行すると、**rootless** で�
 $ grep "^$USER:" /etc/subuid /etc/subgid
 /etc/subuid:alice:100000:65536
 /etc/subgid:alice:100000:65536
-$ mkdir app && droot unshare tar -xpf app.tar -C app
-$ droot run --root app --bind ~/app-data:/data
+$ install -d -m 700 ~/containers && install -d -m 755 ~/containers/app
+$ droot unshare tar -xpf app.tar -C ~/containers/app
+$ droot run --root ~/containers/app --bind ~/app-data:/data
 ```
+
+`~/containers`（モード 0700）には自分のユーザーしか入れないようにします。イメージの setuid root プログラムは自分のユーザーの setuid プログラムになるため、そうしないとホストのほかのユーザーが、それらを自分のユーザーの権限で実行できてしまいます。
 
 rootless では、ハードリミットを引き上げること（`--ulimit`）はできず、バインドマウントできるのは自分のユーザーが読めるものだけです。ディストリビューションによっては、非特権ユーザー名前空間が制限されています。Ubuntu 24.04 以降では、`kernel.apparmor_restrict_unprivileged_userns` が 0 であるか、AppArmor プロファイルが droot を許可していない限り、ユーザー名前空間でケーパビリティが使えません。それ以外の環境では `user.max_user_namespaces` と `kernel.unprivileged_userns_clone` を確認してください。ロックは `$XDG_RUNTIME_DIR/droot` に作成されます。
 
@@ -460,7 +486,7 @@ $ DOCKER_HOST=ssh://deploy@build.example.com droot export -o app.tar app
 <a id="documentation"></a>
 ## ドキュメント
 
-- [アプリケーションのデプロイ](documentation/deployment.md): `docker build` から systemd サービスまで（[ユニットの例](examples/systemd)付き）、および [dewy によるデプロイ](documentation/deployment.md#deploying-with-dewy)
+- [アプリケーションのデプロイ](documentation/deployment.md): `docker build` から systemd サービスまで（[ユニットの例](examples/systemd)付き）、および [dewy によるデプロイ](documentation/deployment.md#deploying-with-dewy) と [stretcher によるデプロイ](documentation/deployment.md#deploying-with-stretcher)
 - [コマンドラインリファレンス](documentation/cli.md)
 - [droot の仕組み](documentation/architecture.md)
 - [セキュリティに関する考慮事項](documentation/security.md)

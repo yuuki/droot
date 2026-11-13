@@ -294,15 +294,15 @@ For users other than root. Runs COMMAND (default: $SHELL, or /bin/sh) as root in
 .PP
 .nf
 .RS 4
-droot unshare tar \-xpf app.tar \-C app
+droot unshare tar \-xpf app.tar \-C ~/containers/app
 .RE
 .fi
 .PP
-Files owned by subordinate IDs can only be deleted in the namespace too:
+Keep ~/containers at mode 0700: the setuid\-root programs of the image become setuid programs of your user. Files owned by subordinate IDs can only be deleted in the namespace too:
 .PP
 .nf
 .RS 4
-droot unshare rm \-rf app
+droot unshare rm \-rf ~/containers/app
 .RE
 .fi
 .TP

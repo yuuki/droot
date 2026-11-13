@@ -208,13 +208,13 @@ droot unshare [COMMAND [ARG...]]
 For users other than root. Runs COMMAND (default: $SHELL, or /bin/sh) as root in a user namespace with the ID mapping of 'droot run' without root: your user as root, and your subordinate IDs (/etc/subuid and /etc/subgid, with the newuidmap and newgidmap commands) as the other users. There, files keep the owners of an archive, so that the users of an image can write their files:
 
 ```
-droot unshare tar -xpf app.tar -C app
+droot unshare tar -xpf app.tar -C ~/containers/app
 ```
 
-Files owned by subordinate IDs can only be deleted in the namespace too:
+Keep ~/containers at mode 0700: the setuid-root programs of the image become setuid programs of your user. Files owned by subordinate IDs can only be deleted in the namespace too:
 
 ```
-droot unshare rm -rf app
+droot unshare rm -rf ~/containers/app
 ```
 
 | Option | Description |
