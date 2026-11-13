@@ -81,11 +81,13 @@ func TestUnitFromImage(t *testing.T) {
 RootDirectory=` + dir + `
 MountAPIVFS=yes
 PrivateDevices=yes
+InaccessiblePaths=-+/dev/pts -+/dev/hugepages
 ExecStart=
 ExecStart=@"/app/bin/server" "server" "--port=80"
 WorkingDirectory=/app
 User=1500
 Group=1500
+SupplementaryGroups=
 SupplementaryGroups=1500 1600
 Environment="PATH=/usr/bin:/app/bin"
 Environment="OPTS=-Da=\"b c\" 100%% $HOME"
@@ -94,9 +96,11 @@ Environment="HOME=/home/app"
 Environment="USER=app"
 Environment="LOGNAME=app"
 KillSignal=SIGTERM
+TemporaryFileSystem="/dev/shm:rw,nosuid,nodev,noexec,nostrictatime,mode=1777,size=64m"
 ProtectKernelTunables=yes
 ProtectControlGroups=yes
 InaccessiblePaths=-+/proc/acpi -+/proc/asound -+/proc/interrupts -+/proc/kcore -+/proc/keys -+/proc/latency_stats -+/proc/sched_debug -+/proc/scsi -+/proc/timer_list -+/proc/timer_stats -+/sys/devices/virtual/powercap -+/sys/firmware -+/sys/kernel/debug -+/sys/kernel/security -+/sys/kernel/tracing
+CapabilityBoundingSet=
 CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER CAP_SETGID CAP_SETUID CAP_NET_BIND_SERVICE
 NoNewPrivileges=yes
 `
@@ -119,16 +123,18 @@ func TestUnitOptions(t *testing.T) {
 	for _, line := range []string{
 		`ExecStart=@"/app/bin/server" "./server" "$$x" "50%%"`,
 		"WorkingDirectory=/app/bin",
+		"User=\n",
 		"Group=0",
-		"SupplementaryGroups=0",
+		"SupplementaryGroups=\nSupplementaryGroups=0\n",
 		`Environment="HOME=/root"`,
 		`BindPaths="/srv/data":"/data":rbind`,
 		`BindReadOnlyPaths="/etc/app.yml":"/app/app.yml":norbind`,
 		`BindReadOnlyPaths="/etc/resolv.conf":"/etc/resolv.conf":norbind`,
 		`BindReadOnlyPaths="/etc/hosts":"/etc/hosts":norbind`,
 		`TemporaryFileSystem="/tmp:rw,nosuid,nodev,exec,nostrictatime,mode=1777,size=1m"`,
+		`TemporaryFileSystem="/dev/shm:rw,nosuid,nodev,noexec,nostrictatime,mode=1777,size=64m"`,
 		"ReadOnlyPaths=+/",
-		"CapabilityBoundingSet=CAP_DAC_OVERRIDE CAP_FOWNER CAP_SETGID CAP_SETUID CAP_NET_BIND_SERVICE CAP_NET_RAW",
+		"CapabilityBoundingSet=\nCapabilityBoundingSet=CAP_DAC_OVERRIDE CAP_FOWNER CAP_SETGID CAP_SETUID CAP_NET_BIND_SERVICE CAP_NET_RAW",
 		"SystemCallFilter=~unshare setns mount ",
 		"SystemCallErrorNumber=EPERM",
 		"RestrictNamespaces=yes",
@@ -143,10 +149,10 @@ func TestUnitOptions(t *testing.T) {
 			t.Errorf("missing %q in:\n%s", line, got)
 		}
 	}
-	// Root runs without User=, with which systemd would drop CAP_SETUID
-	// (NoNewPrivileges=); --no-mask and --no-new-privileges=false drop
-	// their settings.
-	for _, setting := range []string{"User=", "ProtectKernelTunables=", "InaccessiblePaths=", "NoNewPrivileges="} {
+	// Root runs without User= (an empty one), with which systemd would drop
+	// CAP_SETUID; --no-mask and --no-new-privileges=false drop their
+	// settings.
+	for _, setting := range []string{"User=0", "ProtectKernelTunables=", "InaccessiblePaths=-+/proc", "NoNewPrivileges="} {
 		if strings.Contains(got, "\n"+setting) {
 			t.Errorf("unexpected %s in:\n%s", setting, got)
 		}
@@ -160,7 +166,7 @@ func TestUnitOptions(t *testing.T) {
 	if got, err = runUnit(t, "--root", dir, "--no-dropcaps"); err != nil || strings.Contains(got, "CapabilityBoundingSet") {
 		t.Errorf("--no-dropcaps: got %v,\n%s", err, got)
 	}
-	if got, err = runUnit(t, "--root", dir, "--cap-drop", "ALL"); err != nil || !strings.Contains(got, "\nCapabilityBoundingSet=\n") {
+	if got, err = runUnit(t, "--root", dir, "--cap-drop", "ALL"); err != nil || !strings.Contains(got, "\nCapabilityBoundingSet=\nNoNewPrivileges") {
 		t.Errorf("--cap-drop ALL: got %v,\n%s", err, got)
 	}
 }
@@ -213,6 +219,10 @@ func TestUnitExampleConfig(t *testing.T) {
 
 func TestUnitErrors(t *testing.T) {
 	dir := unitRoot(t)
+	// An executable that systemd cannot name.
+	if err := os.WriteFile(filepath.Join(dir, "app", `q"uote`), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	empty := t.TempDir()
 	for _, tt := range []struct {
 		args []string
@@ -223,6 +233,14 @@ func TestUnitErrors(t *testing.T) {
 		{[]string{"--hostname", "web"}, "--hostname has no counterpart"},
 		{[]string{"--bind", "/dev/fuse"}, "/dev of its own"},
 		{[]string{"--tmpfs", "/dev"}, "/dev of its own"},
+		{[]string{"--tmpfs", "/dev/pts"}, "/dev of its own"},
+		{[]string{"--user", "65535"}, "65535"},
+		{[]string{"--ulimit", "nice=41"}, "up to 40"},
+		{[]string{"--ulimit", "nice=unlimited"}, "up to 40"},
+		{[]string{"--ulimit", "cpu=18446744073709"}, "up to 18446744073708"},
+		{[]string{"--workdir", "/nothere"}, "working directory"},
+		{[]string{"--workdir", "/app/data.txt"}, "not a directory"},
+		{[]string{"--", "/app/q\"uote"}, "quotes or backslashes"},
 		{[]string{"--bind", "/srv:/proc/x"}, "inside /proc and /sys"},
 		{[]string{"--bind", "/srv:/"}, "root directory itself"},
 		{[]string{"--env", "my.var=1"}, "letters, digits and underscores"},
@@ -238,6 +256,86 @@ func TestUnitErrors(t *testing.T) {
 	}
 	if _, err := runUnit(t, "--root", empty); err == nil || !strings.Contains(err.Error(), "a command to run is required") {
 		t.Errorf("no command: got %v", err)
+	}
+}
+
+func TestUnitPaths(t *testing.T) {
+	dir := unitRoot(t)
+	// /srv/link -> /opt/x: the kernel resolves /srv/link/../bin to
+	// /opt/bin, not /srv/bin.
+	for _, d := range []string{"opt/x", "opt/bin", "srv/bin"} {
+		if err := os.MkdirAll(filepath.Join(dir, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "opt/bin/app"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "srv/bin/app"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/opt/x", filepath.Join(dir, "srv/link")); err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		args       []string
+		exec, wdir string
+	}{
+		{[]string{"--workdir", "/srv/link", "--", "../bin/app"}, `@"/opt/bin/app" "../bin/app"`, "/srv/link"},
+		{[]string{"--workdir", "/srv/link/..", "--", "bin/app"}, `@"/opt/bin/app" "bin/app"`, "/opt"},
+		{[]string{"--", "/srv/link/../bin/app"}, `@"/opt/bin/app" "/srv/link/../bin/app"`, "/app"},
+		{[]string{"--", "/srv/bin/app"}, `"/srv/bin/app"`, "/app"},
+	} {
+		got, err := runUnit(t, append([]string{"--root", dir, "--user", "0"}, tt.args...)...)
+		if err != nil {
+			t.Errorf("%q: %v", tt.args, err)
+			continue
+		}
+		if !strings.Contains(got, "\nExecStart="+tt.exec+"\n") || !strings.Contains(got, "\nWorkingDirectory="+tt.wdir+"\n") {
+			t.Errorf("%q: want ExecStart=%s and WorkingDirectory=%s in:\n%s", tt.args, tt.exec, tt.wdir, got)
+		}
+	}
+}
+
+func TestUnitTmpfs(t *testing.T) {
+	dir := unitRoot(t)
+	got, err := runUnit(t, "--root", dir, "--tmpfs", "/tmp:size=50%", "--tmpfs", "/run/a%b", "--tmpfs", "/dev/shm:size=1m")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range []string{
+		// "%" is a specifier in the path, not in the options.
+		`TemporaryFileSystem="/tmp:rw,nosuid,nodev,noexec,nostrictatime,mode=1777,size=50%"`,
+		`TemporaryFileSystem="/run/a%%b:rw,nosuid,nodev,noexec,nostrictatime,mode=1777,size=50%"`,
+		`TemporaryFileSystem="/dev/shm:rw,nosuid,nodev,noexec,nostrictatime,mode=1777,size=1m"`,
+	} {
+		if !strings.Contains(got, "\n"+line+"\n") {
+			t.Errorf("missing %q in:\n%s", line, got)
+		}
+	}
+	if strings.Count(got, "/dev/shm") != 1 {
+		t.Errorf("--tmpfs /dev/shm replaces droot's:\n%s", got)
+	}
+	checkWithSystemd(t, got)
+}
+
+func TestUnitEnvFromUnit(t *testing.T) {
+	if _, ok := os.LookupEnv("OPTS"); ok {
+		t.Skip("OPTS is set")
+	}
+	dir := unitRoot(t)
+	// A bare --env OPTS that droot unit does not have: neither it nor the
+	// image's OPTS, so that the Environment= of the unit gives it.
+	got, err := runUnit(t, "--root", dir, "--env", "OPTS")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "OPTS") {
+		t.Errorf("OPTS should be left out:\n%s", got)
+	}
+	t.Setenv("OPTS", "from droot unit")
+	if got, err = runUnit(t, "--root", dir, "--env", "OPTS"); err != nil || !strings.Contains(got, `Environment="OPTS=from droot unit"`) {
+		t.Errorf("OPTS set: got %v,\n%s", err, got)
 	}
 }
 
@@ -266,8 +364,9 @@ func TestTmpfsOptions(t *testing.T) {
 		opts mounter.FSOptions
 		want string
 	}{
-		{tmpfsDefaults, "rw,nosuid,nodev,noexec,nostrictatime,mode=1777"},
+		{tmpfsDefaults, "rw,nosuid,nodev,noexec,nostrictatime,mode=1777,size=50%"},
 		{mounter.FSOptions{ReadOnly: true, NoAtime: true, Data: []string{"mode=0700", "size=64m"}}, "ro,suid,dev,exec,nostrictatime,noatime,mode=0700,size=64m"},
+		{mounter.FSOptions{Data: []string{"nr_blocks=100"}}, "rw,suid,dev,exec,nostrictatime,mode=1777,nr_blocks=100"},
 	} {
 		if got := tmpfsOptions(tt.opts); got != tt.want {
 			t.Errorf("tmpfsOptions(%+v) = %q, want %q", tt.opts, got, tt.want)

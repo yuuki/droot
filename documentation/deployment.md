@@ -309,11 +309,13 @@ With [`app.toml`](../examples/droot/app.toml), the drop-in is:
 RootDirectory=/var/containers/app/releases/20261113010203
 MountAPIVFS=yes
 PrivateDevices=yes
+InaccessiblePaths=-+/dev/pts -+/dev/hugepages
 ExecStart=
 ExecStart="/app/bin/server" "--config" "/app/config.yml"
 WorkingDirectory=/app
 User=1500
 Group=1500
+SupplementaryGroups=
 SupplementaryGroups=1500
 Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 Environment="HOME=/home/app"
@@ -324,7 +326,8 @@ BindPaths="/var/log/app":"/var/log/app":norbind
 BindReadOnlyPaths="/etc/app/config.yml":"/app/config.yml":norbind
 BindReadOnlyPaths="/etc/resolv.conf":"/etc/resolv.conf":norbind
 BindReadOnlyPaths="/etc/hosts":"/etc/hosts":norbind
-TemporaryFileSystem="/tmp:rw,nosuid,nodev,noexec,nostrictatime,mode=1777"
+TemporaryFileSystem="/tmp:rw,nosuid,nodev,noexec,nostrictatime,mode=1777,size=50%"
+TemporaryFileSystem="/dev/shm:rw,nosuid,nodev,noexec,nostrictatime,mode=1777,size=64m"
 ProtectKernelTunables=yes
 ProtectControlGroups=yes
 InaccessiblePaths=-+/proc/acpi -+/proc/asound … -+/sys/kernel/tracing
@@ -343,41 +346,67 @@ SystemCallArchitectures=native
   rollback), write the drop-in again and run `systemctl daemon-reload`
   before restarting the service; otherwise it restarts the previous release.
   capze and dewy do not do it for you.
+- **Your unit and the drop-in.** A setting of the drop-in replaces the same
+  setting of your unit. The drop-in also resets `ExecStart=`, `User=`,
+  `SupplementaryGroups=` and `CapabilityBoundingSet=`, which systemd would
+  otherwise merge with yours (it ORs the lines of `CapabilityBoundingSet=`),
+  and its `SystemCallErrorNumber=EPERM` applies to your own
+  `SystemCallFilter=`. To change a setting of the drop-in, add a drop-in
+  that sorts after it, e.g. `app.service.d/zz-local.conf`.
 - **Users and groups.** systemd looks `User=` and `Group=` up in the host's
   databases, numeric IDs included: the host needs a user and a group with
   the IDs of the image (here 1500), or the service fails with the status
   217/USER or 216/GROUP; droot warns when they are missing. systemd also
   adds the host's supplementary groups of that user. The supplementary
   groups of the image that the host does not have are left out, with a
-  warning. As root, the service has no `User=`: with `NoNewPrivileges=`,
-  systemd would remove `CAP_SETUID` from a `User=0` service.
+  warning. As root, the service has an empty `User=`: systemd 255 removes
+  `CAP_SETUID` from a `User=0` service with these settings.
 - **Environment.** A bare `--env KEY` (`env = ["APP_ENV"]`) takes its value
-  from the environment of `droot unit`, and is left out without one: the
-  `Environment=` of your unit then gives it. systemd adds variables of its
-  own (`INVOCATION_ID`, `LANG`, `SYSTEMD_EXEC_PID`, `MEMORY_PRESSURE_*`, and
+  from the environment of `droot unit`. When `droot unit` does not have it,
+  the drop-in leaves `KEY` out, with the image's value, so that the
+  `Environment=` of your unit gives it, as `droot run` would take it from
+  there; without one, the service has no `KEY`. The other variables of the
+  drop-in replace those of your unit. systemd adds variables of its own
+  (`INVOCATION_ID`, `LANG`, `SYSTEMD_EXEC_PID`, `MEMORY_PRESSURE_*`, and
   `SHELL` from the host's user database). Names must be made of letters,
   digits and underscores, and values cannot contain control characters
-  (newlines, tabs): droot refuses the others. Anyone on the host can read the
-  drop-in and `systemctl show app`: give secrets with an `EnvironmentFile=`
-  (mode 0600) in your unit, whose variables take precedence over the
-  drop-in's.
+  (newlines, tabs): droot refuses the others. Anyone on the host can read
+  the drop-in and `systemctl show app`: give secrets with an
+  `EnvironmentFile=` (mode 0600) in your unit, whose variables take
+  precedence over the drop-in's.
 - **File systems.** `/proc`, `/sys` and `/dev` are systemd's (`MountAPIVFS=`,
-  `PrivateDevices=`), much like droot's; `/run` is an empty tmpfs. systemd
+  `PrivateDevices=`); `/run` is an empty tmpfs. systemd's `/dev` would show
+  the host's pseudo-terminals, `/dev/shm` and `/dev/hugepages`: the drop-in
+  hides the first and the last, and mounts a tmpfs of 64 MiB on `/dev/shm`
+  like `droot run`. The service has no pseudo-terminals (`droot run` has a
+  devpts instance of its own), and its `/dev` also has `char`, `log` and the
+  host's `mqueue`. A `--tmpfs` has at most 400k inodes (systemd's default)
+  and, without `size=`, half of the memory (the kernel's default). systemd
   creates the mount points it needs in the release, e.g. `/run` and the
   destination of a bind mount. The mounts are made in the private mount
   namespace of the service: deleting an old release cannot delete files of
   the host.
+- **Working directory.** systemd enters it as the user of the service,
+  `droot run` as root: droot warns when the user cannot enter it (the
+  service would fail with the status 200/CHDIR). A command with `..` in its
+  path is resolved through the symlinks of the release, as the kernel
+  would.
 - **Not translated.** `--copy-files`, `--env-file`, `--hostname`, a `--bind`
-  on `/dev` (systemd's `/dev` denies the other devices) and a `--tmpfs` on
-  `/dev` are refused. `--unshare` is implied. `--seccomp default` denies the
-  same system calls as droot, and with `SystemCallArchitectures=native` also
-  every 32-bit system call of a 64-bit kernel, which droot lets through.
+  on `/dev` or below (systemd's `/dev` denies the other devices) and a
+  `--tmpfs` there, but on `/dev/shm`, are refused. `--unshare` is implied.
+  `--seccomp default` denies the same system calls as droot, and, like
+  droot, those of other architectures (`SystemCallArchitectures=native`).
+  Values that systemd would refuse or ignore are errors: a command whose
+  path has quotes or backslashes, the ID 65535, a `--ulimit` of `nice`
+  above 40, ...
 - **systemd versions.** The settings exist since systemd 238 (RHEL 8 has
   239); `--unshare-ipc` needs 248 (`PrivateIPC=`). `--read-only`
   (`ReadOnlyPaths=+/`) was tested with systemd 255. An older systemd ignores
   the settings it does not know, with a warning in the journal, and the
   service runs with fewer protections: check `journalctl -u app` after a
-  first start.
+  first start. systemd may also set `no_new_privs` itself for a service that
+  does not run as root, despite `--no-new-privileges=false` (see
+  `NoNewPrivileges=` in systemd.exec(5)).
 
 `systemctl cat app` shows the unit and its drop-in together.
 

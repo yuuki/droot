@@ -13,7 +13,8 @@ After=network-online.target
 [Service]
 Type=exec
 # env = ["APP_ENV"] in app.toml takes its value from the environment of
-# droot unit; without it there, the drop-in leaves it out, and this gives it.
+# droot unit. Without it there, the drop-in leaves APP_ENV out, the image's
+# value too, and this gives it.
 Environment=APP_ENV=production
 Restart=on-failure
 RestartSec=5s

@@ -58,6 +58,13 @@ Legend: **[security]**, **[bug]**, **[compat]** (compatibility),
   refused.
 - **[ux]** The settings are those of one release: a deployment must write
   them again and run `systemctl daemon-reload`, which capze and dewy do not.
+- **[compat]** The service has no pseudo-terminals (systemd cannot mount a
+  devpts instance for it, and the host's is hidden), its `--tmpfs` mounts
+  have at most 400k inodes, and systemd enters the working directory as the
+  user of the service, not as root.
+- **[compat]** The image's environment can set systemd's `NOTIFY_SOCKET`,
+  `LISTEN_*` and `WATCHDOG_*` over those systemd gives the service, where
+  `droot run` gives systemd's precedence.
 - **[compat]** `--read-only` (`ReadOnlyPaths=+/`) was tested with systemd 255
   only; the version that added the `+` prefix is not known.
 

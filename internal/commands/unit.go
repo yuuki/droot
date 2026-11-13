@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"io/fs"
 	"maps"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -47,12 +47,15 @@ func unitCommand() *cli.Command {
 			"must exist with the IDs of the image (droot warns otherwise), and adds the\n" +
 			"host's supplementary groups of the user. The supplementary groups of the image\n" +
 			"that the host does not have are left out. A bare --env KEY takes its value from\n" +
-			"the environment of droot unit.\n\n" +
+			"the environment of droot unit; without one, KEY is left out, the image's value\n" +
+			"too, so that the Environment= of your unit gives it.\n\n" +
+			"The service has no pseudo-terminals: systemd's /dev would show the host's.\n" +
 			"The options that have no counterpart in a unit are refused: --copy-files,\n" +
-			"--env-file, --hostname, a --bind on /dev or below, and a --tmpfs on /dev.\n" +
-			"--unshare is implied. Values that systemd would read differently, such as\n" +
-			"environment variables whose names are not made of letters, digits and\n" +
-			"underscores or whose values contain control characters, are errors.",
+			"--env-file, --hostname, and a --bind or a --tmpfs on /dev or below (but\n" +
+			"--tmpfs /dev/shm). --unshare is implied. Values that systemd would read\n" +
+			"differently or refuse, such as environment variables whose names are not made\n" +
+			"of letters, digits and underscores or whose values contain control characters,\n" +
+			"are errors.",
 		StopAtFirstArg: true,
 		ArgsComplete:   "command",
 		Flags: append(runFlags(), &cli.Flag{Name: "output", Aliases: []string{"o"}, Kind: cli.String, Placeholder: "FILE", Complete: "file",
@@ -133,7 +136,7 @@ func checkUnitOptions(cmd *cli.Invocation, opts *runOptions) error {
 			return cmd.UsageError("%s %s: droot never mounts on the root directory itself", opt, p)
 		case under(p, "/proc") || under(p, "/sys"):
 			return cmd.UsageError("%s %s: droot never mounts inside /proc and /sys", opt, p)
-		case p == "/dev" || (bind && under(p, "/dev")):
+		case under(p, "/dev") && (bind || p != "/dev/shm"):
 			return cmd.UsageError("%s %s: the service gets a /dev of its own (PrivateDevices=), which denies the other devices", opt, p)
 		}
 		return nil
@@ -146,9 +149,6 @@ func checkUnitOptions(cmd *cli.Invocation, opts *runOptions) error {
 	for _, t := range opts.tmpfs {
 		if err := check("--tmpfs", t.path, false); err != nil {
 			return err
-		}
-		if strings.Contains(t.path, ":") {
-			return cmd.UsageError("--tmpfs %s: systemd cannot mount a tmpfs on a path with a colon", t.path)
 		}
 	}
 	return nil
@@ -180,12 +180,19 @@ func (u *unitFile) String() string {
 // unit translates the run of argv, configured as for droot run, into the
 // settings of a systemd service.
 func (r *runner) unit(argv []string) (*unitFile, error) {
+	// droot run takes a bare --env KEY from its own environment, which the
+	// Environment= of its unit gives. When droot unit does not have it, the
+	// settings leave KEY out, the image's value too, which would override
+	// the Environment= of the unit they are a drop-in of.
+	var fromUnit []string
 	for _, e := range r.cmd.Strings("env") {
-		if k, _, ok := strings.Cut(e, "="); !ok {
-			if _, found := os.LookupEnv(k); !found {
-				log.Warnf("--env %s: not set in the environment of droot unit, so left out: the Environment= of your unit can give it", k)
-			}
+		if _, found := os.LookupEnv(e); !strings.Contains(e, "=") && !found {
+			fromUnit = append(fromUnit, e)
 		}
+	}
+	if len(fromUnit) > 0 {
+		log.Warnf("--env %s: not set when droot unit runs, so left out of the settings (the image's value too): "+
+			"the Environment= of your unit gives it, as droot run would take it from there", strings.Join(fromUnit, ", --env "))
 	}
 	extraEnv, err := commandLineEnv(r.cmd)
 	if err != nil {
@@ -209,7 +216,10 @@ func (r *runner) unit(argv []string) (*unitFile, error) {
 		return nil, err
 	}
 	env = defaultEnv(env, cred)
-	workdir := r.workdir()
+	workdir, err := r.unitWorkdir(cred)
+	if err != nil {
+		return nil, err
+	}
 	exe, err := lookPathInRoot(r.root, argv[0], workdir, env, cred)
 	if err != nil {
 		return nil, err
@@ -233,18 +243,27 @@ func (r *runner) unit(argv []string) (*unitFile, error) {
 	// droot run's.
 	u.set("MountAPIVFS", "yes")
 	u.set("PrivateDevices", "yes")
+	// systemd's /dev has the host's devpts, /dev/shm and /dev/hugepages,
+	// where droot run makes a devpts instance and a tmpfs of its own: no
+	// pseudo-terminals (see setMounts for /dev/shm).
+	u.set("InaccessiblePaths", "-+/dev/pts", "-+/dev/hugepages")
 
 	if err := u.setCommand(exe, argv); err != nil {
 		return nil, err
 	}
-	wd, err := systemd.PathValue("the working directory", filepath.Clean(workdir))
+	wd, err := systemd.PathValue("the working directory", workdir)
 	if err != nil {
 		return nil, err
 	}
 	u.set("WorkingDirectory", wd)
-	u.setCredential(cred)
+	if err := u.setCredential(cred); err != nil {
+		return nil, err
+	}
 	for _, e := range env {
 		k, v, _ := strings.Cut(e, "=")
+		if slices.Contains(fromUnit, k) {
+			continue
+		}
 		a, err := systemd.EnvAssignment(k, v)
 		if err != nil {
 			return nil, err
@@ -264,14 +283,69 @@ func (r *runner) unit(argv []string) (*unitFile, error) {
 	if r.cmd.Bool("read-only") {
 		u.set("ReadOnlyPaths", "+/") // "+": relative to RootDirectory=
 	}
-	u.setProtections(r.cmd, r.opts)
+	if err := u.setProtections(r.cmd, r.opts); err != nil {
+		return nil, err
+	}
 	return u, nil
+}
+
+// unitWorkdir returns the working directory of COMMAND (see workdir) as the
+// kernel resolves it, which must exist. systemd enters it as the user of the
+// service, after the switch, where droot run enters it as root: a directory
+// the user cannot search is reported.
+func (r *runner) unitWorkdir(cred *identity.Credential) (string, error) {
+	workdir := r.workdir()
+	fi, err := r.root.Stat(workdir)
+	if err != nil {
+		return "", fmt.Errorf("the working directory: %w", err)
+	}
+	if !fi.IsDir() {
+		return "", fmt.Errorf("the working directory %s is not a directory", workdir)
+	}
+	if !osutil.CanSearch(fi, cred.UID, cred.GID, cred.Groups) {
+		log.Warnf("systemd enters the working directory %s as uid %d, who cannot: the service would fail (status 200/CHDIR)", workdir, cred.UID)
+	}
+	return pathInRoot(r.root, workdir, true)
+}
+
+// pathInRoot returns the path p of root as the kernel resolves it, for a
+// unit. A path without ".." component is only cleaned. With one, the
+// directories are resolved through their symlinks, as ".." leaves the
+// target of a symlink, not the symlink itself; the last component is kept
+// as it is (a symlink to an executable stays one) unless dir is set.
+func pathInRoot(root *osutil.Root, p string, dir bool) (string, error) {
+	if !slices.Contains(strings.Split(p, "/"), "..") {
+		return filepath.Clean(p), nil
+	}
+	d, base := p, ""
+	if !dir {
+		i := strings.LastIndex(p, "/")
+		d, base = p[:i+1], p[i+1:]
+	}
+	f, err := root.OpenDir(d, false, nil)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	host, err := os.Readlink(osutil.FdPath(int(f.Fd())))
+	if err != nil {
+		return "", err
+	}
+	rel, ok := strings.CutPrefix(host, root.Path())
+	if !ok || (rel != "" && rel[0] != '/') {
+		return "", fmt.Errorf("cannot tell where %s leads in %s (%s)", p, root.Path(), host)
+	}
+	return filepath.Join("/", rel, base), nil
 }
 
 // setCommand sets ExecStart= to run argv, whose executable is exe. The
 // empty ExecStart= first resets the command of the unit the settings are a
 // drop-in of.
 func (u *unitFile) setCommand(exe string, argv []string) error {
+	// systemd refuses quotes and backslashes in the path of the command.
+	if err := systemd.CheckPath("the command", exe); err != nil {
+		return err
+	}
 	var words []string
 	// systemd expands $VAR in the arguments, argv[0] included, but not in
 	// the path of the executable: "@" sets them apart when they differ.
@@ -296,22 +370,33 @@ func (u *unitFile) setCommand(exe string, argv []string) error {
 
 // setCredential sets the user and the groups of the service. systemd needs
 // them in the host's databases: missing users and groups are reported, and
-// missing supplementary groups left out.
-func (u *unitFile) setCredential(cred *identity.Credential) {
-	// User=0 would also make systemd drop CAP_SETUID with
-	// NoNewPrivileges=: a service runs as root without User=.
+// missing supplementary groups left out. The empty User= and
+// SupplementaryGroups= reset those of the unit the settings are a drop-in
+// of.
+func (u *unitFile) setCredential(cred *identity.Credential) error {
+	for _, id := range append([]int{cred.UID, cred.GID}, cred.Groups...) {
+		if id == 65535 {
+			return fmt.Errorf("systemd refuses the user and group ID 65535 (the 16-bit -1): use --user and --group to choose others")
+		}
+	}
+	// Root is the default, which an empty User= restores: with User=0,
+	// systemd 255 drops CAP_SETUID (with NoNewPrivileges= and the
+	// sandboxing of these settings).
 	if cred.UID != 0 {
 		u.set("User", strconv.Itoa(cred.UID))
 		if !hostHasUID(cred.UID) {
 			log.Warnf("the host has no user with the uid %d: systemd will not start the service (status 217/USER) until it has one", cred.UID)
 		}
+	} else {
+		u.set("User")
 	}
 	u.set("Group", strconv.Itoa(cred.GID))
 	if !hostHasGID(cred.GID) {
 		log.Warnf("the host has no group with the gid %d: systemd will not start the service (status 216/GROUP) until it has one", cred.GID)
 	}
+	u.set("SupplementaryGroups")
 	if cred.Groups == nil {
-		return
+		return nil
 	}
 	var groups, missing []string
 	for _, g := range cred.Groups {
@@ -328,6 +413,7 @@ func (u *unitFile) setCredential(cred *identity.Credential) {
 		log.Warnf("leaving out the supplementary groups %s, which the host does not have: systemd would not start the service", strings.Join(missing, ", "))
 	}
 	u.set("SupplementaryGroups", groups...)
+	return nil
 }
 
 // setMounts sets the bind and tmpfs mounts of opts, and those of
@@ -357,11 +443,13 @@ func (u *unitFile) setMounts(opts *runOptions, bindNet bool) error {
 		}
 		u.set(key, src+":"+dest+":"+rec)
 	}
-	for _, t := range opts.tmpfs {
-		if err := systemd.CheckPath("the path of a tmpfs", t.path); err != nil {
-			return err
-		}
-		w, err := systemd.Word("the tmpfs "+t.path, t.path+":"+tmpfsOptions(t.opts))
+	tmpfs := slices.Clone(opts.tmpfs)
+	if !slices.ContainsFunc(tmpfs, func(t tmpfsMount) bool { return t.path == "/dev/shm" }) {
+		// Over the host's /dev/shm of systemd's /dev, as droot run.
+		tmpfs = append(tmpfs, tmpfsMount{path: "/dev/shm", opts: shmfs})
+	}
+	for _, t := range tmpfs {
+		w, err := systemd.TmpfsWord(t.path, tmpfsOptions(t.opts))
 		if err != nil {
 			return err
 		}
@@ -371,8 +459,10 @@ func (u *unitFile) setMounts(opts *runOptions, bindNet bool) error {
 }
 
 // tmpfsOptions returns the mount options of a tmpfs for
-// TemporaryFileSystem=, whose defaults (nodev,strictatime,mode=0755) are
-// not those of droot run (nosuid,nodev,noexec and the kernel's mode 1777).
+// TemporaryFileSystem=, whose defaults (nodev,strictatime,mode=0755,
+// size=10%,nr_inodes=400k) are not those of droot run (nosuid,nodev,noexec
+// and the kernel's mode 1777 and size of 50% of the memory). The number of
+// inodes keeps systemd's default, which the kernel's cannot be written as.
 func tmpfsOptions(o mounter.FSOptions) string {
 	pick := func(set bool, yes, no string) string {
 		if set {
@@ -390,8 +480,16 @@ func tmpfsOptions(o mounter.FSOptions) string {
 	if o.NoAtime {
 		opts = append(opts, "noatime")
 	}
-	if !slices.ContainsFunc(o.Data, func(d string) bool { return strings.HasPrefix(d, "mode=") }) {
+	has := func(prefixes ...string) bool {
+		return slices.ContainsFunc(o.Data, func(d string) bool {
+			return slices.ContainsFunc(prefixes, func(p string) bool { return strings.HasPrefix(d, p) })
+		})
+	}
+	if !has("mode=") {
 		opts = append(opts, "mode=1777")
+	}
+	if !has("size=", "nr_blocks=") {
+		opts = append(opts, "size=50%")
 	}
 	return strings.Join(append(opts, o.Data...), ",")
 }
@@ -399,7 +497,7 @@ func tmpfsOptions(o mounter.FSOptions) string {
 // setProtections sets the counterparts of the protections of droot run:
 // the masked /proc and /sys, the capabilities, no_new_privs, the seccomp
 // filter, the resource limits, the IPC namespace and --no-systemd.
-func (u *unitFile) setProtections(cmd *cli.Invocation, opts *runOptions) {
+func (u *unitFile) setProtections(cmd *cli.Invocation, opts *runOptions) error {
 	if !cmd.Bool("no-mask") {
 		// /proc/sys, /sys and the like read-only, and /sys/fs/cgroup.
 		u.set("ProtectKernelTunables", "yes")
@@ -416,8 +514,13 @@ func (u *unitFile) setProtections(cmd *cli.Invocation, opts *runOptions) {
 		for _, c := range slices.Sorted(maps.Keys(opts.keepCaps)) {
 			caps = append(caps, osutil.CapabilityName(c))
 		}
-		// Empty: no capabilities at all.
-		u.set("CapabilityBoundingSet", caps...)
+		// systemd ORs the lines of CapabilityBoundingSet=: the empty one
+		// resets the set (that of the unit the settings are a drop-in of
+		// included), to no capabilities at all.
+		u.set("CapabilityBoundingSet")
+		if len(caps) > 0 {
+			u.set("CapabilityBoundingSet", caps...)
+		}
 	}
 	if !cmd.IsSet("no-new-privileges") || cmd.Bool("no-new-privileges") {
 		u.set("NoNewPrivileges", "yes")
@@ -432,6 +535,9 @@ func (u *unitFile) setProtections(cmd *cli.Invocation, opts *runOptions) {
 		u.set("PrivateIPC", "yes")
 	}
 	for _, l := range opts.rlimits {
+		if err := checkUnitRlimit(l); err != nil {
+			return err
+		}
 		value := func(v uint64) string {
 			if v == osutil.RlimInfinity {
 				return "infinity"
@@ -448,6 +554,27 @@ func (u *unitFile) setProtections(cmd *cli.Invocation, opts *runOptions) {
 		u.set("NotifyAccess", "none")
 		u.set("UnsetEnvironment", systemd.ServiceVariables...)
 	}
+	return nil
+}
+
+// unitRlimitMax are the largest values systemd 255 accepts for the limits
+// that are not counts or sizes: LimitCPU= in seconds, LimitRTTIME= in
+// microseconds and LimitNICE= as the raw value of RLIMIT_NICE, which has no
+// infinity.
+var unitRlimitMax = map[string]uint64{"cpu": 18446744073708, "rttime": math.MaxInt64, "nice": 40}
+
+// checkUnitRlimit refuses a --ulimit that systemd would ignore.
+func checkUnitRlimit(l osutil.Rlimit) error {
+	limit, ok := unitRlimitMax[l.Name]
+	if !ok {
+		return nil
+	}
+	for _, v := range []uint64{l.Soft, l.Hard} {
+		if v > limit && (v != osutil.RlimInfinity || l.Name == "nice") {
+			return fmt.Errorf("--ulimit %s: systemd accepts %s up to %d", l.Name, l.Name, limit)
+		}
+	}
+	return nil
 }
 
 // lookPathInRoot finds the executable of COMMAND, file, in root as droot
@@ -464,14 +591,15 @@ func lookPathInRoot(root *osutil.Root, file, workdir string, env []string, cred 
 		return osutil.CanExecuteFile(p, fi, cred.UID, cred.GID, cred.Groups)
 	}
 	if strings.Contains(file, "/") {
-		p := filepath.Clean(file)
-		if !filepath.IsAbs(file) {
-			p = filepath.Join("/", workdir, file)
+		p := file
+		if !filepath.IsAbs(p) {
+			// Not joined lexically: root resolves ".." like the kernel.
+			p = workdir + "/" + file
 		}
 		if err := isExecutable(p); err != nil {
-			return "", &fs.PathError{Op: "exec", Path: file, Err: err}
+			return "", err
 		}
-		return p, nil
+		return pathInRoot(root, p, false)
 	}
 	pathEnv, _ := environ.Lookup(env, "PATH")
 	p, err := osutil.LookPath(file, pathEnv, isExecutable)

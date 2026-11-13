@@ -22,7 +22,9 @@ import (
 //   - Words are double-quoted, with backslashes and double quotes escaped
 //     by a backslash: settings that take lists (ExecStart=, Environment=,
 //     BindPaths=, ...) unquote their words, and C-unescape them.
-//   - "%" starts a specifier (%h, %n, ...) in most settings: it is doubled.
+//   - "%" starts a specifier (%h, %n, ...) in most settings: it is doubled,
+//     except in the options of TemporaryFileSystem=, where systemd expands
+//     none.
 //   - "$" starts a variable in ExecStart=: it is doubled there.
 //   - Paths written as they are, unquoted (RootDirectory=,
 //     WorkingDirectory=), cannot contain quotes or backslashes, which some
@@ -56,22 +58,22 @@ func checkText(what, s string) error {
 // quote returns s double-quoted, with backslashes and double quotes escaped,
 // "%" doubled, and "$" doubled if dollar is set.
 func quote(s string, dollar bool) string {
+	return `"` + escape(s, true, dollar) + `"`
+}
+
+// escape escapes backslashes and double quotes in s, and doubles "%" if
+// percent is set and "$" if dollar is set.
+func escape(s string, percent, dollar bool) string {
 	var b strings.Builder
-	b.WriteByte('"')
 	for _, c := range s {
-		switch c {
-		case '\\', '"':
+		switch {
+		case c == '\\' || c == '"':
 			b.WriteByte('\\')
-		case '%':
-			b.WriteByte('%')
-		case '$':
-			if dollar {
-				b.WriteByte('$')
-			}
+		case c == '%' && percent, c == '$' && dollar:
+			b.WriteRune(c)
 		}
 		b.WriteRune(c)
 	}
-	b.WriteByte('"')
 	return b.String()
 }
 
@@ -136,6 +138,23 @@ func CheckPath(what, p string) error {
 		return &UnitValueError{What: what, Value: p, Reason: "it ends with white space, which systemd strips"}
 	}
 	return nil
+}
+
+// TmpfsWord returns PATH:OPTIONS quoted for TemporaryFileSystem=, which
+// expands specifiers in the path but not in the options: "%" is doubled in
+// the path only. The path cannot contain a colon, which ends it.
+func TmpfsWord(path, options string) (string, error) {
+	what := "the tmpfs " + path
+	if err := CheckPath(what, path); err != nil {
+		return "", err
+	}
+	if strings.Contains(path, ":") {
+		return "", &UnitValueError{What: what, Value: path, Reason: "a colon would end the path"}
+	}
+	if err := checkText(what, options); err != nil {
+		return "", err
+	}
+	return `"` + escape(path, true, false) + ":" + escape(options, false, false) + `"`, nil
 }
 
 // PathValue returns the path p for a setting that takes one path as it is

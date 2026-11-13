@@ -103,6 +103,13 @@ func CanExecuteFile(path string, fi fs.FileInfo, uid, gid int, groups []int) err
 	return nil
 }
 
+// CanSearch reports whether the user uid, with the primary group gid and
+// the supplementary groups, may enter the directory whose information is
+// fi, judging from its permission bits.
+func CanSearch(fi fs.FileInfo, uid, gid int, groups []int) bool {
+	return fi.IsDir() && permits(fi, 0o1, uid, gid, groups)
+}
+
 // permits reports whether the permission bit (0o1 execute or search, 0o2
 // write, 0o4 read) of the file fi is granted to the user uid, with the
 // primary group gid and the supplementary groups. Root needs an execute

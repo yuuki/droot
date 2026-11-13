@@ -355,24 +355,25 @@ out: systemd changes the root, mounts and drops privileges.
 3. Find the command in the root (`Root.Stat`, the PATH of the environment,
    the working directory for a relative path) and check that the user can
    execute it. `ExecStart=` names the executable by its absolute path; `@`
-   keeps `argv[0]` as given when it differs.
+   keeps `argv[0]` as given when it differs. A path with `..` is resolved
+   through the symlinks of the root, as the kernel would, not lexically.
 4. Write the settings, every value quoted by `internal/systemd`
    ([security](security.md#droot-unit)):
 
 | droot run | systemd |
 |---|---|
 | `--root` (resolved) | `RootDirectory=`, `MountAPIVFS=yes` |
-| The device files of `/dev` | `PrivateDevices=yes` |
+| The device files of `/dev`, a devpts instance, a tmpfs on `/dev/shm` | `PrivateDevices=yes`, `InaccessiblePaths=` of the host's `/dev/pts` and `/dev/hugepages`, `TemporaryFileSystem=/dev/shm` |
 | `COMMAND`, `ENTRYPOINT`, `CMD` | `ExecStart=` (after an empty `ExecStart=`, for a drop-in) |
 | `--workdir`, `WORKDIR` | `WorkingDirectory=` |
-| `--user`, `--group`, `USER` | `User=` (not for root), `Group=`, `SupplementaryGroups=`, numeric |
+| `--user`, `--group`, `USER` | `User=` (empty for root), `Group=`, `SupplementaryGroups=`, numeric |
 | `ENV`, `/.drootenv`, `--env`, `PATH`, `HOME`, `USER`, `LOGNAME` | `Environment=` |
 | `STOPSIGNAL` | `KillSignal=` |
 | `--bind`, `--robind`, `--bind-net-files` | `BindPaths=`, `BindReadOnlyPaths=` (`norbind` unless `rbind`) |
-| `--tmpfs` | `TemporaryFileSystem=` (droot's options and mode 1777 explicitly) |
+| `--tmpfs` | `TemporaryFileSystem=` (droot's options, mode 1777 and size 50% explicitly) |
 | `--read-only` | `ReadOnlyPaths=+/` |
 | The masked and read-only parts of `/proc` and `/sys` | `ProtectKernelTunables=`, `ProtectControlGroups=`, `InaccessiblePaths=` |
-| The capabilities kept | `CapabilityBoundingSet=` |
+| The capabilities kept | `CapabilityBoundingSet=` (after an empty one) |
 | `no_new_privs` | `NoNewPrivileges=` |
 | `--seccomp default` | `SystemCallFilter=~...`, `SystemCallErrorNumber=EPERM`, `RestrictNamespaces=`, `SystemCallArchitectures=native` |
 | `--ulimit` | `Limit*=` |
@@ -384,18 +385,27 @@ Design notes:
 - **A drop-in.** The settings are only those droot derives, in a
   `[Service]` section: the unit of the user keeps `Type=`, `Restart=`, the
   limits and the dependencies, and the drop-in can be replaced at each
-  deployment.
-- **Root without `User=`.** With `User=0` and `NoNewPrivileges=yes`, systemd
-  255 removes `CAP_SETUID` from the effective and permitted sets, which
-  breaks servers that start as root and switch users. Without `User=`, the
-  service runs as root with the capabilities of the bounding set.
+  deployment. The settings systemd merges across files are reset first
+  (`ExecStart=`, `User=`, `SupplementaryGroups=`, `CapabilityBoundingSet=`),
+  so that the unit of the user cannot widen them.
+- **Root without `User=`.** With `User=0`, `NoNewPrivileges=yes` and the
+  sandboxing of these settings, systemd 255 removes `CAP_SETUID` from the
+  effective and permitted sets, which breaks servers that start as root and
+  switch users. With an empty `User=`, the service runs as root with the
+  capabilities of the bounding set.
+- **`/dev`.** systemd's private `/dev` binds the host's `/dev/pts`,
+  `/dev/shm` and `/dev/hugepages`. systemd cannot mount a devpts instance
+  for a service: `/dev/pts` is hidden instead, and the service has no
+  pseudo-terminals.
 - **The host's databases.** systemd refuses to start a service whose `User=`,
   `Group=` or supplementary groups the host does not know, even as numeric
   IDs. droot warns about the user and the group, and leaves the missing
   supplementary groups out.
 
-These behaviours of systemd were checked with systemd 255 running a service
-in an exported root directory.
+These behaviours of systemd were checked with systemd 255 running services
+in exported root directories (booted as PID 1 in pid and mount namespaces,
+with private `/run`, `/tmp` and `/var/tmp` and every unit that initializes
+the machine masked: `sysinit.target` would clean the host's `/tmp`).
 
 ## `droot umount`
 

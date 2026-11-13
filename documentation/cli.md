@@ -132,9 +132,9 @@ Prints the [Service] settings of a systemd unit that runs COMMAND in ROOT\_DIR w
 
 The settings are those of one release: ROOT\_DIR is resolved (systemd does not follow a symlink there), and the configuration of the image is read now. Generate them again whenever ROOT\_DIR changes.
 
-systemd looks the user and the groups up in the host's databases, where they must exist with the IDs of the image (droot warns otherwise), and adds the host's supplementary groups of the user. The supplementary groups of the image that the host does not have are left out. A bare --env KEY takes its value from the environment of droot unit.
+systemd looks the user and the groups up in the host's databases, where they must exist with the IDs of the image (droot warns otherwise), and adds the host's supplementary groups of the user. The supplementary groups of the image that the host does not have are left out. A bare --env KEY takes its value from the environment of droot unit; without one, KEY is left out, the image's value too, so that the Environment= of your unit gives it.
 
-The options that have no counterpart in a unit are refused: --copy-files, --env-file, --hostname, a --bind on /dev or below, and a --tmpfs on /dev. --unshare is implied. Values that systemd would read differently, such as environment variables whose names are not made of letters, digits and underscores or whose values contain control characters, are errors.
+The service has no pseudo-terminals: systemd's /dev would show the host's. The options that have no counterpart in a unit are refused: --copy-files, --env-file, --hostname, and a --bind or a --tmpfs on /dev or below (but --tmpfs /dev/shm). --unshare is implied. Values that systemd would read differently or refuse, such as environment variables whose names are not made of letters, digits and underscores or whose values contain control characters, are errors.
 
 | Option | Description |
 |---|---|

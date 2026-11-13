@@ -144,18 +144,22 @@ privileges) would escape the container. Every value therefore goes through
 
 - Control characters are refused, so no value can end its line: a newline in
   an environment variable or an argument is an error, not an escape.
-- Words are double-quoted, with `\` and `"` escaped, `%` (specifiers) doubled,
-  and `$` (variables) doubled in `ExecStart=`. Paths written unquoted
-  (`RootDirectory=`, `WorkingDirectory=`) cannot contain quotes, backslashes
-  or trailing white space.
+- Words are double-quoted, with `\` and `"` escaped, `%` (specifiers) doubled
+  where systemd expands them (not in the options of `TemporaryFileSystem=`),
+  and `$` (variables) doubled in `ExecStart=`. Paths cannot contain quotes,
+  backslashes or trailing white space.
 - The image never chooses a setting: users and groups are written as numeric
   IDs, `STOPSIGNAL` as a signal name from a fixed table (or left out), the
   names of environment variables only with letters, digits and underscores.
   The header quotes the image's name and ID.
 
-A fuzz test checks that every value is refused or read back by systemd's
-rules as itself, and the unit tests run `systemd-analyze verify` when it is
-installed.
+The rules of each setting were checked with systemd 255. A fuzz test
+checks that every value is refused or written as one line that these rules
+read back as the value itself; it tests the quoting against a model of
+systemd's parsing, not systemd itself. The unit tests also run
+`systemd-analyze verify`, when it is installed, which reports the values
+systemd refuses or ignores while parsing, but not those that fail later
+(e.g. a mount option the kernel refuses).
 
 The service gets the protections of `droot run` from systemd, with these
 differences:
@@ -163,9 +167,16 @@ differences:
 - systemd adds the host's supplementary groups of the user (`User=`), which
   may grant access to files of the host; droot sets the groups of the image.
   Check the groups of the host's user with these IDs.
-- `--seccomp default` denies the same system calls, plus, with
-  `SystemCallArchitectures=native`, every 32-bit system call of a 64-bit
-  kernel. `PrivateDevices=` also removes `CAP_MKNOD` and `CAP_SYS_RAWIO`.
+- systemd's private `/dev` (`PrivateDevices=`) has the host's `/dev/pts`,
+  `/dev/shm` and `/dev/hugepages`: a service running as root could open the
+  terminals of the host's users and the shared memory of other services. The
+  drop-in hides `/dev/pts` and `/dev/hugepages` (`InaccessiblePaths=`) and
+  mounts a tmpfs of its own on `/dev/shm`, so the service has no
+  pseudo-terminals. `PrivateDevices=` also removes `CAP_MKNOD` and
+  `CAP_SYS_RAWIO`.
+- The drop-in resets `User=`, `SupplementaryGroups=` and
+  `CapabilityBoundingSet=`, so that your unit cannot widen them by accident
+  (systemd ORs the lines of `CapabilityBoundingSet=`).
 - The drop-in, and `systemctl show`, can be read by any user of the host:
   give secrets with an `EnvironmentFile=` of mode 0600, not with `--env`.
 - An older systemd ignores the settings it does not know (with a warning in

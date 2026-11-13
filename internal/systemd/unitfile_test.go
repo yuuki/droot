@@ -45,6 +45,54 @@ func unquoteWord(w string, dollar bool) (string, error) {
 	return b.String(), nil
 }
 
+// unquoteTmpfs decodes a word written by TmpfsWord as systemd reads
+// TemporaryFileSystem= (checked with systemd 255): the word is unquoted
+// without C escapes, split at the first colon, and specifiers are expanded
+// in the path only.
+func unquoteTmpfs(w string) (path, options string, err error) {
+	if len(w) < 2 || w[0] != '"' || w[len(w)-1] != '"' {
+		return "", "", errors.New("not a double-quoted word")
+	}
+	in := []rune(w[1 : len(w)-1])
+	var b strings.Builder
+	for i := 0; i < len(in); i++ {
+		switch c := in[i]; c {
+		case '\\':
+			if i+1 == len(in) {
+				return "", "", errors.New("trailing backslash")
+			}
+			i++
+			b.WriteRune(in[i])
+		case '"':
+			return "", "", errors.New("unescaped quote")
+		default:
+			b.WriteRune(c)
+		}
+	}
+	path, options, ok := strings.Cut(b.String(), ":")
+	if !ok {
+		return "", "", errors.New("no colon")
+	}
+	path, err = unquoteWord(`"`+strings.ReplaceAll(path, `"`, `\"`)+`"`, false)
+	return path, options, err
+}
+
+func TestTmpfsWord(t *testing.T) {
+	for _, tt := range []struct{ path, opts, want string }{
+		{"/tmp", "size=50%,mode=1777", `"/tmp:size=50%,mode=1777"`},
+		{"/run/a%b c", `uid=1,x"y\z`, `"/run/a%%b c:uid=1,x\"y\\z"`},
+	} {
+		if got, err := TmpfsWord(tt.path, tt.opts); err != nil || got != tt.want {
+			t.Errorf("TmpfsWord(%q, %q) = %q, %v; want %q", tt.path, tt.opts, got, err, tt.want)
+		}
+	}
+	for _, bad := range [][2]string{{"/a:b", ""}, {"rel", ""}, {"/tmp", "size=1m\nExecStartPre=x"}} {
+		if got, err := TmpfsWord(bad[0], bad[1]); err == nil {
+			t.Errorf("TmpfsWord(%q, %q) = %q, want an error", bad[0], bad[1], got)
+		}
+	}
+}
+
 func TestQuoting(t *testing.T) {
 	for _, tt := range []struct {
 		in, word, exec string
@@ -149,6 +197,21 @@ func FuzzQuoting(f *testing.F) {
 			got, err := unquoteWord(w, dollar)
 			if err != nil || got != s {
 				t.Fatalf("%q written as %q, read back as %q, %v", s, w, got, err)
+			}
+		}
+		// s as the options of a tmpfs, and as a component of its path.
+		if w, err := TmpfsWord("/t", s); err == nil {
+			if p, o, err := unquoteTmpfs(w); err != nil || p != "/t" || o != s || strings.ContainsAny(w, "\n\r") {
+				t.Fatalf("options %q written as %q, read back as %q, %q, %v", s, w, p, o, err)
+			}
+		}
+		if p := "/" + s; CheckPath("p", p) == nil && !strings.Contains(s, ":") {
+			w, err := TmpfsWord(p, "size=50%")
+			if err != nil {
+				t.Fatalf("path %q refused: %v", p, err)
+			}
+			if gp, o, err := unquoteTmpfs(w); err != nil || gp != p || o != "size=50%" {
+				t.Fatalf("path %q written as %q, read back as %q, %q, %v", p, w, gp, o, err)
 			}
 		}
 	})
