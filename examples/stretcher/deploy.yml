@@ -1,0 +1,67 @@
+# The manifest of stretcher (https://github.com/fujiwara/stretcher) for one
+# release of the app run by droot. It is a template: generate the manifest of
+# each release from it, e.g. in CI, which also drops these comments:
+#
+#   droot export --compress gzip --checksum --reproducible --drop-docker-files \
+#       -o app-1.2.3.tar.gz registry.example.com/app:1.2.3
+#   sed -e '/^ *#/d' -e 's/@VERSION@/1.2.3/g' \
+#       -e "s/@SHA256@/$(cut -d' ' -f1 app-1.2.3.tar.gz.sha256)/" \
+#       deploy.yml >deploy-1.2.3.yml
+#
+# The version names a directory and a file on the servers: use letters,
+# digits, ".", "-" and "_" only. Upload the archive and the manifest.
+#
+# stretcher, run as root on each server with TMPDIR=/var/containers/app/.tmp,
+# downloads the archive, verifies its checksum, extracts it into a new release
+# directory and switches "current" to it. The service runs
+# droot run --config /etc/droot/app.toml (examples/droot/app.toml:
+# root = "/var/containers/app/current", unshare = true).
+# See documentation/deployment.md#deploying-with-stretcher.
+#
+# Never let the default sync_strategy of stretcher, rsync -a --delete, update
+# a root directory that droot run uses: rsync deletes what droot creates in
+# the root (the files of /dev, the mount points) and, through the bind mounts
+# of a run without --unshare, files of the host.
+
+src: s3://example-releases/app/app-@VERSION@.tar.gz
+# The SHA-256 of the archive, from app-@VERSION@.tar.gz.sha256.
+checksum: "@SHA256@"
+# A new directory for every release.
+dest: /var/containers/app/releases/@VERSION@
+# Rename the directory stretcher extracted the archive into to dest: the
+# files keep the owners, modes, setuid bits and links that tar extracted as
+# root, hard links included. That directory is in $TMPDIR, which must be on
+# the file system of dest. Keep mv: stretcher ignores misspelled keys, and
+# falls back to rsync.
+sync_strategy: mv
+
+commands:
+  pre:
+    # Deploy each version once, even if its release was deleted since: this
+    # stops an event delivered again before anything changes. consul watch
+    # passes the recent events of its agent to stretcher whenever it starts,
+    # and stretcher deploys the last one.
+    - test ! -e /var/containers/app/deployed/@VERSION@
+    - mkdir -p /var/containers/app/releases /var/containers/app/deployed
+  post:
+    - touch /var/containers/app/deployed/@VERSION@
+    # Switch "current" atomically: each droot run uses the release current
+    # points to when it starts.
+    - ln -sfn releases/@VERSION@ /var/containers/app/current.new && mv -T /var/containers/app/current.new /var/containers/app/current
+    - systemctl restart app
+    # systemctl restart returns as soon as droot has started (Type=exec):
+    # check that the new release works before deleting old releases. Adapt
+    # the check to the application.
+    - curl -fsS -o /dev/null --retry 10 --retry-delay 1 --retry-connrefused http://127.0.0.1:8080/health
+    # Delete the releases beyond the 5 most recently deployed, but never the
+    # one current points to (after a rollback). droot umount first removes the
+    # mounts that a run without --unshare left below a release: rm -rf alone
+    # would delete files of the host through them. A release that cannot be
+    # unmounted is left, and tried again at the next deployment.
+    - |
+      cd /var/containers/app || exit
+      ls -1t deployed | tail -n +6 | while read -r v; do
+        [ -d "releases/$v" ] && ! [ "releases/$v" -ef current ] || continue
+        /usr/local/bin/droot umount --root "releases/$v" && rm -rf -- "releases/$v"
+      done
+      true
