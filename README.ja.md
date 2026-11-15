@@ -4,9 +4,10 @@ droot
 [English](README.md) | 日本語
 
 [![CI](https://github.com/yuuki/droot/actions/workflows/ci.yml/badge.svg)](https://github.com/yuuki/droot/actions/workflows/ci.yml)
+[![Security](https://github.com/yuuki/droot/actions/workflows/security.yml/badge.svg)](https://github.com/yuuki/droot/actions/workflows/security.yml)
 [![Latest Version](https://img.shields.io/github/release/yuuki/droot.svg?style=flat-square)](https://github.com/yuuki/droot/releases)
-[![Go Report Card](https://goreportcard.com/badge/github.com/yuuki/droot)](https://goreportcard.com/report/github.com/yuuki/droot)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square)](LICENSE)
+[![Go version](https://img.shields.io/github/go-mod/go-version/yuuki/droot?style=flat-square)](go.mod)
 
 英語版の README が正本です。内容が異なる場合は英語版を参照してください。
 
