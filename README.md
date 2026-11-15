@@ -3,6 +3,7 @@ droot
 
 English | [日本語](README.ja.md)
 
+[![AI Generated](https://img.shields.io/badge/AI%20Generated-Claude-orange?logo=anthropic&style=flat-square)](https://claude.ai/claude-code)
 [![CI](https://github.com/yuuki/droot/actions/workflows/ci.yml/badge.svg)](https://github.com/yuuki/droot/actions/workflows/ci.yml)
 [![Security](https://github.com/yuuki/droot/actions/workflows/security.yml/badge.svg)](https://github.com/yuuki/droot/actions/workflows/security.yml)
 [![Latest Version](https://img.shields.io/github/release/yuuki/droot.svg?style=flat-square)](https://github.com/yuuki/droot/releases)
