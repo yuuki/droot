@@ -3,10 +3,12 @@ droot
 
 English | [日本語](README.ja.md)
 
+[![AI Generated](https://img.shields.io/badge/AI%20Generated-Claude-orange?logo=anthropic&style=flat-square)](https://claude.ai/claude-code)
 [![CI](https://github.com/yuuki/droot/actions/workflows/ci.yml/badge.svg)](https://github.com/yuuki/droot/actions/workflows/ci.yml)
+[![Security](https://github.com/yuuki/droot/actions/workflows/security.yml/badge.svg)](https://github.com/yuuki/droot/actions/workflows/security.yml)
 [![Latest Version](https://img.shields.io/github/release/yuuki/droot.svg?style=flat-square)](https://github.com/yuuki/droot/releases)
-[![Go Report Card](https://goreportcard.com/badge/github.com/yuuki/droot)](https://goreportcard.com/report/github.com/yuuki/droot)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square)](LICENSE)
+[![Go version](https://img.shields.io/github/go-mod/go-version/yuuki/droot?style=flat-square)](go.mod)
 
 Droot is a simple chroot-based application container engine: build with
 `docker build`, ship a plain tar archive, and run it with `chroot(2)` instead of
