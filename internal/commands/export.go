@@ -17,6 +17,8 @@ import (
 	"strconv"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/yuuki/droot/internal/cli"
 	"github.com/yuuki/droot/internal/docker"
 	"github.com/yuuki/droot/internal/image"
@@ -116,6 +118,9 @@ func doExport(ctx context.Context, cmd *cli.Invocation) error {
 	if checksum && toStdout {
 		return cmd.UsageError("--checksum needs -o FILE")
 	}
+	if checksum && !leadsToPath(output) {
+		return cmd.UsageError("--checksum needs a path for FILE.sha256, but -o %s leads to a file without one (a pipe, a socket, a deleted file)", output)
+	}
 	algo := cmd.String("compress")
 	if algo != "" && !slices.Contains(compressions, algo) {
 		return cmd.UsageError("unknown compression %q: want gzip or zstd", algo)
@@ -164,7 +169,7 @@ func doExport(ctx context.Context, cmd *cli.Invocation) error {
 	if toStdout {
 		return writeBuffered(ctx, os.Stdout, export)
 	}
-	if err := writeFile(ctx, output, export); err != nil {
+	if err := writeFile(ctx, output, true, export); err != nil {
 		return err
 	}
 	if checksum {
@@ -227,7 +232,7 @@ func daemonExport(ctx context.Context, cmd *cli.Invocation, name string, opts do
 // output, to output.sha256, in the format of sha256sum.
 func writeChecksum(ctx context.Context, output string, sum hash.Hash) error {
 	line := fmt.Sprintf("%x  %s\n", sum.Sum(nil), filepath.Base(output))
-	return writeFile(ctx, output+".sha256", func(w io.Writer) error {
+	return writeFile(ctx, output+".sha256", false, func(w io.Writer) error {
 		_, err := io.WriteString(w, line)
 		return err
 	})
@@ -326,10 +331,11 @@ func openCancelable(ctx context.Context, path string) (*os.File, error) {
 	}
 }
 
-// writeFile writes the archive to path with the same result as os.Create
-// (droot <= 0.7), but atomically: the data goes to a temporary file in the
-// same directory, which replaces the file only on success, so that a failed
-// or interrupted export never leaves a truncated archive behind.
+// writeFile writes the output of droot export or droot unit to path with the
+// same result as os.Create (droot <= 0.7), but atomically: the data goes to
+// a temporary file in the same directory, which replaces the file only on
+// success, so that a failed or interrupted export never leaves a truncated
+// archive behind.
 //
 //   - New files get mode 0666 minus the umask; an existing file keeps its
 //     mode and owner.
@@ -337,22 +343,31 @@ func openCancelable(ctx context.Context, path string) (*os.File, error) {
 //   - A file with several hard links is truncated and written in place (not
 //     atomically) so that the links are kept.
 //   - Non-regular files such as /dev/stdout or named pipes are written
-//     directly.
-func writeFile(ctx context.Context, path string, write func(io.Writer) error) error {
-	path, err := followSymlinks(path)
+//     directly; a terminal is refused if archive is set (a tar archive).
+//   - A link of /proc whose target is not the path of the file it leads to,
+//     such as /proc/self/fd/1 -> pipe:[1234] (/dev/stdout when STDOUT is a
+//     pipe), is opened as is, the kernel resolving it; a regular file, e.g.
+//     a deleted one, is written in place.
+func writeFile(ctx context.Context, path string, archive bool, write func(io.Writer) error) error {
+	path, viaLink, err := followSymlinks(path)
 	if err != nil {
 		return err
 	}
 	fi, err := os.Stat(path)
-	if err != nil {
+	switch {
+	case err != nil && !viaLink:
 		// No file at path, or none that can be stat'ed: a new file.
 		return writeAtomically(ctx, path, nil, write)
-	}
-	if fi.IsDir() {
+	case err != nil:
+		return err
+	case fi.IsDir():
 		return errors.New(path + " is a directory")
-	}
-	if !fi.Mode().IsRegular() {
-		return writeDirectly(ctx, path, write)
+	case !fi.Mode().IsRegular():
+		return writeDirectly(ctx, path, fi, archive, write)
+	case viaLink:
+		// Only the link leads to the file, e.g. a deleted file: no path to
+		// replace atomically.
+		return writeInPlace(ctx, path, write)
 	}
 	if _, _, nlink, ok := osutil.FileOwner(fi); ok && nlink > 1 {
 		return writeInPlace(ctx, path, write)
@@ -360,18 +375,53 @@ func writeFile(ctx context.Context, path string, write func(io.Writer) error) er
 	return writeAtomically(ctx, path, fi, write)
 }
 
-// writeDirectly writes to the file at path that is not a regular file, such
-// as /dev/stdout or a named pipe, refusing a terminal.
-func writeDirectly(ctx context.Context, path string, write func(io.Writer) error) error {
-	f, err := openCancelable(ctx, path)
+// writeDirectly writes to the file fi at path that is not a regular file,
+// such as /dev/stdout or a named pipe, refusing a terminal for an archive.
+func writeDirectly(ctx context.Context, path string, fi fs.FileInfo, archive bool, write func(io.Writer) error) error {
+	f, err := openDirectly(ctx, path, fi)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
-	if osutil.IsTerminal(f) {
+	if archive && osutil.IsTerminal(f) {
 		return errors.New("refusing to write a tar archive to a terminal")
 	}
 	return writeBuffered(ctx, f, write)
+}
+
+// openDirectly opens the file fi at path, which is not a regular file, for
+// writing. open(2) cannot open a socket (ENXIO): a socket that is the
+// standard input, output or error of droot, such as /dev/stdout when STDOUT
+// is a socket, is duplicated instead.
+func openDirectly(ctx context.Context, path string, fi fs.FileInfo) (*os.File, error) {
+	if fi.Mode()&fs.ModeSocket != 0 {
+		if fd, ok := standardDescriptor(path); ok {
+			nfd, err := unix.FcntlInt(uintptr(fd), unix.F_DUPFD_CLOEXEC, 0)
+			if err != nil {
+				return nil, &fs.PathError{Op: "dup", Path: path, Err: err}
+			}
+			return os.NewFile(uintptr(nfd), path), nil
+		}
+	}
+	return openCancelable(ctx, path)
+}
+
+// standardDescriptor returns N if path is /proc/self/fd/N, or another name
+// of it such as /dev/fd/N, and N is 0, 1 or 2. The other descriptors are
+// droot's own, such as its connection to the Docker daemon, which -o must
+// never write into: the Go runtime keeps 0, 1 and 2 open (on /dev/null if
+// they were closed), so droot's own descriptors are above.
+func standardDescriptor(path string) (int, bool) {
+	fd, err := strconv.Atoi(filepath.Base(path))
+	if err != nil || fd < 0 || fd > 2 {
+		return 0, false
+	}
+	dir, err := filepath.EvalSymlinks(filepath.Dir(path))
+	if err != nil {
+		return 0, false
+	}
+	self, err := filepath.EvalSymlinks("/proc/self/fd")
+	return fd, err == nil && dir == self
 }
 
 // writeInPlace truncates the regular file at path and writes it in place.
@@ -443,21 +493,49 @@ func createTemp(dir string) (*os.File, error) {
 }
 
 // followSymlinks resolves path like open(2) does for os.Create, including a
-// dangling final symlink, whose target is then created.
-func followSymlinks(path string) (string, error) {
+// dangling final symlink, whose target is then created. It stops at a link
+// of /proc that the kernel resolves to another file than its target read as
+// a path, and reports it with viaLink: a link to a pipe or a socket
+// (/proc/self/fd/1 -> pipe:[1234]) or to a deleted file
+// (/proc/self/fd/3 -> "/tmp/out (deleted)").
+func followSymlinks(path string) (resolved string, viaLink bool, err error) {
 	for range 40 {
 		fi, err := os.Lstat(path)
 		if err != nil || fi.Mode()&fs.ModeSymlink == 0 {
-			return path, nil
+			return path, false, nil
 		}
 		dest, err := os.Readlink(path)
 		if err != nil {
-			return "", err
+			return "", false, err
 		}
 		if !filepath.IsAbs(dest) {
 			dest = filepath.Join(filepath.Dir(path), dest)
 		}
+		if osutil.OnProcFS(filepath.Dir(path)) && opensElsewhere(path, dest) {
+			return path, true, nil
+		}
 		path = dest
 	}
-	return "", &fs.PathError{Op: "open", Path: path, Err: errors.New("too many levels of symbolic links")}
+	return "", false, &fs.PathError{Op: "open", Path: path, Err: errors.New("too many levels of symbolic links")}
+}
+
+// opensElsewhere reports whether the kernel resolves the symlink link to
+// another file than dest, the target of link, or cannot resolve it: then
+// open(2) on link reports why.
+func opensElsewhere(link, dest string) bool {
+	opened, err := os.Stat(link)
+	if err != nil {
+		return true
+	}
+	named, err := os.Stat(dest)
+	return err != nil || !os.SameFile(opened, named)
+}
+
+// leadsToPath reports whether writeFile writes path through a path, next to
+// which --checksum can write path.sha256: false for a link of /proc to a
+// pipe, a socket or a deleted file, such as /dev/stdout when STDOUT is a
+// pipe.
+func leadsToPath(path string) bool {
+	_, viaLink, err := followSymlinks(path)
+	return err != nil || !viaLink // An error is reported by writeFile.
 }

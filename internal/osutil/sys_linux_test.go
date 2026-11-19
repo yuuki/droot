@@ -10,6 +10,19 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+func TestOnProcFS(t *testing.T) {
+	for path, want := range map[string]bool{
+		"/proc/self/fd": true,
+		"/dev/fd":       true, // a symlink to /proc/self/fd
+		t.TempDir():     false,
+		"/nonexistent":  false,
+	} {
+		if got := OnProcFS(path); got != want {
+			t.Errorf("OnProcFS(%q) = %v, want %v", path, got, want)
+		}
+	}
+}
+
 func TestLastCap(t *testing.T) {
 	last, err := lastCap()
 	if err != nil {
