@@ -101,6 +101,9 @@ assert_eq "export leaves no temporary container" \
 (cd "$WORK" && "$DROOT" export --compress gzip --checksum -o app.tar.gz "$IMAGE" && sha256sum --quiet -c app.tar.gz.sha256) ||
   fail "--compress gzip --checksum: the checksum does not match"
 assert_eq "--compress gzip" "$(tar -tzf "$WORK/app.tar.gz" | grep -c '^\.droot/config\.json$')" "1"
+# The link /dev/stdout -> /proc/self/fd/1 of a pipe reads pipe:[N], not a path.
+assert_eq "export -o /dev/stdout to a pipe" \
+  "$("$DROOT" export -q -o /dev/stdout "$IMAGE" | tar -t | grep -c '^\.droot/config\.json$')" "1"
 if command -v zstd >/dev/null; then
   "$DROOT" export --compress zstd "$IMAGE" | zstd -dc | tar -t >/dev/null || fail "--compress zstd"
   echo "ok - --compress zstd"
@@ -663,14 +666,16 @@ else
 fi
 
 echo "# droot unit"
+mkdir "$WORK/unit-root"
+tar -xpf "$WORK/app.tar" -C "$WORK/unit-root"
+assert_eq "droot unit -o /dev/stdout to a pipe" \
+  "$("$DROOT" unit -q --root "$WORK/unit-root" --user 0 -o /dev/stdout | grep -c '^\[Service\]$')" "1"
 # The settings of droot unit, run by the systemd of the machine as a
 # transient unit of /run/systemd/system. The image's user does not exist on
 # the host: the service runs as root.
 if [[ ! -d /run/systemd/system ]]; then
   echo "skip - droot unit: systemd is not the init system"
 else
-  mkdir "$WORK/unit-root"
-  tar -xpf "$WORK/app.tar" -C "$WORK/unit-root"
   ln -s unit-root "$WORK/unit-current"
   UNIT=droot-e2e-$$.service
   # The unit of the user, with settings that the drop-in must override.
