@@ -337,7 +337,7 @@ drop-in next to it, written again at each deployment: in
 drop-in before restarting the service.
 
 ```console
-# capze --keep 5 "$tmp/app-1.2.3" /var/containers/app && rmdir "$tmp"
+# capze deploy --keep 5 "$tmp/app-1.2.3" /var/containers/app && rmdir "$tmp"
 # mkdir -p /etc/systemd/system/app.service.d
 # droot unit --config /etc/droot/app.toml -o /etc/systemd/system/app.service.d/droot.conf
 # systemctl daemon-reload
@@ -390,7 +390,8 @@ SystemCallArchitectures=native
   writes the drop-in. After a switch of `current` (a deployment, a
   rollback), write the drop-in again and run `systemctl daemon-reload`
   before restarting the service; otherwise it restarts the previous release.
-  capze and dewy do not do it for you.
+  capze and dewy do not do it for you; with stretcher, the `post` commands
+  of the manifest can (see [With systemd alone](#with-systemd-alone)).
 - **Your unit and the drop-in.** A setting of the drop-in replaces the same
   setting of your unit. The drop-in also resets `ExecStart=`, `User=`,
   `SupplementaryGroups=` and `CapabilityBoundingSet=`, which systemd would
@@ -791,3 +792,43 @@ Notes:
     it only where all of them are trusted.
 
   See [Security considerations](security.md).
+
+### With systemd alone
+
+stretcher only runs commands; systemd starts the application. stretcher
+can therefore deploy a service that systemd runs by itself
+([7. Run with systemd alone](#7-run-with-systemd-alone)), without
+`droot run`. Install
+[`examples/systemd/app-rootdir.service`](../examples/systemd/app-rootdir.service)
+as `/etc/systemd/system/app.service`, keep `/etc/droot/app.toml`, and
+replace `systemctl restart app` in the `post` commands of the manifest with
+these commands, after the switch of `current`:
+
+```yaml
+  post:
+    - touch /var/containers/app/deployed/1.2.3
+    - ln -sfn releases/1.2.3 /var/containers/app/current.new && mv -T /var/containers/app/current.new /var/containers/app/current
+    - mkdir -p /etc/systemd/system/app.service.d
+    - /usr/local/bin/droot unit --config /etc/droot/app.toml -o /etc/systemd/system/app.service.d/droot.conf
+    - systemctl daemon-reload
+    - systemctl restart app
+    - curl -fsS -o /dev/null --retry 10 --retry-delay 1 --retry-connrefused http://127.0.0.1:8080/health
+    # The deletion of the old releases, unchanged.
+```
+
+- `droot unit` resolves `current` and writes the release it points to in
+  `RootDirectory=`: systemd does not follow the symlink. Write the drop-in
+  after the switch, and run `systemctl daemon-reload` before the restart;
+  otherwise the service restarts the previous release.
+- If `droot unit` fails (e.g. the host has no user with the IDs of the
+  image), stretcher stops there: `current` points to the new release, but
+  the drop-in and the service still use the previous one. Point `current`
+  back with the same `ln -sfn` and `mv -T`, or fix the cause and run the
+  remaining `post` commands by hand.
+- To roll back, point `current` to the previous release, then run the
+  same `droot unit`, `systemctl daemon-reload` and `systemctl restart app`.
+- systemd makes the mounts in the private mount namespace of the service:
+  no mount is left in a release, and the deletion of old releases is safe.
+  Keep `droot umount` before `rm -rf` all the same: it finds nothing to
+  remove, and protects a release that a `droot run` used.
+- The servers need the `droot` binary only to write the drop-in.
