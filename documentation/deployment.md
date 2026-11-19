@@ -337,7 +337,7 @@ drop-in next to it, written again at each deployment: in
 drop-in before restarting the service.
 
 ```console
-# capze --keep 5 "$tmp/app-1.2.3" /var/containers/app && rmdir "$tmp"
+# capze deploy --keep 5 "$tmp/app-1.2.3" /var/containers/app && rmdir "$tmp"
 # mkdir -p /etc/systemd/system/app.service.d
 # droot unit --config /etc/droot/app.toml -o /etc/systemd/system/app.service.d/droot.conf
 # systemctl daemon-reload
