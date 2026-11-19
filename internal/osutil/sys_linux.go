@@ -12,6 +12,13 @@ import (
 	"github.com/yuuki/droot/internal/log"
 )
 
+// OnProcFS reports whether path is on a proc file system, whose symlinks
+// to open files (/proc/PID/fd/N) may not name a path: pipe:[1234].
+func OnProcFS(path string) bool {
+	var st unix.Statfs_t
+	return unix.Statfs(path, &st) == nil && st.Type == unix.PROC_SUPER_MAGIC
+}
+
 // Chroot changes the root directory of the process to rootDir and changes the
 // working directory to the new root.
 func Chroot(rootDir string) error {

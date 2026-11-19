@@ -11,6 +11,9 @@ func unsupported(op string) error {
 	return fmt.Errorf("%s is not supported on %s/%s: droot run requires Linux", op, runtime.GOOS, runtime.GOARCH)
 }
 
+// OnProcFS reports false: only Linux has /proc.
+func OnProcFS(string) bool { return false }
+
 // Chroot is only supported on Linux.
 func Chroot(string) error { return unsupported("chroot") }
 

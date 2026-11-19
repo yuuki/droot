@@ -25,19 +25,24 @@ func openPTY(t *testing.T) (master, slave *os.File) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var n uint32
+	slaveFD := -1
 	var ioctlErr error
 	if err := rc.Control(func(fd uintptr) {
-		if ioctlErr = unix.IoctlSetPointerInt(int(fd), unix.TIOCSPTLCK, 0); ioctlErr == nil {
-			n, ioctlErr = unix.IoctlGetUint32(int(fd), unix.TIOCGPTN)
+		if ioctlErr = unix.IoctlSetPointerInt(int(fd), unix.TIOCSPTLCK, 0); ioctlErr != nil {
+			return
 		}
+		// The slave of this master, not a /dev/pts/N of another devpts
+		// instance.
+		r, _, errno := unix.Syscall(unix.SYS_IOCTL, fd, unix.TIOCGPTPEER, unix.O_RDWR|unix.O_NOCTTY|unix.O_CLOEXEC)
+		if errno != 0 {
+			ioctlErr = errno
+			return
+		}
+		slaveFD = int(r)
 	}); err != nil || ioctlErr != nil {
-		t.Fatal(err, ioctlErr)
+		t.Skip("no pseudo-terminal:", err, ioctlErr)
 	}
-	slave, err = os.OpenFile(fmt.Sprintf("/dev/pts/%d", n), os.O_RDWR|syscall.O_NOCTTY, 0)
-	if err != nil {
-		t.Skip("no pseudo-terminal:", err)
-	}
+	slave = os.NewFile(uintptr(slaveFD), "pts")
 	t.Cleanup(func() { slave.Close() })
 	return master, slave
 }

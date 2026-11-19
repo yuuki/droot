@@ -118,6 +118,9 @@ func doExport(ctx context.Context, cmd *cli.Invocation) error {
 	if checksum && toStdout {
 		return cmd.UsageError("--checksum needs -o FILE")
 	}
+	if checksum && !leadsToPath(output) {
+		return cmd.UsageError("--checksum needs a path for FILE.sha256, but -o %s leads to a file without one (a pipe, a socket, a deleted file)", output)
+	}
 	algo := cmd.String("compress")
 	if algo != "" && !slices.Contains(compressions, algo) {
 		return cmd.UsageError("unknown compression %q: want gzip or zstd", algo)
@@ -341,10 +344,10 @@ func openCancelable(ctx context.Context, path string) (*os.File, error) {
 //     atomically) so that the links are kept.
 //   - Non-regular files such as /dev/stdout or named pipes are written
 //     directly; a terminal is refused if archive is set (a tar archive).
-//   - A link whose target is not the path of the file it leads to, such as
-//     /proc/self/fd/1 -> pipe:[1234] (/dev/stdout when STDOUT is a pipe), is
-//     opened as is, the kernel resolving it; a regular file is written in
-//     place.
+//   - A link of /proc whose target is not the path of the file it leads to,
+//     such as /proc/self/fd/1 -> pipe:[1234] (/dev/stdout when STDOUT is a
+//     pipe), is opened as is, the kernel resolving it; a regular file, e.g.
+//     a deleted one, is written in place.
 func writeFile(ctx context.Context, path string, archive bool, write func(io.Writer) error) error {
 	path, viaLink, err := followSymlinks(path)
 	if err != nil {
@@ -387,12 +390,12 @@ func writeDirectly(ctx context.Context, path string, fi fs.FileInfo, archive boo
 }
 
 // openDirectly opens the file fi at path, which is not a regular file, for
-// writing. open(2) cannot open a socket (ENXIO): a socket that is a
-// descriptor of droot, such as /dev/stdout when STDOUT is a socket, is
-// duplicated instead.
+// writing. open(2) cannot open a socket (ENXIO): a socket that is the
+// standard input, output or error of droot, such as /dev/stdout when STDOUT
+// is a socket, is duplicated instead.
 func openDirectly(ctx context.Context, path string, fi fs.FileInfo) (*os.File, error) {
 	if fi.Mode()&fs.ModeSocket != 0 {
-		if fd, ok := ownDescriptor(path); ok {
+		if fd, ok := standardDescriptor(path); ok {
 			nfd, err := unix.FcntlInt(uintptr(fd), unix.F_DUPFD_CLOEXEC, 0)
 			if err != nil {
 				return nil, &fs.PathError{Op: "dup", Path: path, Err: err}
@@ -403,11 +406,14 @@ func openDirectly(ctx context.Context, path string, fi fs.FileInfo) (*os.File, e
 	return openCancelable(ctx, path)
 }
 
-// ownDescriptor returns N if path is /proc/self/fd/N, the descriptor N of
-// droot, or another name of it, such as /dev/fd/N.
-func ownDescriptor(path string) (int, bool) {
+// standardDescriptor returns N if path is /proc/self/fd/N, or another name
+// of it such as /dev/fd/N, and N is 0, 1 or 2. The other descriptors are
+// droot's own, such as its connection to the Docker daemon, which -o must
+// never write into: the Go runtime keeps 0, 1 and 2 open (on /dev/null if
+// they were closed), so droot's own descriptors are above.
+func standardDescriptor(path string) (int, bool) {
 	fd, err := strconv.Atoi(filepath.Base(path))
-	if err != nil || fd < 0 {
+	if err != nil || fd < 0 || fd > 2 {
 		return 0, false
 	}
 	dir, err := filepath.EvalSymlinks(filepath.Dir(path))
@@ -488,8 +494,8 @@ func createTemp(dir string) (*os.File, error) {
 
 // followSymlinks resolves path like open(2) does for os.Create, including a
 // dangling final symlink, whose target is then created. It stops at a link
-// that the kernel resolves to another file than its target read as a path,
-// and reports it with viaLink: a link of /proc to a pipe or a socket
+// of /proc that the kernel resolves to another file than its target read as
+// a path, and reports it with viaLink: a link to a pipe or a socket
 // (/proc/self/fd/1 -> pipe:[1234]) or to a deleted file
 // (/proc/self/fd/3 -> "/tmp/out (deleted)").
 func followSymlinks(path string) (resolved string, viaLink bool, err error) {
@@ -505,7 +511,7 @@ func followSymlinks(path string) (resolved string, viaLink bool, err error) {
 		if !filepath.IsAbs(dest) {
 			dest = filepath.Join(filepath.Dir(path), dest)
 		}
-		if opensElsewhere(path, dest) {
+		if osutil.OnProcFS(filepath.Dir(path)) && opensElsewhere(path, dest) {
 			return path, true, nil
 		}
 		path = dest
@@ -513,13 +519,23 @@ func followSymlinks(path string) (resolved string, viaLink bool, err error) {
 	return "", false, &fs.PathError{Op: "open", Path: path, Err: errors.New("too many levels of symbolic links")}
 }
 
-// opensElsewhere reports whether the kernel resolves the symlink link to an
-// existing file that dest, the target of link, is not.
+// opensElsewhere reports whether the kernel resolves the symlink link to
+// another file than dest, the target of link, or cannot resolve it: then
+// open(2) on link reports why.
 func opensElsewhere(link, dest string) bool {
 	opened, err := os.Stat(link)
 	if err != nil {
-		return false // A dangling link: dest is created.
+		return true
 	}
 	named, err := os.Stat(dest)
 	return err != nil || !os.SameFile(opened, named)
+}
+
+// leadsToPath reports whether writeFile writes path through a path, next to
+// which --checksum can write path.sha256: false for a link of /proc to a
+// pipe, a socket or a deleted file, such as /dev/stdout when STDOUT is a
+// pipe.
+func leadsToPath(path string) bool {
+	_, viaLink, err := followSymlinks(path)
+	return err != nil || !viaLink // An error is reported by writeFile.
 }

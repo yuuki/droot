@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -292,6 +293,34 @@ func TestWriteFileIsAtomic(t *testing.T) {
 	if err := writeFile(context.Background(), dir, true, func(io.Writer) error { return nil }); err == nil {
 		t.Fatal("writing to a directory should fail")
 	}
+
+	// A link whose target goes up (..) from a symlinked directory: the
+	// kernel and the text of the link lead to different files, but a
+	// failed export truncates neither.
+	dir = t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "real", "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	kept := filepath.Join(dir, "real", "out.conf")
+	if err := os.WriteFile(kept, []byte("previous"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("real/sub", filepath.Join(dir, "link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../out.conf", filepath.Join(dir, "real", "sub", "f")); err != nil {
+		t.Fatal(err)
+	}
+	err = writeFile(context.Background(), filepath.Join(dir, "link", "f"), true, func(w io.Writer) error {
+		_, _ = io.WriteString(w, "partial")
+		return errors.New("export failed")
+	})
+	if err == nil {
+		t.Fatal("want error")
+	}
+	if b, _ := os.ReadFile(kept); string(b) != "previous" {
+		t.Fatalf("a failed export must not truncate a file, got %q", b)
+	}
 }
 
 func TestCancelableWriterUnblocks(t *testing.T) {
@@ -423,66 +452,126 @@ func TestWriteFileLikeCreate(t *testing.T) {
 	}
 }
 
-// TestWriteFileToDescriptor writes to -o /dev/stdout, /dev/fd/N and
-// /proc/self/fd/N when the descriptor is a pipe or a socket, whose link
-// reads pipe:[1234] or socket:[1234]: not a path.
+// testPipe and testSocket return the two ends of a pipe or of a socket.
+func testPipe(t *testing.T) (r, w *os.File) {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r, w
+}
+
+func testSocket(t *testing.T) (r, w *os.File) {
+	t.Helper()
+	syscall.ForkLock.RLock()
+	fds, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
+	if err == nil {
+		syscall.CloseOnExec(fds[0])
+		syscall.CloseOnExec(fds[1])
+	}
+	syscall.ForkLock.RUnlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return os.NewFile(uintptr(fds[0]), "r"), os.NewFile(uintptr(fds[1]), "w")
+}
+
+// TestWriteFileToDescriptor writes to /dev/fd/N, /proc/self/fd/N and a link
+// to it like /dev/stdout when the descriptor is a pipe, whose link reads
+// pipe:[1234]: not a path. A socket that is not a standard descriptor is
+// droot's own, e.g. its connection to the Docker daemon: never written.
 func TestWriteFileToDescriptor(t *testing.T) {
 	if _, err := os.Stat("/proc/self/fd"); err != nil {
 		t.Skip("no /proc/self/fd:", err)
 	}
-	pipe := func(t *testing.T) (r, w *os.File) {
-		r, w, err := os.Pipe()
-		if err != nil {
-			t.Fatal(err)
-		}
-		return r, w
+	const content = "archive"
+	write := func(w io.Writer) error {
+		_, err := io.WriteString(w, content)
+		return err
 	}
-	socket := func(t *testing.T) (r, w *os.File) {
-		fds, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return os.NewFile(uintptr(fds[0]), "r"), os.NewFile(uintptr(fds[1]), "w")
-	}
-	names := []struct {
+	for _, n := range []struct {
 		name string
-		path func(dir string, fd uintptr) string
+		path func(t *testing.T, fd uintptr) string
 	}{
-		{"/proc/self/fd/N", func(_ string, fd uintptr) string { return fmt.Sprintf("/proc/self/fd/%d", fd) }},
-		{"/dev/fd/N", func(_ string, fd uintptr) string { return fmt.Sprintf("/dev/fd/%d", fd) }},
-		{"/dev/stdout", func(dir string, fd uintptr) string {
+		{"/proc/self/fd/N", func(_ *testing.T, fd uintptr) string { return fmt.Sprintf("/proc/self/fd/%d", fd) }},
+		{"/dev/fd/N", func(_ *testing.T, fd uintptr) string { return fmt.Sprintf("/dev/fd/%d", fd) }},
+		{"/dev/stdout", func(t *testing.T, fd uintptr) string {
 			// Like /dev/stdout -> /proc/self/fd/1.
-			link := filepath.Join(dir, "stdout")
+			link := filepath.Join(t.TempDir(), "stdout")
 			if err := os.Symlink(fmt.Sprintf("/proc/self/fd/%d", fd), link); err != nil {
 				t.Fatal(err)
 			}
 			return link
 		}},
+	} {
+		t.Run("pipe "+n.name, func(t *testing.T) {
+			r, w := testPipe(t)
+			defer r.Close()
+			defer w.Close()
+			if err := writeFile(context.Background(), n.path(t, w.Fd()), true, write); err != nil {
+				t.Fatal(err)
+			}
+			buf := make([]byte, len(content))
+			if _, err := io.ReadFull(r, buf); err != nil || string(buf) != content {
+				t.Fatalf("read %q, %v; want %q", buf, err, content)
+			}
+		})
+	}
+
+	t.Run("socket of droot", func(t *testing.T) {
+		r, w := testSocket(t)
+		defer r.Close()
+		defer w.Close()
+		err := writeFile(context.Background(), fmt.Sprintf("/dev/fd/%d", w.Fd()), true, write)
+		if !errors.Is(err, syscall.ENXIO) {
+			t.Fatalf("a socket of droot must not be written, got %v", err)
+		}
+	})
+}
+
+// TestWriteFileHelper is the child process of TestWriteFileToStdout: it
+// writes to -o /dev/stdout and exits.
+func TestWriteFileHelper(t *testing.T) {
+	if os.Getenv("DROOT_TEST_WRITE_STDOUT") == "" {
+		t.Skip("run by TestWriteFileToStdout")
+	}
+	err := writeFile(context.Background(), "/dev/stdout", true, func(w io.Writer) error {
+		_, err := io.WriteString(w, "archive")
+		return err
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	os.Exit(0)
+}
+
+// TestWriteFileToStdout writes to -o /dev/stdout in a child process whose
+// STDOUT is a pipe or a socket, as in droot export -o /dev/stdout IMAGE | cat.
+func TestWriteFileToStdout(t *testing.T) {
+	if _, err := os.Stat("/proc/self/fd"); err != nil {
+		t.Skip("no /proc/self/fd:", err)
 	}
 	for _, kind := range []struct {
 		name string
 		open func(*testing.T) (r, w *os.File)
-	}{{"pipe", pipe}, {"socket", socket}} {
-		for _, n := range names {
-			t.Run(kind.name+" "+n.name, func(t *testing.T) {
-				r, w := kind.open(t)
-				defer r.Close()
-				defer w.Close()
-				path := n.path(t.TempDir(), w.Fd())
-				const content = "archive"
-				err := writeFile(context.Background(), path, true, func(w io.Writer) error {
-					_, err := io.WriteString(w, content)
-					return err
-				})
-				if err != nil {
-					t.Fatal(err)
-				}
-				buf := make([]byte, len(content))
-				if _, err := io.ReadFull(r, buf); err != nil || string(buf) != content {
-					t.Fatalf("read %q, %v; want %q", buf, err, content)
-				}
-			})
-		}
+	}{{"pipe", testPipe}, {"socket", testSocket}} {
+		t.Run(kind.name, func(t *testing.T) {
+			r, w := kind.open(t)
+			defer r.Close()
+			cmd := exec.Command(os.Args[0], "-test.run=^TestWriteFileHelper$")
+			cmd.Env = append(os.Environ(), "DROOT_TEST_WRITE_STDOUT=1")
+			cmd.Stdout = w
+			var stderr strings.Builder
+			cmd.Stderr = &stderr
+			err := cmd.Run()
+			w.Close()
+			b, _ := io.ReadAll(r)
+			if err != nil || string(b) != "archive" {
+				t.Fatalf("got %q, %v: %s", b, err, stderr.String())
+			}
+		})
 	}
 }
 
@@ -508,11 +597,18 @@ func TestWriteFileToOpenFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer f.Close()
+	before, err := f.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := writeFile(ctx, fmt.Sprintf("/proc/self/fd/%d", f.Fd()), true, write("a")); err != nil {
 		t.Fatal(err)
 	}
 	if b, _ := os.ReadFile(out); string(b) != "a" {
 		t.Errorf("the file must be written through its path, got %q", b)
+	}
+	if after, err := os.Stat(out); err != nil || os.SameFile(before, after) {
+		t.Errorf("the file must be replaced atomically (%v)", err)
 	}
 
 	deleted, err := os.Create(filepath.Join(dir, "deleted.tar"))
@@ -531,6 +627,23 @@ func TestWriteFileToOpenFile(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(dir); len(entries) != 1 {
 		t.Errorf("want only out.tar, got %v", entries)
+	}
+}
+
+// TestChecksumNeedsPath refuses --checksum before the export when -o leads to
+// a file without a path, next to which FILE.sha256 cannot be written.
+func TestChecksumNeedsPath(t *testing.T) {
+	if _, err := os.Stat("/proc/self/fd"); err != nil {
+		t.Skip("no /proc/self/fd:", err)
+	}
+	r, w := testPipe(t)
+	defer r.Close()
+	defer w.Close()
+	app := NewApp("test")
+	app.Stdout = io.Discard
+	err := app.Run(context.Background(), []string{"droot", "export", "--checksum", "-o", fmt.Sprintf("/dev/fd/%d", w.Fd()), "oci:/nonexistent"})
+	if err == nil || !strings.Contains(err.Error(), "--checksum needs a path for FILE.sha256") {
+		t.Fatalf("want a usage error, got %v", err)
 	}
 }
 
