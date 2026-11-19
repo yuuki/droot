@@ -1,9 +1,9 @@
 {
   "repository": "yuuki/droot/complexity",
   "ref": "refs/heads/master",
-  "commit": "effb3c3db07e689bdf1234e6b1c851e719d40b52",
+  "commit": "def1dc6850ced954c7cb2878110a0c38f9751f4c",
   "base_ref": "refs/heads/master",
-  "timestamp": "2026-11-19T09:58:35.241333316Z",
+  "timestamp": "2026-11-19T12:42:42.354776168Z",
   "custom_metrics": [
     {
       "key": "code_complexity",
