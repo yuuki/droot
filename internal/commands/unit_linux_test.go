@@ -376,7 +376,10 @@ func TestTmpfsOptions(t *testing.T) {
 
 // checkWithSystemd checks the settings with systemd-analyze verify, if it
 // is installed: systemd must accept every one of them. verify looks the
-// command up on the host, not in RootDirectory=, which is ignored.
+// command up on the host, not in RootDirectory=, which is ignored. verify
+// also loads units of the host, and warns about their files ("FILE:LINE:
+// MESSAGE", e.g. an option that a newer systemd removed): those warnings
+// are not about the settings and are ignored.
 func checkWithSystemd(t *testing.T, settings string) {
 	t.Helper()
 	analyze, err := exec.LookPath("systemd-analyze")
@@ -391,6 +394,9 @@ func checkWithSystemd(t *testing.T, settings string) {
 	out, _ := exec.Command(analyze, "verify", "--man=no", unit).CombinedOutput()
 	for line := range strings.Lines(string(out)) {
 		if strings.Contains(line, "is not executable") {
+			continue
+		}
+		if file, _, ok := strings.Cut(line, ":"); ok && filepath.IsAbs(file) && filepath.Base(file) != filepath.Base(unit) {
 			continue
 		}
 		t.Errorf("systemd-analyze verify: %s", strings.TrimSpace(line))
