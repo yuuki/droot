@@ -96,6 +96,11 @@ for what:
 
 ## Other tools
 
+The facts in this section come from the documentation of each tool in
+November 2026; check it for the current state.
+
+### systemd and Podman
+
 - **systemd** can give a service a root directory of its own (`RootDirectory=`,
   `RootImage=`, `BindPaths=`) and much of droot's hardening
   (`CapabilityBoundingSet=`, `NoNewPrivileges=`, `SystemCallFilter=`,
@@ -106,6 +111,61 @@ for what:
   the settings that make systemd run the root directory by itself, with the
   image's configuration (see
   [Run with systemd alone](deployment.md#7-run-with-systemd-alone)).
+- **systemd's `importctl pull-oci`** (systemd 260 and later) downloads an
+  image from an OCI registry and puts it in `/var/lib/machines/`,
+  `/var/lib/portables/`, `/var/lib/extensions/` or `/var/lib/confexts/`
+  (`--class=`), where `systemd-nspawn`, `machinectl` or `portablectl attach`
+  (a [portable service](https://systemd.io/PORTABLE_SERVICES)) use it. With
+  a recent systemd, the servers can get an image without `droot export`. The
+  differences: `importctl` downloads on each server and verifies nothing but
+  the HTTPS certificates of the registry, where `droot export` makes one
+  archive with a SHA-256 checksum file (that you can sign) on the build
+  machine; and `importctl` does not apply the image's configuration
+  (`ENTRYPOINT`, `CMD`, `USER`, `ENV`, ...) to a unit, where `droot run` and
+  `droot unit` do.
 - **Podman with Quadlet** runs containers as systemd services with the
   isolation droot avoids (PID and network namespaces, a cgroup per container).
   Choose it when the services need that isolation.
+
+### HPC container runtimes
+
+These tools, like enroot, let the users of a shared cluster run jobs in
+images. They are made for unprivileged users, not for services run by root.
+
+- **[Charliecloud](https://charliecloud.io)** (`ch-run`) runs a "fully
+  unprivileged" container in user and mount namespaces, from a directory or
+  a SquashFS image (mounted with FUSE), and "does not use any setuid or setcap
+  helpers". It also builds images (`ch-image`).
+- **[Apptainer](https://apptainer.org)** (formerly Singularity) runs images
+  in its own single-file format (SIF), made from Docker or OCI images. It is
+  installed with a setuid helper or runs unprivileged in a user namespace,
+  and has many HPC features (GPUs, MPI, signed images). It is much larger
+  than droot.
+- **[udocker](https://github.com/indigo-dc/udocker)** runs Docker images
+  without root with a subset of the Docker commands (`pull`, `load`,
+  `create`, `run`, ...), through PRoot, Fakechroot, runc, crun or
+  Singularity. Its documentation says that it "does not offer robust
+  isolation" and "should not be run by privileged users": the opposite of
+  droot, which is made to run as root.
+- **[Sarus](https://github.com/eth-cscs/sarus)** runs OCI images with an
+  OCI runtime (runc) and hooks for the hardware of HPC systems. Its
+  developers now build Sarus Suite around Podman.
+
+### Tools that turn an image into a root file system
+
+These tools do what `droot export` does without a daemon, but do not run the
+image or keep its configuration for a run.
+
+- **[undocker](https://git.jakstys.lt/motiejus/undocker)** flattens the
+  layers of a `docker save` archive into one root file system tar archive,
+  with the Go standard library only. Its documentation uses it with `skopeo`
+  to get images from registries, and with LXC or `systemd-nspawn` to run
+  them.
+- **[skopeo](https://github.com/containers/skopeo)** with
+  **[umoci](https://github.com/opencontainers/umoci)** (`umoci unpack`)
+  copies an image into an OCI layout and extracts it into an OCI runtime
+  bundle (a root file system and a `config.json` for runc or crun).
+- **`docker export`** writes the file system of a container as a tar
+  archive; `droot export` adds the image's configuration
+  (`/.droot/config.json`), reproducibility, the sources without daemon and
+  the removal of the temporary container.
