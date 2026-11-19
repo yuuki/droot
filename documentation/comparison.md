@@ -4,6 +4,17 @@ Droot is not the only tool that runs container images with the simplicity of
 `chroot`. This page compares it with [enroot](https://github.com/NVIDIA/enroot),
 the closest one, and points to other tools for needs droot does not cover.
 
+![Positioning of droot and other tools](images/positioning.png)
+
+The figure places the tools by two properties: how much they isolate the
+application from the host (horizontal), and who usually runs them
+(vertical): unprivileged users running jobs, or root and systemd running
+services. The places are a judgement from the default behaviour of each
+tool, not measurements; several tools isolate more or less with other
+settings. systemd's `RootDirectory=` and portable services cover a range,
+since the settings of the unit choose the isolation. The source of the
+figure is [`images/positioning.svg`](images/positioning.svg).
+
 The facts about enroot come from its
 [documentation](https://github.com/NVIDIA/enroot/tree/master/doc) for version
 4.2.1 (June 2026); check it for the current state. Corrections are welcome.

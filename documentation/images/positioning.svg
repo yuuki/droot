@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="680" viewBox="0 0 960 680" font-family="Liberation Serif, Times New Roman, serif">
+  <rect width="960" height="680" fill="#ffffff"/>
+  <!-- quadrant shading: droot's quadrant -->
+  <rect x="110" y="60" width="395" height="250" fill="#fbeeee"/>
+  <!-- plot frame -->
+  <rect x="110" y="60" width="790" height="500" fill="none" stroke="#222" stroke-width="1.2"/>
+  <!-- quadrant dividers -->
+  <line x1="505" y1="60" x2="505" y2="560" stroke="#999" stroke-width="1" stroke-dasharray="5 4"/>
+  <line x1="110" y1="310" x2="900" y2="310" stroke="#999" stroke-width="1" stroke-dasharray="5 4"/>
+
+  <!-- quadrant labels -->
+  <g font-size="15" font-style="italic" fill="#666">
+    <text x="122" y="82">Simple runtimes for services</text>
+    <text x="888" y="82" text-anchor="end">Isolated containers for services</text>
+    <text x="122" y="548">Lightweight runtimes for HPC users</text>
+    <text x="888" y="548" text-anchor="end">Isolated engines for HPC users</text>
+  </g>
+
+  <!-- systemd range -->
+  <g>
+    <line x1="228" y1="120" x2="702" y2="120" stroke="#444" stroke-width="2"/>
+    <line x1="228" y1="113" x2="228" y2="127" stroke="#444" stroke-width="2"/>
+    <line x1="702" y1="113" x2="702" y2="127" stroke="#444" stroke-width="2"/>
+    
+    <text x="465" y="110" font-size="16" text-anchor="middle" fill="#222">systemd <tspan font-family="Liberation Mono, monospace" font-size="14">RootDirectory=</tspan> / Portable Services</text>
+    <text x="465" y="140" font-size="13" text-anchor="middle" fill="#666" font-style="italic">isolation set by the unit's settings</text>
+  </g>
+
+  <!-- service-oriented: filled circles -->
+  <g fill="#444" font-size="16">
+    <circle cx="679" cy="220" r="7"/><text x="691" y="225" fill="#222">systemd-nspawn</text>
+    <circle cx="805" cy="170" r="7"/><text x="793" y="196" fill="#222" text-anchor="middle">Podman + Quadlet</text>
+    <circle cx="837" cy="260" r="7"/><text x="825" y="286" fill="#222" text-anchor="middle">Docker</text>
+  </g>
+
+  <!-- HPC: hollow circles -->
+  <g fill="#fff" stroke="#444" stroke-width="2" >
+    <circle cx="173" cy="400" r="7"/>
+    <circle cx="331" cy="490" r="7"/>
+    <circle cx="386" cy="440" r="7"/>
+    <circle cx="465" cy="390" r="7"/>
+    <circle cx="584" cy="460" r="7"/>
+  </g>
+  <g font-size="16" fill="#222">
+    <text x="185" y="405">udocker</text>
+    <text x="343" y="495">Charliecloud</text>
+    <text x="398" y="445">enroot</text>
+    <text x="477" y="395">Apptainer</text>
+    <text x="596" y="465">Sarus</text>
+  </g>
+
+  <!-- droot: star -->
+  <polygon transform="translate(252,170)" points="0,-15 3.5,-4.8 14.3,-4.6 5.7,2 8.8,12.1 0,6 -8.8,12.1 -5.7,2 -14.3,-4.6 -3.5,-4.8" fill="#c0392b" stroke="#7b1f16" stroke-width="1"/>
+  <text x="272" y="177" font-size="20" font-weight="bold" fill="#a02a1e">droot</text>
+
+  <!-- axes labels -->
+  <text x="505" y="610" font-size="17" text-anchor="middle" fill="#222">Isolation from the host (namespaces, cgroups) →</text>
+  <text x="110" y="580" font-size="13" fill="#666">shares the host's PID and network</text>
+  <text x="900" y="580" font-size="13" fill="#666" text-anchor="end">own PID and network namespaces, cgroups</text>
+  <g transform="translate(62,310) rotate(-90)">
+    <text x="0" y="0" font-size="17" text-anchor="middle" fill="#222">Who runs it →</text>
+  </g>
+  <g transform="translate(86,560) rotate(-90)"><text font-size="13" fill="#666">unprivileged users (jobs)</text></g>
+  <g transform="translate(86,60) rotate(-90)"><text font-size="13" fill="#666" text-anchor="end">root, systemd (services)</text></g>
+
+  <!-- legend -->
+  <g font-size="14" fill="#222" transform="translate(190,655)">
+    <polygon transform="translate(0,-5) scale(0.7)" points="0,-15 3.5,-4.8 14.3,-4.6 5.7,2 8.8,12.1 0,6 -8.8,12.1 -5.7,2 -14.3,-4.6 -3.5,-4.8" fill="#c0392b" stroke="#7b1f16"/>
+    <text x="14" y="0">droot</text>
+    <circle cx="90" cy="-5" r="6" fill="#444"/><text x="102" y="0">runtime for services</text>
+    <circle cx="262" cy="-5" r="6" fill="#fff" stroke="#444" stroke-width="2"/><text x="274" y="0">runtime for HPC users</text>
+    <line x1="440" y1="-5" x2="470" y2="-5" stroke="#444" stroke-width="2"/><line x1="440" y1="-11" x2="440" y2="1" stroke="#444" stroke-width="2"/><line x1="470" y1="-11" x2="470" y2="1" stroke="#444" stroke-width="2"/>
+    <text x="478" y="0">configurable range</text>
+  </g>
+</svg>
